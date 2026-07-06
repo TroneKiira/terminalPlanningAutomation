@@ -14,20 +14,20 @@ namespace AirportPlanning.Facilities.CheckIn
     {
         private readonly QueueOptimizer _optimizer;
 
-        public CheckInSolver()
-            : base()
+        public CheckInSolver() : base()
         {
             _optimizer = new QueueOptimizer();
         }
 
-        public QueueResults Solve(CheckInInputs input)
+        public CheckInResults Solve(CheckInInputs input)
         {
+            CheckInResults finalResult = new CheckInResults();
             QueueResults results;
+            int originalPhysical = input.NumberOfResources;
 
             if (input.OptimizeResources)
             {
-                OptimizationResult optimization =
-                    _optimizer.Optimize(
+                OptimizationResult opt = _optimizer.Optimize(
                         input,
                         SolveWithoutOptimization,
                         (i, c) => i.NumberOfResources = c,
@@ -35,17 +35,20 @@ namespace AirportPlanning.Facilities.CheckIn
                         input.TargetMaximumWait,
                         input.StaffingPercentage);
 
-                results = optimization.QueueResults;
+                results = opt.QueueResults;
+                finalResult.PhysicalCounters = opt.OptimalPhysicalResources;
+                finalResult.ActiveCounters = opt.OptimalActiveResources;
             }
             else
             {
-                int activeN = (int)Math.Max(1, Math.Round(input.NumberOfResources * (input.StaffingPercentage / 100.0)));
+                int activeN = (int)Math.Max(1, Math.Round(originalPhysical * (input.StaffingPercentage / 100.0)));
                 input.NumberOfResources = activeN;
-
                 results = SolveWithoutOptimization(input);
+
+                finalResult.PhysicalCounters = originalPhysical;
+                finalResult.ActiveCounters = activeN;
             }
 
-            // NEW: Save the historical record for Check-In
             foreach (Passenger p in results.ProcessedPassengers)
             {
                 p.History[FacilityType.CheckIn] = new FacilityRecord
@@ -59,25 +62,13 @@ namespace AirportPlanning.Facilities.CheckIn
             }
 
             AdvancePassengers(results.ProcessedPassengers);
-            return results;
+
+            finalResult.QueueResults = results;
+            return finalResult;
         }
 
-        private QueueResults SolveWithoutOptimization(
-            CheckInInputs input)
+        private QueueResults SolveWithoutOptimization(CheckInInputs input)
         {
-            RhinoApp.WriteLine($"Total Passengers: {input.Passengers.Count}");
-
-            RhinoApp.WriteLine(
-                $"Requires Check-In: {input.Passengers.Count(p => p.RequiresCheckIn)}");
-
-            RhinoApp.WriteLine(
-                $"Resources: {input.NumberOfResources}");
-
-            RhinoApp.WriteLine(
-                $"Mean Service: {input.ServiceProfile.MeanServiceTime}");
-
-            RhinoApp.WriteLine(
-                $"Std Dev: {input.ServiceProfile.StandardDeviation}");
             return ExecuteFacility(
                 input.Passengers,
                 p => p.RequiresCheckIn,

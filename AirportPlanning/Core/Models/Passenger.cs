@@ -111,6 +111,36 @@ namespace AirportPlanning.Core.Models
 
             AssignedCounter = -1;
         }
+
+        // NEW: Deep Clone to prevent Grasshopper pass-by-reference mutation bugs
+        public Passenger Clone()
+        {
+            Passenger p = new Passenger
+            {
+                Id = this.Id,
+                PassengerType = this.PassengerType,
+                Journey = this.Journey,
+                UsesOnlineCheckIn = this.UsesOnlineCheckIn,
+                HasCheckedBag = this.HasCheckedBag,
+                ArrivalTime = this.ArrivalTime,
+                QueueArrivalTime = this.QueueArrivalTime,
+                WalkingSpeed = this.WalkingSpeed,
+                WalkingTime = this.WalkingTime,
+                ServiceTime = this.ServiceTime,
+                StartServiceTime = this.StartServiceTime,
+                EndServiceTime = this.EndServiceTime,
+                WaitTime = this.WaitTime,
+                AssignedCounter = this.AssignedCounter,
+                History = new Dictionary<FacilityType, FacilityRecord>()
+            };
+
+            foreach (var kvp in this.History)
+            {
+                p.History.Add(kvp.Key, kvp.Value.Clone());
+            }
+
+            return p;
+        }
     }
 
     public class PassengerAllocation

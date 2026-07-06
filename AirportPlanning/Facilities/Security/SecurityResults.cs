@@ -9,8 +9,8 @@ namespace AirportPlanning.Facilities.Security
 {
     public class SecurityResults
     {
-        public int NumberOfResources { get; set; }
-
+        public int PhysicalCounters { get; set; }
+        public int ActiveCounters { get; set; }
         public QueueResults QueueResults { get; set; }
     }
 }

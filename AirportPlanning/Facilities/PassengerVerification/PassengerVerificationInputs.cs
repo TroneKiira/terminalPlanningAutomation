@@ -1,4 +1,5 @@
 ﻿using AirportPlanning.Core.Inputs;
+using AirportPlanning.Core.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,12 +10,9 @@ namespace AirportPlanning.Facilities.PassengerVerification
 {
     public class PassengerVerificationInputs
     {
-        public PassengerDemand PassengerDemand { get; set; }
-
+        public List<Passenger> Passengers { get; set; }
         public double EligiblePercentage { get; set; }
-
         public double ThroughputPerGate { get; set; }   // passengers/hour
-
         public double DesignUtilization { get; set; }   // e.g. 0.85
     }
 }

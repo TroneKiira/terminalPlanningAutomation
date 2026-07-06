@@ -13,39 +13,41 @@ namespace AirportPlanning.Facilities
     {
         private readonly QueueOptimizer _optimizer;
 
-        public BagDropSolver()
-            : base()
+        public BagDropSolver() : base()
         {
             _optimizer = new QueueOptimizer();
         }
 
-        public QueueResults Solve(BagDropInputs input)
+        public BagDropResults Solve(BagDropInputs input)
         {
+            BagDropResults finalResult = new BagDropResults();
             QueueResults results;
+            int originalPhysical = input.NumberOfResources;
 
             if (input.OptimizeResources)
             {
-                OptimizationResult optimization =
-                    _optimizer.Optimize(
+                OptimizationResult opt = _optimizer.Optimize(
                         input,
                         SolveWithoutOptimization,
-                        (i, r) => i.NumberOfResources = r, // Sets Active Staffed count temporarily
-                        i => i.NumberOfResources,          // Reads original Physical count
+                        (i, r) => i.NumberOfResources = r,
+                        i => i.NumberOfResources,
                         input.TargetMaximumWait,
-                        input.StaffingPercentage);         // NEW: Passing the required argument
+                        input.StaffingPercentage);
 
-                results= optimization.QueueResults;
+                results = opt.QueueResults;
+                finalResult.PhysicalCounters = opt.OptimalPhysicalResources;
+                finalResult.ActiveCounters = opt.OptimalActiveResources;
             }
             else
             {
-                // Single run: Apply staffing percentage to physical resources immediately
-                int activeN = (int)Math.Max(1, Math.Round(input.NumberOfResources * (input.StaffingPercentage / 100.0)));
+                int activeN = (int)Math.Max(1, Math.Round(originalPhysical * (input.StaffingPercentage / 100.0)));
                 input.NumberOfResources = activeN;
-
                 results = SolveWithoutOptimization(input);
+
+                finalResult.PhysicalCounters = originalPhysical;
+                finalResult.ActiveCounters = activeN;
             }
 
-            // 3. Save the history snapshot ONCE, no matter which block ran above
             foreach (Passenger p in results.ProcessedPassengers)
             {
                 p.History[FacilityType.BagDrop] = new FacilityRecord
@@ -58,13 +60,13 @@ namespace AirportPlanning.Facilities
                 };
             }
 
-            // 4. Advance the passengers and return
             AdvancePassengers(results.ProcessedPassengers);
-            return results;
+
+            finalResult.QueueResults = results;
+            return finalResult;
         }
 
-        private QueueResults SolveWithoutOptimization(
-            BagDropInputs input)
+        private QueueResults SolveWithoutOptimization(BagDropInputs input)
         {
             return ExecuteFacility(
                 input.Passengers,

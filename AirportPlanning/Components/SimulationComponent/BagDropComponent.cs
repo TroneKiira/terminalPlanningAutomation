@@ -1,170 +1,82 @@
-﻿using Grasshopper.Kernel;
+﻿using AirportPlanning.Core.Inputs;
+using AirportPlanning.Core.Models;
+using AirportPlanning.Facilities;
+using Grasshopper.Kernel;
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
-
-using AirportPlanning.Facilities;
-using AirportPlanning.Core.Inputs;
-using AirportPlanning.Core.Models;
+using System.Linq;
 
 namespace AirportPlanning.Components.SimulationComponent
 {
     public class BagDropComponent : GH_Component
     {
-        /// <summary>
-        /// Initializes a new instance of the BagDropComponent class.
-        /// </summary>
         public BagDropComponent()
-          : base("Bag Drop", "BD",
-                "Simulates passenger processing at the bag drop facility.",
-                "Airport Planning", "Simulation")
+          : base("Bag Drop", "BD", "Simulates passenger processing at the bag drop facility.", "Airport Planning", "Simulation")
         {
         }
 
-        /// <summary>
-        /// Registers all the input parameters for this component.
-        /// </summary>
-        protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
+        protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter(
-                "Passengers",
-                "PAX",
-                "Passenger population entering the bag drop facility.",
-                GH_ParamAccess.list);
-
-            pManager.AddGenericParameter(
-                "Service Profile",
-                "SP",
-                "Bag drop service time profile.",
-                GH_ParamAccess.item);
-
-            pManager.AddIntegerParameter(
-                "Bag Drop Counters",
-                "C",
-                "Number of available bag drop counters.",
-                GH_ParamAccess.item,
-                8);
-
-            pManager.AddBooleanParameter(
-                "Optimize Counters",
-                "O",
-                "Automatically determine the required number of bag drop counters.",
-                GH_ParamAccess.item,
-                false);
-
-            pManager.AddNumberParameter(
-                "Target Wait",
-                "TW",
-                "Target 95th percentile passenger waiting time (minutes).",
-                GH_ParamAccess.item,
-                10.0);
-
-            pManager.AddIntegerParameter(
-                "Random Seed",
-                "S",
-                "Random number seed.",
-                GH_ParamAccess.item,
-                1);
+            pManager.AddGenericParameter("Passengers", "PAX", "Passenger population entering bag drop.", GH_ParamAccess.list);
+            pManager.AddGenericParameter("Service Profile", "SP", "Bag drop service time profile.", GH_ParamAccess.item);
+            pManager.AddNumberParameter("Bag Drop Counters", "C", "Number of available bag drop counters.", GH_ParamAccess.item, 8.0);
+            pManager.AddBooleanParameter("Optimize Counters", "O", "Automatically determine required counters.", GH_ParamAccess.item, false);
+            pManager.AddNumberParameter("Target Wait", "TW", "Target 95th percentile wait time.", GH_ParamAccess.item, 10.0);
+            pManager.AddNumberParameter("Staffing Percentage", "S%", "Percentage of physical desks actively staffed.", GH_ParamAccess.item, 100.0);
+            pManager.AddNumberParameter("Random Seed", "S", "Random number seed.", GH_ParamAccess.item, 1.0);
         }
 
-        /// <summary>
-        /// Registers all the output parameters for this component.
-        /// </summary>
-        protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
+        protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter(
-                "Passengers",
-                "PAX",
-                "Passenger population after bag drop processing.",
-                GH_ParamAccess.list);
-
-            pManager.AddGenericParameter(
-                "Queue Results",
-                "QR",
-                "Queue simulation results for the bag drop facility.",
-                GH_ParamAccess.item);
+            pManager.AddGenericParameter("Passengers", "PAX", "Passenger population after bag drop.", GH_ParamAccess.list);
+            pManager.AddGenericParameter("Queue Results", "QR", "Queue simulation results.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Physical Counters", "C", "Physical counters required/used.", GH_ParamAccess.item);
         }
 
-        /// <summary>
-        /// This is the method that actually does the work.
-        /// </summary>
-        /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            List<Passenger> passengers =
-        new List<Passenger>();
-
-            ServiceProfile serviceProfile =
-                null;
-
-            int counters = 0;
+            List<Passenger> inPassengers = new List<Passenger>();
+            ServiceProfile serviceProfile = null;
+            double countersDbl = 0;
             bool optimize = false;
             double targetWait = 0.0;
-            int seed = 1;
+            double staffingPercentage = 100.0;
+            double seedDbl = 1.0;
 
-            if (!DA.GetDataList(0, passengers))
-                return;
+            if (!DA.GetDataList(0, inPassengers)) return;
+            if (!DA.GetData(1, ref serviceProfile)) return;
+            if (!DA.GetData(2, ref countersDbl)) return;
+            if (!DA.GetData(3, ref optimize)) return;
+            if (!DA.GetData(4, ref targetWait)) return;
+            if (!DA.GetData(5, ref staffingPercentage)) return;
+            if (!DA.GetData(6, ref seedDbl)) return;
 
-            if (!DA.GetData(1, ref serviceProfile))
-                return;
+            // DEEP CLONE AND CASTING
+            List<Passenger> passengers = inPassengers.Select(p => p.Clone()).ToList();
+            int counters = (int)Math.Round(countersDbl);
+            int seed = (int)Math.Round(seedDbl);
 
-            if (!DA.GetData(2, ref counters))
-                return;
-
-            if (!DA.GetData(3, ref optimize))
-                return;
-
-            if (!DA.GetData(4, ref targetWait))
-                return;
-
-            if (!DA.GetData(5, ref seed))
-                return;
-
-            BagDropInputs input =
-                new BagDropInputs
-                {
-                    Passengers = passengers,
-                    ServiceProfile = serviceProfile,
-                    NumberOfResources = counters,
-                    OptimizeResources = optimize,
-                    TargetMaximumWait = targetWait,
-                    Seed = seed
-                };
-
-            BagDropSolver solver =
-                new BagDropSolver();
-
-            QueueResults results =
-                solver.Solve(input);
-
-            DA.SetDataList(
-                0,
-                results.Passengers);
-
-            DA.SetData(
-                1,
-                results);
-        }
-
-        /// <summary>
-        /// Provides an Icon for the component.
-        /// </summary>
-        protected override System.Drawing.Bitmap Icon
-        {
-            get
+            BagDropInputs input = new BagDropInputs
             {
-                //You can add image files to your project resources and access them like this:
-                // return Resources.IconForThisComponent;
-                return null;
-            }
+                Passengers = passengers,
+                ServiceProfile = serviceProfile,
+                NumberOfResources = counters,
+                OptimizeResources = optimize,
+                TargetMaximumWait = targetWait,
+                Seed = seed,
+                StaffingPercentage = staffingPercentage
+            };
+
+            BagDropSolver solver = new BagDropSolver();
+            BagDropResults finalResult = solver.Solve(input);
+
+            DA.SetDataList(0, finalResult.QueueResults.Passengers);
+            DA.SetData(1, finalResult.QueueResults);
+            DA.SetData(2, finalResult.PhysicalCounters);
         }
 
-        /// <summary>
-        /// Gets the unique ID for this component. Do not change this ID after release.
-        /// </summary>
-        public override Guid ComponentGuid
-        {
-            get { return new Guid("FDF300D4-0E41-4EB1-9A05-93EF9AA5BE3B"); }
-        }
+        protected override System.Drawing.Bitmap Icon { get { return null; } }
+        public override Guid ComponentGuid { get { return new Guid("FDF300D4-0E41-4EB1-9A05-93EF9AA5BE3B"); } }
     }
 }

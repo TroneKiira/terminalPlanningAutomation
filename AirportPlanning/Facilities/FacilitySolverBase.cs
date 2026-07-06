@@ -29,21 +29,34 @@ namespace AirportPlanning.Facilities
             _metricsCalculator = new QueueMetricsCalculator();
         }
 
-        protected List<Passenger> FilterPassengers(IEnumerable<Passenger> passengers, Func<Passenger, bool> predicate)
+        protected List<Passenger> FilterPassengers(
+            IEnumerable<Passenger> passengers,
+            Func<Passenger, bool> predicate)
         {
-            return passengers.Where(predicate).ToList();
+            // FIX: Explicitly sort passengers chronologically to prevent Time-Travel bugs!
+            return passengers
+                .Where(predicate)
+                .OrderBy(p => p.ArrivalTime)
+                .ToList();
         }
 
-        protected List<QueueResource> PrepareQueue(List<Passenger> passengers, int numberOfResources, ServiceProfile serviceProfile, Random random)
+        protected List<QueueResource> PrepareQueue(
+            List<Passenger> passengers,
+            int numberOfResources,
+            ServiceProfile serviceProfile,
+            Random random)
         {
             AssignServiceTimes(passengers, serviceProfile, random);
             return QueueResource.Create(numberOfResources);
         }
 
-        protected QueueResults SimulateQueue(List<Passenger> passengers, List<QueueResource> resources)
+        protected QueueResults SimulateQueue(
+            List<Passenger> passengers,
+            List<QueueResource> resources)
         {
             _queueSimulator.ResetPassengers(passengers);
             _queueSimulator.ResetResources(resources);
+
             _queueSimulator.RunQueue(passengers, resources);
 
             QueueResults results = _metricsCalculator.Calculate(passengers, resources);
@@ -54,7 +67,10 @@ namespace AirportPlanning.Facilities
             return results;
         }
 
-        protected void AssignServiceTimes(List<Passenger> passengers, ServiceProfile serviceProfile, Random random)
+        protected void AssignServiceTimes(
+            List<Passenger> passengers,
+            ServiceProfile serviceProfile,
+            Random random)
         {
             List<double> serviceTimes = _serviceGenerator.Generate(
                     passengers.Count,
@@ -72,8 +88,12 @@ namespace AirportPlanning.Facilities
         {
             foreach (Passenger passenger in passengers)
             {
-                passenger.ArrivalTime = passenger.EndServiceTime + passenger.WalkingTime;
+                // FIX: Facilities should only update the clock to when service finished!
+                // The WalkingComponent will handle adding travel times.
+                passenger.ArrivalTime = passenger.EndServiceTime;
                 passenger.QueueArrivalTime = passenger.ArrivalTime;
+
+                passenger.WalkingTime = 0.0; // Reset it so it doesn't carry over accidentally
             }
         }
 
@@ -110,8 +130,6 @@ namespace AirportPlanning.Facilities
 
             QueueResults results = SimulateQueue(facilityPassengers, resources);
 
-            // FIX: Removed AdvancePassengers from here so the optimizer loop doesn't mutate state!
-
             results.Passengers = allPassengers;
 
             return results;
@@ -123,11 +141,7 @@ namespace AirportPlanning.Facilities
             List<QueueResource> resources)
         {
             QueueResults results = SimulateQueue(facilityPassengers, resources);
-
-            // FIX: Removed AdvancePassengers from here too!
-
             results.Passengers = allPassengers;
-
             return results;
         }
     }

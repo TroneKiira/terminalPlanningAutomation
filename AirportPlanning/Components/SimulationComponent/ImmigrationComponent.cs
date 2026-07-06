@@ -1,176 +1,86 @@
-﻿using Grasshopper.Kernel;
+﻿using AirportPlanning.Core.Distributions;
+using AirportPlanning.Core.Generation;
+using AirportPlanning.Core.Inputs;
+using AirportPlanning.Core.Models;
+using AirportPlanning.Core.Queueing;
+using AirportPlanning.Core.Walking;
+using AirportPlanning.Facilities.CheckIn;
+using AirportPlanning.Facilities.Immigration;
+using Grasshopper.Kernel;
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
-
-using AirportPlanning.Core.Inputs;
-using AirportPlanning.Core.Models;
-using AirportPlanning.Core.Distributions;
-using AirportPlanning.Core.Generation;
-using AirportPlanning.Core.Walking;
-using AirportPlanning.Core.Queueing;
-using AirportPlanning.Facilities.CheckIn;
-using AirportPlanning.Facilities.Immigration;
+using System.Linq;
 
 namespace AirportPlanning.Components.SimulationComponent
 {
     public class ImmigrationComponent : GH_Component
     {
-        /// <summary>
-        /// Initializes a new instance of the ImmigrationSolver class.
-        /// </summary>
         public ImmigrationComponent()
-          : base("Immigration", "IMM",
-                "Simulates passenger processing at immigration.",
-                "Airport Planning", "Simulation")
+          : base("Immigration", "IMM", "Simulates passenger processing at immigration.", "Airport Planning", "Simulation")
         {
         }
 
-        /// <summary>
-        /// Registers all the input parameters for this component.
-        /// </summary>
-        protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
+        protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter(
-        "Passengers",
-        "PAX",
-        "Passenger population entering the immigration facility.",
-        GH_ParamAccess.list);
-
-            pManager.AddGenericParameter(
-                "Service Profile",
-                "SP",
-                "Immigration service time profile.",
-                GH_ParamAccess.item);
-
-            pManager.AddIntegerParameter(
-                "Immigration Booths",
-                "B",
-                "Number of available immigration booths.",
-                GH_ParamAccess.item,
-                8);
-
-            pManager.AddBooleanParameter(
-                "Optimize Booths",
-                "O",
-                "Automatically determine the required number of immigration booths.",
-                GH_ParamAccess.item,
-                false);
-
-            pManager.AddNumberParameter(
-                "Target Wait",
-                "TW",
-                "Target 95th percentile passenger waiting time (minutes).",
-                GH_ParamAccess.item,
-                10.0);
-
-            pManager.AddIntegerParameter(
-                "Random Seed",
-                "S",
-                "Random number seed.",
-                GH_ParamAccess.item,
-                1);
+            pManager.AddGenericParameter("Passengers", "PAX", "Passenger population entering immigration.", GH_ParamAccess.list);
+            pManager.AddGenericParameter("Service Profile", "SP", "Immigration service time profile.", GH_ParamAccess.item);
+            pManager.AddNumberParameter("Immigration Booths", "B", "Number of available immigration booths.", GH_ParamAccess.item, 8.0);
+            pManager.AddBooleanParameter("Optimize Booths", "O", "Automatically determine required booths.", GH_ParamAccess.item, false);
+            pManager.AddNumberParameter("Target Wait", "TW", "Target 95th percentile wait time.", GH_ParamAccess.item, 10.0);
+            pManager.AddNumberParameter("Staffing Percentage", "S%", "Percentage of physical booths staffed.", GH_ParamAccess.item, 100.0);
+            pManager.AddNumberParameter("Random Seed", "S", "Random number seed.", GH_ParamAccess.item, 1.0);
         }
 
-        /// <summary>
-        /// Registers all the output parameters for this component.
-        /// </summary>
-        protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
+        protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter(
-                 "Passengers",
-                 "PAX",
-                 "Passenger population after immigration processing.",
-                 GH_ParamAccess.list);
-
-            pManager.AddGenericParameter(
-                "Queue Results",
-                "QR",
-                "Queue simulation results for the immigration facility.",
-                GH_ParamAccess.item);
+            pManager.AddGenericParameter("Passengers", "PAX", "Passenger population after immigration.", GH_ParamAccess.list);
+            pManager.AddGenericParameter("Queue Results", "QR", "Queue simulation results.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Physical Booths", "B", "Physical booths required/used.", GH_ParamAccess.item);
         }
-        
 
-        /// <summary>
-        /// This is the method that actually does the work.
-        /// </summary>
-        /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            List<Passenger> passengers =
-       new List<Passenger>();
-
-            ServiceProfile serviceProfile =
-                null;
-
-            int booths = 0;
+            List<Passenger> inPassengers = new List<Passenger>();
+            ServiceProfile serviceProfile = null;
+            double boothsDbl = 0;
             bool optimize = false;
             double targetWait = 0.0;
-            int seed = 1;
+            double staffingPercentage = 100.0;
+            double seedDbl = 1.0;
 
-            if (!DA.GetDataList(0, passengers))
-                return;
+            if (!DA.GetDataList(0, inPassengers)) return;
+            if (!DA.GetData(1, ref serviceProfile)) return;
+            if (!DA.GetData(2, ref boothsDbl)) return;
+            if (!DA.GetData(3, ref optimize)) return;
+            if (!DA.GetData(4, ref targetWait)) return;
+            if (!DA.GetData(5, ref staffingPercentage)) return;
+            if (!DA.GetData(6, ref seedDbl)) return;
 
-            if (!DA.GetData(1, ref serviceProfile))
-                return;
+            List<Passenger> passengers = inPassengers.Select(p => p.Clone()).ToList();
+            int booths = (int)Math.Round(boothsDbl);
+            int seed = (int)Math.Round(seedDbl);
 
-            if (!DA.GetData(2, ref booths))
-                return;
-
-            if (!DA.GetData(3, ref optimize))
-                return;
-
-            if (!DA.GetData(4, ref targetWait))
-                return;
-
-            if (!DA.GetData(5, ref seed))
-                return;
-
-            ImmigrationInputs input =
-                new ImmigrationInputs
-                {
-                    Passengers = passengers,
-                    ServiceProfile = serviceProfile,
-                    NumberOfResources = booths,
-                    OptimizeResources = optimize,
-                    TargetMaximumWait = targetWait,
-                    Seed = seed
-                };
-
-            ImmigrationSolver solver =
-                new ImmigrationSolver();
-
-            QueueResults results =
-                solver.Solve(input);
-
-            DA.SetDataList(
-                0,
-                results.Passengers);
-
-            DA.SetData(
-                1,
-                results);
-        }
-
-        /// <summary>
-        /// Provides an Icon for the component.
-        /// </summary>
-        protected override System.Drawing.Bitmap Icon
-        {
-            get
+            ImmigrationInputs input = new ImmigrationInputs
             {
-                //You can add image files to your project resources and access them like this:
-                // return Resources.IconForThisComponent;
-                return null;
-            }
+                Passengers = passengers,
+                ServiceProfile = serviceProfile,
+                NumberOfResources = booths,
+                OptimizeResources = optimize,
+                TargetMaximumWait = targetWait,
+                Seed = seed,
+                StaffingPercentage = staffingPercentage
+            };
+
+            ImmigrationSolver solver = new ImmigrationSolver();
+            ImmigrationResults finalResult = solver.Solve(input);
+
+            DA.SetDataList(0, finalResult.QueueResults.Passengers);
+            DA.SetData(1, finalResult.QueueResults);
+            DA.SetData(2, finalResult.PhysicalCounters);
         }
 
-        /// <summary>
-        /// Gets the unique ID for this component. Do not change this ID after release.
-        /// </summary>
-        public override Guid ComponentGuid
-        {
-            get { return new Guid("4E63995C-ECAF-47A9-A077-A940030621B6"); }
-        }
+        protected override System.Drawing.Bitmap Icon { get { return null; } }
+        public override Guid ComponentGuid { get { return new Guid("4E63995C-ECAF-47A9-A077-A940030621B6"); } }
     }
 }

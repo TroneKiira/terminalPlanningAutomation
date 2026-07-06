@@ -8,12 +8,24 @@ namespace AirportPlanning.Core.Models
 {
     public class FacilityRecord
     {
-        // FIX: Changed to double to match passenger precision
         public double ArrivalTime { get; set; }
         public double StartServiceTime { get; set; }
         public double EndServiceTime { get; set; }
         public double WaitTime { get; set; }
         public int AssignedResource { get; set; }
+
+        // NEW: Deep clone method
+        public FacilityRecord Clone()
+        {
+            return new FacilityRecord
+            {
+                ArrivalTime = this.ArrivalTime,
+                StartServiceTime = this.StartServiceTime,
+                EndServiceTime = this.EndServiceTime,
+                WaitTime = this.WaitTime,
+                AssignedResource = this.AssignedResource
+            };
+        }
     }
 
     public enum FacilityType

@@ -14,38 +14,37 @@ namespace AirportPlanning.Facilities.Immigration
     {
         private readonly QueueOptimizer _optimizer;
 
-        public ImmigrationSolver()
-            : base()
+        public ImmigrationSolver() : base()
         {
             _optimizer = new QueueOptimizer();
         }
 
-        public QueueResults Solve(ImmigrationInputs input)
+        public ImmigrationResults Solve(ImmigrationInputs input)
         {
+            ImmigrationResults finalResult = new ImmigrationResults();
             QueueResults results;
+            int originalPhysical = input.NumberOfResources;
 
             if (input.OptimizeResources)
             {
-                OptimizationResult optimization =
-                    _optimizer.Optimize(
-                        input,
-                        SolveWithoutOptimization,
-                        (i, r) => i.NumberOfResources = r,
-                        i => i.NumberOfResources,
-                        input.TargetMaximumWait,
-                        input.StaffingPercentage);
+                OptimizationResult opt = _optimizer.Optimize(
+                        input, SolveWithoutOptimization, (i, r) => i.NumberOfResources = r,
+                        i => i.NumberOfResources, input.TargetMaximumWait, input.StaffingPercentage);
 
-                results = optimization.QueueResults;
+                results = opt.QueueResults;
+                finalResult.PhysicalCounters = opt.OptimalPhysicalResources;
+                finalResult.ActiveCounters = opt.OptimalActiveResources;
             }
             else
             {
-                int activeN = (int)Math.Max(1, Math.Round(input.NumberOfResources * (input.StaffingPercentage / 100.0)));
+                int activeN = (int)Math.Max(1, Math.Round(originalPhysical * (input.StaffingPercentage / 100.0)));
                 input.NumberOfResources = activeN;
-
                 results = SolveWithoutOptimization(input);
+
+                finalResult.PhysicalCounters = originalPhysical;
+                finalResult.ActiveCounters = activeN;
             }
 
-            // NEW: Save the historical record for Immigration
             foreach (Passenger p in results.ProcessedPassengers)
             {
                 p.History[FacilityType.Immigration] = new FacilityRecord
@@ -59,18 +58,15 @@ namespace AirportPlanning.Facilities.Immigration
             }
 
             AdvancePassengers(results.ProcessedPassengers);
-            return results;
+            finalResult.QueueResults = results;
+            return finalResult;
         }
 
-        private QueueResults SolveWithoutOptimization(
-            ImmigrationInputs input)
+        private QueueResults SolveWithoutOptimization(ImmigrationInputs input)
         {
             return ExecuteFacility(
-                input.Passengers,
-                p => p.PassengerType == PassengerType.International,
-                input.NumberOfResources,
-                input.ServiceProfile,
-                new Random(input.Seed));
+                input.Passengers, p => p.PassengerType == PassengerType.International,
+                input.NumberOfResources, input.ServiceProfile, new Random(input.Seed));
         }
     }
 }

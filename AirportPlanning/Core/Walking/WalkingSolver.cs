@@ -10,19 +10,22 @@ namespace AirportPlanning.Core.Walking
 {
     public class WalkingSolver
     {
-        public List<Passenger> Solve(
-            WalkingInputs input)
+        public List<Passenger> Solve(WalkingInputs input)
         {
-            
-
-            foreach (Passenger passenger in input.Passengers)
+            foreach (Passenger p in input.Passengers)
             {
-                passenger.WalkingTime =
-                 input.Distance / passenger.WalkingSpeed;
+                // Calculate time in seconds (Distance / Speed)
+                double timeInSeconds = input.Distance / p.WalkingSpeed;
 
-                passenger.ArrivalTime =
-                    passenger.EndServiceTime +
-                    passenger.WalkingTime;
+                // Convert to minutes
+                double walkingTimeMinutes = timeInSeconds / 60.0;
+
+                // Update passenger metrics
+                p.WalkingTime = walkingTimeMinutes;
+
+                // Advance their internal clock by the walking duration!
+                p.ArrivalTime += walkingTimeMinutes;
+                p.QueueArrivalTime = p.ArrivalTime;
             }
 
             return input.Passengers;

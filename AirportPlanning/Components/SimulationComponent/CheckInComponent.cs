@@ -144,93 +144,56 @@ namespace AirportPlanning.Components.SimulationComponent
         protected override void SolveInstance(
      IGH_DataAccess DA)
         {
-            List<Passenger> passengers =
-                new List<Passenger>();
+            List<Passenger> inPassengers = new List<Passenger>();
+            ServiceProfile serviceProfile = null;
 
-            ServiceProfile serviceProfile =
-                null;
-
-            int counters = 0;
+            int countersDbl = 0;
             bool optimize = false;
             double targetWait = 0.0;
-            int seed = 1;
-            double staffingPercentage = 0;
+            double staffingPercentage = 100.0;
+            int seedDbl = 1;
 
-            if (!DA.GetDataList(0, passengers))
-                return;
+            if (!DA.GetDataList(0, inPassengers)) return;
+            if (!DA.GetData(1, ref serviceProfile)) return;
+            if (!DA.GetData(2, ref countersDbl)) return;
+            if (!DA.GetData(3, ref optimize)) return;
+            if (!DA.GetData(4, ref targetWait)) return;
+            if (!DA.GetData(5, ref staffingPercentage)) return;
+            if (!DA.GetData(6, ref seedDbl)) return;
 
-            if (!DA.GetData(1, ref serviceProfile))
-                return;
+            // FIX 1: Deep clone passengers so Grasshopper toggling doesn't mutate them!
+            List<Passenger> passengers = inPassengers.Select(p => p.Clone()).ToList();
 
-            if (!DA.GetData(2, ref counters))
-                return;
+            int counters = countersDbl;
+            int seed = seedDbl;
 
-            if (!DA.GetData(3, ref optimize))
-                return;
+            CheckInInputs input = new CheckInInputs
+            {
+                Passengers = passengers,
+                ServiceProfile = serviceProfile,
+                NumberOfResources = counters,
+                OptimizeResources = optimize,
+                TargetMaximumWait = targetWait,
+                Seed = seed,
+                StaffingPercentage = staffingPercentage
+            };
 
-            if (!DA.GetData(4, ref targetWait))
+            CheckInSolver solver = new CheckInSolver();
+            CheckInResults finalResult = solver.Solve(input);
+            QueueResults results = finalResult.QueueResults;
 
-            if (!DA.GetData(5, ref staffingPercentage))
-                    return;
-          
-            if (!DA.GetData(6, ref seed))
-                return;
+            DA.SetDataList(0, results.Passengers);
+            DA.SetDataList(1, results.ProcessedPassengers);
+            DA.SetData(2, results);
 
-            
+            // FIX 2: Output Physical Counters, so lower staffing = more physical counters required!
+            DA.SetData(3, finalResult.PhysicalCounters);
 
-            CheckInInputs input =
-                new CheckInInputs
-                {
-                    Passengers = passengers,
-                    ServiceProfile = serviceProfile,
-                    NumberOfResources = counters,
-                    OptimizeResources = optimize,
-                    TargetMaximumWait = targetWait,
-                    Seed = seed,
-                    StaffingPercentage = staffingPercentage
-                };
-
-            CheckInSolver solver =
-                new CheckInSolver();
-
-            QueueResults results =
-                solver.Solve(input);
-
-            DA.SetDataList(
-                0,
-                results.Passengers);
-
-            DA.SetDataList(
-                1,
-                results.ProcessedPassengers);
-
-            DA.SetData(
-                2,
-                results);
-
-            DA.SetData(
-                3,
-                results.Resources.Count);
-
-            DA.SetData(
-                4,
-                results.PeakQueueLength);
-
-            DA.SetData(
-                5,
-                results.AverageWait);
-
-            DA.SetData(
-                6,
-                results.MaxWait);
-
-            DA.SetData(
-                7,
-                results.Wait95);
-
-            DA.SetDataList(
-                8,
-                results.CounterUtilization);
+            DA.SetData(4, results.PeakQueueLength);
+            DA.SetData(5, results.AverageWait);
+            DA.SetData(6, results.MaxWait);
+            DA.SetData(7, results.Wait95);
+            DA.SetDataList(8, results.CounterUtilization);
         }
 
         /// <summary>

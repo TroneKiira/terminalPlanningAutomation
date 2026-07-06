@@ -29,7 +29,7 @@ namespace AirportPlanning.Core.Queueing
             int startSearch = 1;
 
             // FIX 1: Increased the search space to handle massive passenger loads
-            int endSearch = Math.Max(200, physicalN * 3);
+            int endSearch = Math.Max(1200, physicalN * 3);
 
             int chosenN = physicalN;
             int chosenActiveN = physicalN;

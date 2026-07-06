@@ -13,41 +13,40 @@ namespace AirportPlanning.Facilities.Security
     {
         private readonly QueueOptimizer _optimizer;
 
-        public SecuritySolver()
-            : base()
+        public SecuritySolver() : base()
         {
             _optimizer = new QueueOptimizer();
         }
 
-        public QueueResults Solve(SecurityInputs input)
+        public SecurityResults Solve(SecurityInputs input)
         {
+            SecurityResults finalResult = new SecurityResults();
             QueueResults results;
+            int originalPhysical = input.NumberOfResources;
 
             if (input.OptimizeResources)
             {
-                OptimizationResult optimization =
-                    _optimizer.Optimize(
-                        input,
-                        SolveWithoutOptimization,
-                        (i, r) => i.NumberOfResources = r,
-                        i => i.NumberOfResources,
-                        input.TargetMaximumWait,
-                        input.StaffingPercentage); // NEW: Pass StaffingPercentage
+                OptimizationResult opt = _optimizer.Optimize(
+                        input, SolveWithoutOptimization, (i, r) => i.NumberOfResources = r,
+                        i => i.NumberOfResources, input.TargetMaximumWait, input.StaffingPercentage);
 
-                results= optimization.QueueResults;
+                results = opt.QueueResults;
+                finalResult.PhysicalCounters = opt.OptimalPhysicalResources;
+                finalResult.ActiveCounters = opt.OptimalActiveResources;
             }
             else
             {
-                // Single run: Apply staffing percentage to physical resources immediately
-                int activeN = (int)Math.Max(1, Math.Round(input.NumberOfResources * (input.StaffingPercentage / 100.0)));
+                int activeN = (int)Math.Max(1, Math.Round(originalPhysical * (input.StaffingPercentage / 100.0)));
                 input.NumberOfResources = activeN;
-
                 results = SolveWithoutOptimization(input);
+
+                finalResult.PhysicalCounters = originalPhysical;
+                finalResult.ActiveCounters = activeN;
             }
-            // 3. Save the history snapshot ONCE, no matter which block ran above
+
             foreach (Passenger p in results.ProcessedPassengers)
             {
-                p.History[FacilityType.BagDrop] = new FacilityRecord
+                p.History[FacilityType.Security] = new FacilityRecord
                 {
                     ArrivalTime = p.ArrivalTime,
                     StartServiceTime = p.StartServiceTime,
@@ -57,20 +56,15 @@ namespace AirportPlanning.Facilities.Security
                 };
             }
 
-            // 4. Advance the passengers and return
             AdvancePassengers(results.ProcessedPassengers);
-            return results;
+            finalResult.QueueResults = results;
+            return finalResult;
         }
 
-        private QueueResults SolveWithoutOptimization(
-            SecurityInputs input)
+        private QueueResults SolveWithoutOptimization(SecurityInputs input)
         {
             return ExecuteFacility(
-                input.Passengers,
-                p => true,
-                input.NumberOfResources,
-                input.ServiceProfile,
-                new Random(input.Seed));
+                input.Passengers, p => true, input.NumberOfResources, input.ServiceProfile, new Random(input.Seed));
         }
     }
 }

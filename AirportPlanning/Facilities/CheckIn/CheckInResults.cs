@@ -9,8 +9,8 @@ namespace AirportPlanning.Facilities.CheckIn
 {
     public class CheckInResults
     {
-        public int NumberOfCounters { get; set; }
+        public int PhysicalCounters { get; set; }
+        public int ActiveCounters { get; set; }
         public QueueResults QueueResults { get; set; }
-
     }
 }
