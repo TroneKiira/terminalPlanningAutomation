@@ -128,6 +128,10 @@ namespace AirportPlanning.Core.Models
                 Id = this.Id,
                 PassengerType = this.PassengerType,
                 Journey = this.Journey,
+
+                //  THIS IS THE CRITICAL LINE THAT SAVES THE FEMALES!
+                Gender = this.Gender,
+
                 UsesOnlineCheckIn = this.UsesOnlineCheckIn,
                 HasCheckedBag = this.HasCheckedBag,
                 ArrivalTime = this.ArrivalTime,

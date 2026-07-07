@@ -17,40 +17,44 @@ namespace AirportPlanning.Facility_Sizing.Sizers
             var procZone = GetZone(ZoneType.Processing);
             if (procZone != null && Context.Standards is SecurityStandards secStd)
             {
-                // Base X-Ray Area
-                double laneArea = secStd.Pitch * (secStd.Depth + secStd.DivestRecomposeAllowance);
-                double totalLaneArea = Context.OperationalData.ProcessorCount * laneArea;
+                int xrayCount = Context.OperationalData.ProcessorCount;
 
                 if (secStd.IsGenderSegregated && Context.PassengerSummary != null)
                 {
-                    // Get exact demographic ratios from the simulation
                     double totalPax = Context.PassengerSummary.TotalPassengers;
-                    double maleRatio = totalPax > 0 ? Context.PassengerSummary.MalePassengers / totalPax : 0.5;
-                    double femaleRatio = totalPax > 0 ? Context.PassengerSummary.FemalePassengers / totalPax : 0.5;
+                    double maleRatio = totalPax > 0 ? (double)Context.PassengerSummary.MalePassengers / totalPax : 0.70;
+                    double femaleRatio = totalPax > 0 ? (double)Context.PassengerSummary.FemalePassengers / totalPax : 0.30;
 
-                    // Calculate peak hourly demand (simplified approximation from simulation throughput)
-                    double peakHourlyDemand = Context.OperationalData.Throughput > 0 ? Context.OperationalData.Throughput : totalPax;
+                    double boothsPerXray = secStd.XRayThroughput / secStd.FriskingThroughput;
+                    int totalFriskingBooths = (int)Math.Ceiling(xrayCount * boothsPerXray);
 
-                    // Calculate total frisking booths needed
-                    int totalFriskingBooths = (int)Math.Ceiling(peakHourlyDemand / secStd.FriskingThroughput);
+                    int maleBooths = (int)Math.Round(totalFriskingBooths * maleRatio);
+                    int femaleBooths = totalFriskingBooths - maleBooths;
 
-                    // Split by exact gender ratio
-                    int maleBooths = (int)Math.Ceiling(totalFriskingBooths * maleRatio);
-                    int femaleBooths = (int)Math.Ceiling(totalFriskingBooths * femaleRatio);
+                    double xRayArea = xrayCount * (secStd.Pitch * (secStd.Depth + secStd.DivestRecomposeAllowance));
+                    double boothArea = (maleBooths + femaleBooths) * (secStd.FriskingBoothWidth * secStd.FriskingBoothDepth);
 
-                    double boothArea = secStd.FriskingBoothWidth * secStd.FriskingBoothDepth;
-                    double totalFriskingArea = (maleBooths + femaleBooths) * boothArea;
+                    procZone.Area = (xRayArea + boothArea) * 1.20;
 
-                    procZone.Area = totalLaneArea + totalFriskingArea;
+                    // NEW: Save the raw integers to the dictionary!
+                    Result.EquipmentCounts["X-Rays"] = xrayCount;
+                    Result.EquipmentCounts["Male WTMDs"] = maleBooths;
+                    Result.EquipmentCounts["Female WTMDs"] = femaleBooths;
 
+                    int pairedIslands = (int)Math.Ceiling(xrayCount / 2.0);
                     Result.PlanningAdvice.Add(new PlanningAdvice(
-                        "CISF Equipment Breakdown",
-                        $"Requires {Context.OperationalData.ProcessorCount} X-Rays, {maleBooths} Male WTMDs, and {femaleBooths} Female Enclosed Booths.",
+                        "Paired Island Layout",
+                        $"Consider grouping the {xrayCount} X-Rays into {pairedIslands} 'Paired Islands'. " +
+                        $"Each island will share an average of {Math.Round(boothsPerXray * 2, 1)} WTMD/Frisking points.",
                         "Info"));
                 }
                 else
                 {
-                    procZone.Area = totalLaneArea;
+                    double laneArea = secStd.Pitch * (secStd.Depth + secStd.DivestRecomposeAllowance);
+                    procZone.Area = xrayCount * laneArea;
+
+                    // Western layout just has X-Rays/Lanes
+                    Result.EquipmentCounts["Security Lanes"] = xrayCount;
                 }
             }
         }

@@ -17,18 +17,18 @@ namespace AirportPlanning.Components.FacilitySizingComponents
     public class FacilitySizerComponent : GH_Component
     {
         public FacilitySizerComponent()
-          : base("Facility Sizer", "SIZE",
-            "Calculates the required spatial program (areas) for a facility.",
-            "Airport Planning", "Facility Sizing")
-        {
-        }
+          : base("Facility Sizer", "SIZE", "Calculates the required spatial program (areas) for a facility.", "Airport Planning", "Facility Sizing") { }
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter("Operational Results", "RES", "Queue Results or Verification Results from the simulation.", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Operational Results", "RES", "Queue Results or Verification Results.", GH_ParamAccess.item);
             pManager.AddGenericParameter("Passengers", "PAX", "The passenger population.", GH_ParamAccess.list);
             pManager.AddGenericParameter("Standards", "STD", "Facility Standards.", GH_ParamAccess.item);
             pManager.AddGenericParameter("Template", "TPL", "Facility Template.", GH_ParamAccess.item);
+
+            // NEW: Optional input to force the Sizer to use the Physical Count!
+            pManager.AddIntegerParameter("Physical Count Override", "PC", "Optional: Plug in the Physical Lanes/Counters here to size the full building.", GH_ParamAccess.item);
+            pManager[4].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -40,30 +40,33 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             pManager.AddNumberParameter("Circulation Area", "CA", "Required circulation area (sqm).", GH_ParamAccess.item);
             pManager.AddTextParameter("Topology", "TOP", "Recommended architectural topology.", GH_ParamAccess.item);
             pManager.AddTextParameter("Advice", "ADV", "Planning advice and warnings.", GH_ParamAccess.list);
-            pManager.AddIntegerParameter("Male Passengers", "M", "Number of male passengers.", GH_ParamAccess.item);
-            pManager.AddIntegerParameter("Female Passengers", "F", "Number of female passengers.", GH_ParamAccess.item);
+
+            // NEW: Output the raw equipment data
+            pManager.AddTextParameter("Equipment Names", "EN", "Names of the required equipment.", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Equipment Counts", "EC", "Raw integer counts of the required equipment.", GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             object rawResultsObj = null;
+            
             List<Passenger> passengers = new List<Passenger>();
             FacilityStandards standards = null;
             FacilityTemplate template = null;
+            int physicalOverride = -1; // NEW
 
             if (!DA.GetData(0, ref rawResultsObj)) return;
             if (!DA.GetDataList(1, passengers)) return;
             if (!DA.GetData(2, ref standards)) return;
             if (!DA.GetData(3, ref template)) return;
+            DA.GetData(4, ref physicalOverride); // Optional
 
-            // FIX: Unwrap the Grasshopper Object Wrapper!
             object rawResults = rawResultsObj;
             if (rawResultsObj is Grasshopper.Kernel.Types.GH_ObjectWrapper wrapper)
             {
                 rawResults = wrapper.Value;
             }
 
-            // 1. Build Passenger Summary Data automatically and completely
             int total = passengers.Count;
             int domestic = passengers.Count(p => p.PassengerType == PassengerType.Domestic);
             int checkedBags = passengers.Count(p => p.HasCheckedBag);
@@ -74,15 +77,14 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             {
                 TotalPassengers = total,
                 DomesticPassengers = domestic,
-                InternationalPassengers = total - domestic, // Math is faster than running .Count() again
+                InternationalPassengers = total - domestic,
                 CheckedBagPassengers = checkedBags,
-                CabinBagPassengers = total - checkedBags,   // Anyone without a checked bag is cabin-only
+                CabinBagPassengers = total - checkedBags,
                 TransferPassengers = transfers,
                 MalePassengers = males,
                 FemalePassengers = total - males
             };
 
-            // 2. Build Operational Data from the raw simulation results
             var opData = new FacilityOperationalData();
 
             if (rawResults is QueueResults qr)
@@ -101,36 +103,26 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 opData.Utilization = pvr.Utilization;
                 opData.AnalysisMethod = AnalysisMethod.Analytical;
             }
-            else
+            else { return; }
+
+            // NEW: If you plugged in the Physical Count (40), override the active count (32)!
+            if (physicalOverride > 0)
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Invalid Operational Results input.");
-                return;
+                opData.ProcessorCount = physicalOverride;
             }
 
-            // 3. Build the Context
-            var context = new FacilitySizingContext
-            {
-                OperationalData = opData,
-                PassengerSummary = paxSummary,
-                Standards = standards,
-                Template = template
-            };
+            var context = new FacilitySizingContext { OperationalData = opData, PassengerSummary = paxSummary, Standards = standards, Template = template };
 
-            // 4. Select the correct polymorphic Sizer based on the Template type
             FacilitySizerBase sizer;
             if (template is CheckInTemplate) sizer = new CheckInSizer();
             else if (template is SecurityTemplate) sizer = new SecuritySizer();
             else if (template is ImmigrationTemplate) sizer = new ImmigrationSizer();
             else if (template is BagDropTemplate) sizer = new BagDropSizer();
             else if (template is PassengerVerificationTemplate) sizer = new PassengerVerificationSizer();
-            else
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Unknown Template Type.");
-                return;
-            }
-
-            // 5. Execute the Pipeline!
+            //else if (template is BoardingTemplate) sizer = new BoardingSizer();
+            else return;
             FacilitySizingResult result = sizer.SizeFacility(context);
+
 
             // 6. Output the data
             DA.SetData(0, result);
@@ -142,10 +134,11 @@ namespace AirportPlanning.Components.FacilitySizingComponents
 
             List<string> adviceStrings = result.PlanningAdvice.Select(a => $"[{a.Severity}] {a.Recommendation}: {a.Reason}").ToList();
             DA.SetDataList(6, adviceStrings);
-            DA.SetData(7, passengers.Count(p => p.Gender == PassengerGender.Male));
-            DA.SetData(8, passengers.Count(p => p.Gender == PassengerGender.Female));
-        }
 
+            // NEW: Output the raw lists!
+            DA.SetDataList(7, result.EquipmentCounts.Keys.ToList());
+            DA.SetDataList(8, result.EquipmentCounts.Values.ToList());
+        }
         protected override System.Drawing.Bitmap Icon { get { return null; } }
         public override Guid ComponentGuid { get { return new Guid("CC333333-DD44-EE55-FF66-007777777777"); } }
     }
