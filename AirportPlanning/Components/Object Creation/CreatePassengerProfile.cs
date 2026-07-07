@@ -69,6 +69,9 @@ namespace AirportPlanning.Components.Object_Creation
                 GH_ParamAccess.item,
                 1.0);
 
+            // NEW
+            pManager.AddNumberParameter("Male Probability", "M%", "Probability passenger is Male (0.0 to 1.0).", GH_ParamAccess.item, 0.5);
+
             pManager.AddGenericParameter(
                 "Arrival Profile",
                 "AP",
@@ -97,6 +100,7 @@ namespace AirportPlanning.Components.Object_Creation
             string name = string.Empty;
             double percentage = 0.0;
             int passengerType = 0;
+            double maleProb = 0.5;
             int journey = 0;
             double onlineCheckInProbability = 0.0;
             double checkedBagProbability = 0.0;
@@ -123,8 +127,8 @@ namespace AirportPlanning.Components.Object_Creation
 
             if (!DA.GetData(6, ref serviceTimeMultiplier))
                 return;
-
-            if (!DA.GetData(7, ref arrivalProfile))
+            if (!DA.GetData(7, ref maleProb)) return;
+            if (!DA.GetData(8, ref arrivalProfile))
                 return;
 
             PassengerProfile profile =
@@ -136,6 +140,7 @@ namespace AirportPlanning.Components.Object_Creation
                     OnlineCheckInProbability = onlineCheckInProbability,
                     CheckedBagProbability = checkedBagProbability,
                     ServiceTimeMultiplier = serviceTimeMultiplier,
+                    MaleProbability = maleProb,
                     ArrivalProfile = arrivalProfile
                 };
 

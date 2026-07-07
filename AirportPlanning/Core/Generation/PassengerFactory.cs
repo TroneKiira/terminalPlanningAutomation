@@ -36,6 +36,9 @@ namespace AirportPlanning.Core.Generation
             passenger.QueueArrivalTime =
                 arrivalTime;
 
+            // NEW: Assign Gender based on profile probability
+            passenger.Gender = rnd.NextDouble() <= profile.MaleProbability ? PassengerGender.Male : PassengerGender.Female;
+
             passenger.UsesOnlineCheckIn =
                 rnd.NextDouble() <=
                 profile.OnlineCheckInProbability;

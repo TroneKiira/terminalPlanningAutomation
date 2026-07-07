@@ -6,6 +6,12 @@ using System.Threading.Tasks;
 
 namespace AirportPlanning.Core.Models
 {
+
+    public enum PassengerGender
+    {
+        Male,
+        Female
+    }
     public class Passenger
     {
         // ============================================================
@@ -99,6 +105,8 @@ namespace AirportPlanning.Core.Models
         /// entered the current facility.
         /// Used during queue optimization.
         /// </summary>
+        /// 
+        public PassengerGender Gender { get; set; } 
         public void ResetQueueState()
         {
             ArrivalTime = QueueArrivalTime;

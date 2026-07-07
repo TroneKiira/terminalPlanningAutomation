@@ -52,11 +52,14 @@ namespace AirportPlanning.Core.Models
 
         public ArrivalProfile ArrivalProfile { get; set; }
 
+        public double MaleProbability { get; set; }
+
         public PassengerProfile()
         {
             Percentage = 0;
             OnlineCheckInProbability = 0;
             CheckedBagProbability = 0;
+            MaleProbability = 0.5; // Default to 50/50
             ServiceTimeMultiplier = 1.0;
         }
     }

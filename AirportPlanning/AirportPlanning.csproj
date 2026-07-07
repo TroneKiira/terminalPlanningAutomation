@@ -23,6 +23,15 @@
   </PropertyGroup>
   
   <ItemGroup>
+    <Compile Remove="Planning\**" />
+    <Compile Remove="Tests\**" />
+    <EmbeddedResource Remove="Planning\**" />
+    <EmbeddedResource Remove="Tests\**" />
+    <None Remove="Planning\**" />
+    <None Remove="Tests\**" />
+  </ItemGroup>
+  
+  <ItemGroup>
     <None Remove="Core\Generation\PassengerGenerator.cs~RF19717d2.TMP" />
   </ItemGroup>
   
@@ -44,12 +53,6 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" ExcludeAssets="all" GeneratePathProperty="true" />
     <Reference Include="$(PkgMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\System.Windows.Forms.dll" Private="False" />
     <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" />
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Planning\Formulae\" />
-    <Folder Include="Planning\FacilitySizers\" />
-    <Folder Include="Planning\Standards\" />
-    <Folder Include="Tests\" />
   </ItemGroup>
 
 </Project>
