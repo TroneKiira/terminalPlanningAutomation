@@ -17,7 +17,7 @@ namespace AirportPlanning.Components.FacilitySizingComponents
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddIntegerParameter("Facility Type", "T", "0=CheckIn, 1=BagDrop, 2=Security, 3=Immigration, 4=Verification, 5=Boarding", GH_ParamAccess.item, 0);
+            pManager.AddIntegerParameter("Facility Type", "T", "0=CheckIn, 1=BagDrop, 2=Security, 3=Immigration, 4=Verification, 5=Boarding , 6=Retail", GH_ParamAccess.item, 0);
             pManager.AddNumberParameter("Queue Area/Pax", "QA", "Square meters required per waiting passenger.", GH_ParamAccess.item, 1.2);
             pManager.AddNumberParameter("Processor Width", "PW", "Physical width of a single desk/lane (m).", GH_ParamAccess.item, 1.5);
             pManager.AddNumberParameter("Processor Depth", "PD", "Physical depth of a single desk/lane (m).", GH_ParamAccess.item, 2.0);
@@ -54,6 +54,8 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 case 2: std = new SecurityStandards(); break;
                 case 3: std = new ImmigrationStandards(); break;
                 case 4: std = new PassengerVerificationStandards(); break;
+                case 5: std = new BoardingStandards(); break;
+                case 6: std = new RetailStandards(); break;
                 default: std = new FacilityStandards(); break;
             }
 

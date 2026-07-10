@@ -22,6 +22,7 @@ namespace AirportPlanning.Components.FacilitySizingComponents
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
             pManager.AddGenericParameter("Operational Results", "RES", "Queue Results or Verification Results.", GH_ParamAccess.item);
+            pManager[0].Optional = true;
             pManager.AddGenericParameter("Passengers", "PAX", "The passenger population.", GH_ParamAccess.list);
             pManager.AddGenericParameter("Standards", "STD", "Facility Standards.", GH_ParamAccess.item);
             pManager.AddGenericParameter("Template", "TPL", "Facility Template.", GH_ParamAccess.item);
@@ -49,24 +50,18 @@ namespace AirportPlanning.Components.FacilitySizingComponents
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             object rawResultsObj = null;
-            
             List<Passenger> passengers = new List<Passenger>();
             FacilityStandards standards = null;
             FacilityTemplate template = null;
-            int physicalOverride = -1; // NEW
+            int physicalOverride = -1;
 
-            if (!DA.GetData(0, ref rawResultsObj)) return;
+            DA.GetData(0, ref rawResultsObj); // Optional
             if (!DA.GetDataList(1, passengers)) return;
             if (!DA.GetData(2, ref standards)) return;
             if (!DA.GetData(3, ref template)) return;
-            DA.GetData(4, ref physicalOverride); // Optional
+            DA.GetData(4, ref physicalOverride);
 
-            object rawResults = rawResultsObj;
-            if (rawResultsObj is Grasshopper.Kernel.Types.GH_ObjectWrapper wrapper)
-            {
-                rawResults = wrapper.Value;
-            }
-
+            // 1. Build Passenger Summary
             int total = passengers.Count;
             int domestic = passengers.Count(p => p.PassengerType == PassengerType.Domestic);
             int checkedBags = passengers.Count(p => p.HasCheckedBag);
@@ -85,27 +80,39 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 FemalePassengers = total - males
             };
 
+            // 2. Build Operational Data (🚨 FIX: Safely handle missing simulation data)
             var opData = new FacilityOperationalData();
 
-            if (rawResults is QueueResults qr)
+            if (rawResultsObj != null)
             {
-                opData.ProcessorCount = qr.ResourcesUsed > 0 ? qr.ResourcesUsed : qr.Resources.Count;
-                opData.PeakQueue = qr.PeakQueueLength;
-                opData.AverageWait = qr.AverageWait;
-                opData.MaximumWait = qr.MaxWait;
-                opData.Wait95 = qr.Wait95;
-                opData.AnalysisMethod = AnalysisMethod.Simulation;
-            }
-            else if (rawResults is PassengerVerificationResults pvr)
-            {
-                opData.ProcessorCount = pvr.RequiredGates;
-                opData.Throughput = pvr.GateCapacity;
-                opData.Utilization = pvr.Utilization;
-                opData.AnalysisMethod = AnalysisMethod.Analytical;
-            }
-            else { return; }
+                object rawResults = rawResultsObj;
+                if (rawResultsObj is Grasshopper.Kernel.Types.GH_ObjectWrapper wrapper)
+                    rawResults = wrapper.Value;
 
-            // NEW: If you plugged in the Physical Count (40), override the active count (32)!
+                if (rawResults is QueueResults qr)
+                {
+                    opData.ProcessorCount = qr.ResourcesUsed > 0 ? qr.ResourcesUsed : qr.Resources.Count;
+                    opData.PeakQueue = qr.PeakQueueLength;
+                    opData.AverageWait = qr.AverageWait;
+                    opData.MaximumWait = qr.MaxWait;
+                    opData.Wait95 = qr.Wait95;
+                    opData.AnalysisMethod = AnalysisMethod.Simulation;
+                }
+                else if (rawResults is PassengerVerificationResults pvr)
+                {
+                    opData.ProcessorCount = pvr.RequiredGates;
+                    opData.Throughput = pvr.GateCapacity;
+                    opData.Utilization = pvr.Utilization;
+                    opData.AnalysisMethod = AnalysisMethod.Analytical;
+                }
+            }
+            else
+            {
+                // If no simulation was plugged in, default to Analytical mode
+                opData.AnalysisMethod = AnalysisMethod.Analytical;
+                opData.ProcessorCount = 1; // Prevent multiply-by-zero errors
+            }
+
             if (physicalOverride > 0)
             {
                 opData.ProcessorCount = physicalOverride;
@@ -119,12 +126,12 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             else if (template is ImmigrationTemplate) sizer = new ImmigrationSizer();
             else if (template is BagDropTemplate) sizer = new BagDropSizer();
             else if (template is PassengerVerificationTemplate) sizer = new PassengerVerificationSizer();
-            //else if (template is BoardingTemplate) sizer = new BoardingSizer();
+            else if (template is BoardingTemplate) sizer = new BoardingSizer();
+            else if (template is RetailTemplate) sizer = new RetailSizer(); 
             else return;
+
             FacilitySizingResult result = sizer.SizeFacility(context);
 
-
-            // 6. Output the data
             DA.SetData(0, result);
             DA.SetData(1, result.TotalArea);
             DA.SetData(2, result.QueueArea);
@@ -134,8 +141,6 @@ namespace AirportPlanning.Components.FacilitySizingComponents
 
             List<string> adviceStrings = result.PlanningAdvice.Select(a => $"[{a.Severity}] {a.Recommendation}: {a.Reason}").ToList();
             DA.SetDataList(6, adviceStrings);
-
-            // NEW: Output the raw lists!
             DA.SetDataList(7, result.EquipmentCounts.Keys.ToList());
             DA.SetDataList(8, result.EquipmentCounts.Values.ToList());
         }

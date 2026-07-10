@@ -18,7 +18,7 @@ namespace AirportPlanning.Components.FacilitySizingComponents
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddIntegerParameter("Facility Type", "T", "0=CheckIn, 1=BagDrop, 2=Security, 3=Immigration, 4=Verification, 5=Boarding", GH_ParamAccess.item, 0);
+            pManager.AddIntegerParameter("Facility Type", "T", "0=CheckIn, 1=BagDrop, 2=Security, 3=Immigration, 4=Verification, 5=Boarding, 6=Retail", GH_ParamAccess.item, 0);
             pManager.AddTextParameter("Topology Override", "TOP", "Optional: Manually specify the topology.", GH_ParamAccess.item);
             pManager[1].Optional = true;
         }
@@ -48,7 +48,8 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 case 2: tpl = new SecurityTemplate(); break;
                 case 3: tpl = new ImmigrationTemplate(); break;
                 case 4: tpl = new PassengerVerificationTemplate(); break;
-                //case 5: tpl = new BoardingTemplate(); break;
+                case 5: tpl = new BoardingTemplate(); break;
+                case 6: tpl = new RetailTemplate(); break;
                 default: tpl = new CheckInTemplate(); break;
             }
 

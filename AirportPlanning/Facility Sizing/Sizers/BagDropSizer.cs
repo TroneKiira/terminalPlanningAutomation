@@ -19,6 +19,7 @@ namespace AirportPlanning.Facility_Sizing.Sizers
                 // Self-service bag drops are highly compact
                 double areaPerUnit = Context.Standards.Width * Context.Standards.Depth;
                 procZone.Area = Context.OperationalData.ProcessorCount * areaPerUnit;
+                Result.EquipmentCounts["Self-Service Bag Drops"] = Context.OperationalData.ProcessorCount;
             }
         }
     }

@@ -19,7 +19,9 @@ namespace AirportPlanning.Facility_Sizing.Sizers
             {
                 double areaPerDesk = Context.Standards.Pitch * Context.Standards.Depth;
                 procZone.Area = Context.OperationalData.ProcessorCount * areaPerDesk;
+                Result.EquipmentCounts["Check-In Desks"] = Context.OperationalData.ProcessorCount;
             }
+            
         }
 
         protected override void CalculateSupportArea()

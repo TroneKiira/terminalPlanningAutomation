@@ -20,7 +20,10 @@ namespace AirportPlanning.Facility_Sizing.Sizers
                 double pairedArea = Context.Standards.Width * Context.Standards.Depth;
                 int physicalBooths = (Context.OperationalData.ProcessorCount + 1) / 2;
                 procZone.Area = physicalBooths * pairedArea;
+                Result.EquipmentCounts["Immigration Booths"] = physicalBooths;
+                Result.EquipmentCounts["Active Agent Positions"] = Context.OperationalData.ProcessorCount;
             }
+
         }
 
         protected override FacilitySizingResult BuildResult()

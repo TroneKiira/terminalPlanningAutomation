@@ -35,6 +35,7 @@ namespace AirportPlanning.Core.Models
         Security,
         Immigration,
         PassengerVerification,
+        DepartureLounge, // NEW: Added for retail dwell time
         Boarding
     }
 }
