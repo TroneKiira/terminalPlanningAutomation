@@ -101,6 +101,10 @@ namespace AirportPlanning.Facility_Sizing.Base
 
             Result.TotalArea = Result.QueueArea + Result.ProcessingArea + Result.SupportArea + Result.CirculationArea;
 
+            // 🚨 THE FIX: Save the Processor Count and Peak Demand into the Result!
+            Result.ProcessorCount = Context.OperationalData.ProcessorCount;
+            Result.PeakDemand = Context.PassengerSummary.TotalPassengers;
+
             if (Context.Settings != null && Context.Settings.ExpansionFactor > 0)
             {
                 Result.TotalArea *= (1.0 + Context.Settings.ExpansionFactor);

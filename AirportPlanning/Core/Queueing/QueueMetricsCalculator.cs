@@ -103,8 +103,7 @@ namespace AirportPlanning.Core.Queueing
             List<Passenger> passengers,
             List<QueueResource> counters)
         {
-            List<double> utilization =
-                new List<double>();
+            List<double> utilization = new List<double>();
 
             if (counters == null || counters.Count == 0)
                 return utilization;
@@ -117,8 +116,10 @@ namespace AirportPlanning.Core.Queueing
                 return utilization;
             }
 
-            double simulationDuration =
-                passengers.Max(p => p.EndServiceTime);
+            
+            double firstArrival = passengers.Min(p => p.ArrivalTime);
+            double lastDeparture = passengers.Max(p => p.EndServiceTime);
+            double simulationDuration = lastDeparture - firstArrival;
 
             if (simulationDuration <= 0.0)
             {
@@ -130,9 +131,13 @@ namespace AirportPlanning.Core.Queueing
 
             foreach (QueueResource counter in counters)
             {
-                utilization.Add(
-                    counter.BusyTime /
-                    simulationDuration);
+                // Calculate the true utilization percentage
+                double util = counter.BusyTime / simulationDuration;
+
+                // Cap it at 1.0 (100%) just in case of floating point rounding errors
+                util = Math.Min(1.0, util);
+
+                utilization.Add(util);
             }
 
             return utilization;
