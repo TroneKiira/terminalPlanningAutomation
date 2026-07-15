@@ -1,12 +1,7 @@
-﻿using AirportPlanning.Facility_Sizing.Base;
+﻿using System;
+using AirportPlanning.Facility_Sizing.Base;
 using AirportPlanning.Facility_Sizing.Models;
 using AirportPlanning.Facility_Sizing.Standards;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using static Rhino.UI.Controls.RenderContentMenu;
 
 namespace AirportPlanning.Facility_Sizing.Sizers
 {
@@ -36,10 +31,12 @@ namespace AirportPlanning.Facility_Sizing.Sizers
 
                     procZone.Area = (xRayArea + boothArea) * 1.20;
 
-                    // NEW: Save the raw integers to the dictionary!
-                    Result.EquipmentCounts["X-Rays"] = xrayCount;
+                    Result.EquipmentCounts["Physical X-Rays"] = xrayCount;
                     Result.EquipmentCounts["Male WTMDs"] = maleBooths;
                     Result.EquipmentCounts["Female WTMDs"] = femaleBooths;
+
+                    // 🚨 Add Active Lanes
+                    Result.EquipmentCounts["Active X-Ray Lanes"] = Context.OperationalData.ActiveProcessorCount;
 
                     int pairedIslands = (int)Math.Ceiling(xrayCount / 2.0);
                     Result.PlanningAdvice.Add(new PlanningAdvice(
@@ -52,9 +49,8 @@ namespace AirportPlanning.Facility_Sizing.Sizers
                 {
                     double laneArea = secStd.Pitch * (secStd.Depth + secStd.DivestRecomposeAllowance);
                     procZone.Area = xrayCount * laneArea;
-
-                    // Western layout just has X-Rays/Lanes
-                    Result.EquipmentCounts["Security Lanes"] = xrayCount;
+                    Result.EquipmentCounts["Physical Security Lanes"] = xrayCount;
+                    Result.EquipmentCounts["Active Security Lanes"] = Context.OperationalData.ActiveProcessorCount;
                 }
             }
         }

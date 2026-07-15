@@ -13,7 +13,6 @@ namespace AirportPlanning.Facilities.PassengerVerification
     {
         public PassengerVerificationResults Solve(PassengerVerificationInputs input)
         {
-            // --- 1. MACRO MATH (Calculate Gates) ---
             double eligiblePct = input.EligiblePercentage > 1.0 ? input.EligiblePercentage / 100.0 : input.EligiblePercentage;
             double utilization = input.DesignUtilization > 1.0 ? input.DesignUtilization / 100.0 : input.DesignUtilization;
 
@@ -23,20 +22,16 @@ namespace AirportPlanning.Facilities.PassengerVerification
 
             int gates = (int)Math.Ceiling(passengerCount / effectiveCapacity);
 
-            // --- 2. MICRO FLOW (Pass Passengers Through) ---
-            // Convert throughput (pax/hr) to service time in minutes (e.g., 300 pax/hr = 0.2 mins/pax)
             double serviceTimeMinutes = 60.0 / input.ThroughputPerGate;
 
             foreach (Passenger p in input.Passengers)
             {
-                // Simple pass-through without queue simulation
                 p.StartServiceTime = p.ArrivalTime;
                 p.ServiceTime = serviceTimeMinutes;
                 p.EndServiceTime = p.StartServiceTime + p.ServiceTime;
                 p.WaitTime = 0.0;
-                p.AssignedCounter = 0; // Not assigning a specific gate to keep it simple
+                p.AssignedCounter = 0;
 
-                // Save to history
                 p.History[FacilityType.PassengerVerification] = new FacilityRecord
                 {
                     ArrivalTime = p.ArrivalTime,
@@ -46,18 +41,23 @@ namespace AirportPlanning.Facilities.PassengerVerification
                     AssignedResource = p.AssignedCounter
                 };
 
-                // Advance their clock to prepare for the next facility (like Security)
                 p.ArrivalTime = p.EndServiceTime + p.WalkingTime;
                 p.QueueArrivalTime = p.ArrivalTime;
             }
 
             return new PassengerVerificationResults
             {
-                Passengers = input.Passengers, // Pass them along!
+                Passengers = input.Passengers,
                 EligiblePassengers = passengerCount,
                 RequiredGates = gates,
+
+                // 🚨 THE FIX: Save the baseline so the Reporter can compare it!
+                BaselineProcessorCount = gates,
+
                 Utilization = utilization,
-                GateCapacity = effectiveCapacity
+
+                // 🚨 THE FIX: Pass the RAW throughput (e.g. 300) so the Sizer can recalculate utilization on override
+                GateCapacity = input.ThroughputPerGate
             };
         }
     }

@@ -4,45 +4,60 @@ using AirportPlanning.Core.Queueing;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace AirportPlanning.Facilities.Security
 {
     public class SecuritySolver : FacilitySolverBase
     {
         private readonly QueueOptimizer _optimizer;
+        private string _lastCacheKey = "";
+        private int _cachedBaselinePhysical = -1;
+        private int _cachedBaselineActive = -1;
 
-        public SecuritySolver() : base()
-        {
-            _optimizer = new QueueOptimizer();
-        }
+        public SecuritySolver() : base() { _optimizer = new QueueOptimizer(); }
 
         public SecurityResults Solve(SecurityInputs input)
         {
             SecurityResults finalResult = new SecurityResults();
             QueueResults results;
-            int originalPhysical = input.NumberOfResources;
 
-            if (input.OptimizeResources)
+            string currentCacheKey = $"{input.Passengers.Count}_{input.ServiceProfile?.MeanServiceTime}_{input.TargetMaximumWait}_{input.StaffingPercentage}_{input.Seed}";
+
+            if (currentCacheKey != _lastCacheKey || _cachedBaselinePhysical <= 0)
             {
                 OptimizationResult opt = _optimizer.Optimize(
                         input, SolveWithoutOptimization, (i, r) => i.NumberOfResources = r,
                         i => i.NumberOfResources, input.TargetMaximumWait, input.StaffingPercentage);
 
-                results = opt.QueueResults;
-                finalResult.PhysicalCounters = opt.OptimalPhysicalResources;
-                finalResult.ActiveCounters = opt.OptimalActiveResources;
+                _cachedBaselinePhysical = opt.OptimalPhysicalResources;
+                _cachedBaselineActive = opt.OptimalActiveResources;
+                _lastCacheKey = currentCacheKey;
+            }
+
+            int originalPhysical;
+            int activeN;
+
+            if (input.OptimizeResources)
+            {
+                originalPhysical = _cachedBaselinePhysical;
+                activeN = _cachedBaselineActive;
             }
             else
             {
-                int activeN = (int)Math.Max(1, Math.Round(originalPhysical * (input.StaffingPercentage / 100.0)));
-                input.NumberOfResources = activeN;
-                results = SolveWithoutOptimization(input);
-
-                finalResult.PhysicalCounters = originalPhysical;
-                finalResult.ActiveCounters = activeN;
+                originalPhysical = input.NumberOfResources;
+                activeN = (int)Math.Max(1, Math.Round(originalPhysical * (input.StaffingPercentage / 100.0)));
             }
+
+            input.NumberOfResources = activeN;
+            results = SolveWithoutOptimization(input);
+
+            finalResult.PhysicalCounters = originalPhysical;
+            finalResult.ActiveCounters = activeN;
+
+            results.BaselineProcessorCount = _cachedBaselinePhysical;
+
+            // 🚨 THE FIX: Pass the physical count down the wire!
+            results.PhysicalProcessorCount = originalPhysical;
 
             foreach (Passenger p in results.ProcessedPassengers)
             {
@@ -63,8 +78,7 @@ namespace AirportPlanning.Facilities.Security
 
         private QueueResults SolveWithoutOptimization(SecurityInputs input)
         {
-            return ExecuteFacility(
-                input.Passengers, p => true, input.NumberOfResources, input.ServiceProfile, new Random(input.Seed));
+            return ExecuteFacility(input.Passengers, p => true, input.NumberOfResources, input.ServiceProfile, new Random(input.Seed));
         }
     }
 }

@@ -16,6 +16,9 @@ namespace AirportPlanning.Components.SimulationComponent
 {
     public class ImmigrationComponent : GH_Component
     {
+        // 🚨 THE FIX: Keep the solver alive permanently so it remembers the cache!
+        private ImmigrationSolver _solver = new ImmigrationSolver();
+
         public ImmigrationComponent()
           : base("Immigration", "IMM", "Simulates passenger processing at immigration.", "Airport Planning", "Simulation")
         {
@@ -72,8 +75,8 @@ namespace AirportPlanning.Components.SimulationComponent
                 StaffingPercentage = staffingPercentage
             };
 
-            ImmigrationSolver solver = new ImmigrationSolver();
-            ImmigrationResults finalResult = solver.Solve(input);
+            // 🚨 Use the persistent class-level solver!
+            ImmigrationResults finalResult = _solver.Solve(input);
 
             DA.SetDataList(0, finalResult.QueueResults.Passengers);
             DA.SetData(1, finalResult.QueueResults);

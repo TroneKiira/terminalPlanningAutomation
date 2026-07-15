@@ -16,15 +16,20 @@ namespace AirportPlanning.Facility_Sizing.Sizers
             var procZone = GetZone(ZoneType.Processing);
             if (procZone != null && Context.Standards != null)
             {
-                // Immigration booths are usually paired (2 agents per physical footprint)
                 double pairedArea = Context.Standards.Width * Context.Standards.Depth;
+
+                // 🚨 Uses ProcessorCount (25) to calculate the physical building area
                 int physicalBooths = (Context.OperationalData.ProcessorCount + 1) / 2;
                 procZone.Area = physicalBooths * pairedArea;
-                Result.EquipmentCounts["Immigration Booths"] = physicalBooths;
-                Result.EquipmentCounts["Active Agent Positions"] = Context.OperationalData.ProcessorCount;
-            }
 
+                Result.EquipmentCounts["Immigration Booths"] = physicalBooths;
+
+                // 🚨 Uses ActiveProcessorCount (15) for the text readout
+                Result.EquipmentCounts["Active Agent Positions"] = Context.OperationalData.ActiveProcessorCount;
+            }
         }
+
+        
 
         protected override FacilitySizingResult BuildResult()
         {

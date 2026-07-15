@@ -11,6 +11,7 @@ namespace AirportPlanning.Components.SimulationComponent
 {
     public class BagDropComponent : GH_Component
     {
+        private BagDropSolver _solver = new BagDropSolver();
         public BagDropComponent()
           : base("Bag Drop", "BD", "Simulates passenger processing at the bag drop facility.", "Airport Planning", "Simulation")
         {

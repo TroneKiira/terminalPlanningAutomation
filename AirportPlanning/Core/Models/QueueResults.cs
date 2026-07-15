@@ -37,6 +37,10 @@ namespace AirportPlanning.Core.Models
 
         public List<double> CounterUtilization { get; set; }
 
+        public int BaselineProcessorCount { get; set; } = -1;
+
+        public int PhysicalProcessorCount { get; set; } = -1;
+
         public QueueResults()
         {
             Passengers =

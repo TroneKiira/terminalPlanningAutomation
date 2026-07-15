@@ -14,6 +14,11 @@ namespace AirportPlanning.Facilities.Immigration
     {
         private readonly QueueOptimizer _optimizer;
 
+        // 🧠 CACHE VARIABLES
+        private string _lastCacheKey = "";
+        private int _cachedBaselinePhysical = -1;
+        private int _cachedBaselineActive = -1;
+
         public ImmigrationSolver() : base()
         {
             _optimizer = new QueueOptimizer();
@@ -23,27 +28,48 @@ namespace AirportPlanning.Facilities.Immigration
         {
             ImmigrationResults finalResult = new ImmigrationResults();
             QueueResults results;
-            int originalPhysical = input.NumberOfResources;
 
-            if (input.OptimizeResources)
+            // 1. Generate the unique fingerprint for the current inputs
+            string currentCacheKey = $"{input.Passengers.Count}_{input.ServiceProfile?.MeanServiceTime}_{input.TargetMaximumWait}_{input.StaffingPercentage}_{input.Seed}";
+
+            // 2. Only run the heavy optimizer if the inputs changed, or if we don't have a cache yet!
+            if (currentCacheKey != _lastCacheKey || _cachedBaselinePhysical <= 0)
             {
                 OptimizationResult opt = _optimizer.Optimize(
                         input, SolveWithoutOptimization, (i, r) => i.NumberOfResources = r,
                         i => i.NumberOfResources, input.TargetMaximumWait, input.StaffingPercentage);
 
-                results = opt.QueueResults;
-                finalResult.PhysicalCounters = opt.OptimalPhysicalResources;
-                finalResult.ActiveCounters = opt.OptimalActiveResources;
+                // Save the results to the cache
+                _cachedBaselinePhysical = opt.OptimalPhysicalResources;
+                _cachedBaselineActive = opt.OptimalActiveResources;
+                _lastCacheKey = currentCacheKey;
+            }
+
+            int originalPhysical;
+            int activeN;
+
+            // 3. Determine which numbers to use for the final run
+            if (input.OptimizeResources)
+            {
+                originalPhysical = _cachedBaselinePhysical;
+                activeN = _cachedBaselineActive;
             }
             else
             {
-                int activeN = (int)Math.Max(1, Math.Round(originalPhysical * (input.StaffingPercentage / 100.0)));
-                input.NumberOfResources = activeN;
-                results = SolveWithoutOptimization(input);
-
-                finalResult.PhysicalCounters = originalPhysical;
-                finalResult.ActiveCounters = activeN;
+                originalPhysical = input.NumberOfResources;
+                activeN = (int)Math.Max(1, Math.Round(originalPhysical * (input.StaffingPercentage / 100.0)));
             }
+
+            // 4. Do ONE single simulation run with the chosen numbers
+            input.NumberOfResources = activeN;
+            results = SolveWithoutOptimization(input);
+
+            // 5. Package the results and embed the secret baseline
+            finalResult.PhysicalCounters = originalPhysical;
+            finalResult.ActiveCounters = activeN;
+
+            // 🚨 THIS PASSES THE BASELINE TO THE REPORTER
+            results.BaselineProcessorCount = _cachedBaselinePhysical;
 
             foreach (Passenger p in results.ProcessedPassengers)
             {
@@ -58,6 +84,7 @@ namespace AirportPlanning.Facilities.Immigration
             }
 
             AdvancePassengers(results.ProcessedPassengers);
+            results.PhysicalProcessorCount = originalPhysical;
             finalResult.QueueResults = results;
             return finalResult;
         }

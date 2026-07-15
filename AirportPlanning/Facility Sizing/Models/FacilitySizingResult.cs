@@ -4,11 +4,11 @@ namespace AirportPlanning.Facility_Sizing.Models
 {
     public class FacilitySizingResult
     {
-        // 🚨 THE MISSING PROPERTY
         public int PeakDemand { get; set; }
-
-        // Ensure ProcessorCount is here too!
         public int ProcessorCount { get; set; }
+
+        // 🚨 NEW: Carry the baseline so the Reporter knows if the user overrode it!
+        public int BaselineProcessorCount { get; set; }
 
         public double QueueArea { get; set; }
         public double ProcessingArea { get; set; }

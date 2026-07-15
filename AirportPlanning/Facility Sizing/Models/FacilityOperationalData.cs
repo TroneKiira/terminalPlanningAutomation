@@ -9,6 +9,12 @@ namespace AirportPlanning.Facility_Sizing.Models
     public class FacilityOperationalData
     {
         public int ProcessorCount { get; set; }
+        public int ActiveProcessorCount { get; set; }
+
+        // 🚨 NEW: Flags for the Sizer's Optimize Toggle
+        public bool IsOverridden { get; set; }
+        public int BaselineProcessorCount { get; set; }
+
         public int PeakQueue { get; set; }
         public double AverageQueue { get; set; }
         public double AverageWait { get; set; }

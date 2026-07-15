@@ -21,15 +21,15 @@ namespace AirportPlanning.Components.FacilitySizingComponents
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter("Operational Results", "RES", "Queue Results or Verification Results.", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Operational Results", "RES", "Optional: Queue Results.", GH_ParamAccess.item);
             pManager[0].Optional = true;
             pManager.AddGenericParameter("Passengers", "PAX", "The passenger population.", GH_ParamAccess.list);
             pManager.AddGenericParameter("Standards", "STD", "Facility Standards.", GH_ParamAccess.item);
             pManager.AddGenericParameter("Template", "TPL", "Facility Template.", GH_ParamAccess.item);
 
-            // NEW: Optional input to force the Sizer to use the Physical Count!
-            pManager.AddIntegerParameter("Physical Count Override", "PC", "Optional: Plug in the Physical Lanes/Counters here to size the full building.", GH_ParamAccess.item);
-            pManager[4].Optional = true;
+            // 🚨 NEW: The Optimize Toggle and Manual Count!
+            pManager.AddBooleanParameter("Optimize Sizing", "O", "True = Auto-calculate. False = Use Manual Count.", GH_ParamAccess.item, true);
+            pManager.AddIntegerParameter("Manual Count", "C", "The manual number of Gates/Zones to build.", GH_ParamAccess.item, 10);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -53,15 +53,16 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             List<Passenger> passengers = new List<Passenger>();
             FacilityStandards standards = null;
             FacilityTemplate template = null;
-            int physicalOverride = -1;
+            bool optimize = true;
+            int manualCount = 10;
 
-            DA.GetData(0, ref rawResultsObj); // Optional
+            DA.GetData(0, ref rawResultsObj);
             if (!DA.GetDataList(1, passengers)) return;
             if (!DA.GetData(2, ref standards)) return;
             if (!DA.GetData(3, ref template)) return;
-            DA.GetData(4, ref physicalOverride);
+            DA.GetData(4, ref optimize);
+            DA.GetData(5, ref manualCount);
 
-            // 1. Build Passenger Summary
             int total = passengers.Count;
             int domestic = passengers.Count(p => p.PassengerType == PassengerType.Domestic);
             int checkedBags = passengers.Count(p => p.HasCheckedBag);
@@ -80,18 +81,18 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 FemalePassengers = total - males
             };
 
-            // 2. Build Operational Data (🚨 FIX: Safely handle missing simulation data)
             var opData = new FacilityOperationalData();
 
             if (rawResultsObj != null)
             {
                 object rawResults = rawResultsObj;
-                if (rawResultsObj is Grasshopper.Kernel.Types.GH_ObjectWrapper wrapper)
-                    rawResults = wrapper.Value;
+                if (rawResultsObj is Grasshopper.Kernel.Types.GH_ObjectWrapper wrapper) rawResults = wrapper.Value;
 
                 if (rawResults is QueueResults qr)
                 {
-                    opData.ProcessorCount = qr.ResourcesUsed > 0 ? qr.ResourcesUsed : qr.Resources.Count;
+                    opData.ProcessorCount = qr.PhysicalProcessorCount > 0 ? qr.PhysicalProcessorCount : qr.Resources.Count;
+                    opData.ActiveProcessorCount = qr.Resources.Count;
+                    opData.BaselineProcessorCount = qr.BaselineProcessorCount; // From the Simulator!
                     opData.PeakQueue = qr.PeakQueueLength;
                     opData.AverageWait = qr.AverageWait;
                     opData.MaximumWait = qr.MaxWait;
@@ -101,6 +102,8 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 else if (rawResults is PassengerVerificationResults pvr)
                 {
                     opData.ProcessorCount = pvr.RequiredGates;
+                    opData.ActiveProcessorCount = pvr.RequiredGates;
+                    opData.BaselineProcessorCount = pvr.BaselineProcessorCount;
                     opData.Throughput = pvr.GateCapacity;
                     opData.Utilization = pvr.Utilization;
                     opData.AnalysisMethod = AnalysisMethod.Analytical;
@@ -108,14 +111,16 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             }
             else
             {
-                // If no simulation was plugged in, default to Analytical mode
                 opData.AnalysisMethod = AnalysisMethod.Analytical;
-                opData.ProcessorCount = 1; // Prevent multiply-by-zero errors
+                opData.ProcessorCount = 1;
+                opData.ActiveProcessorCount = 1;
             }
 
-            if (physicalOverride > 0)
+            // 🚨 THE FIX: Apply the Toggle Logic!
+            if (!optimize)
             {
-                opData.ProcessorCount = physicalOverride;
+                opData.IsOverridden = true;
+                opData.ProcessorCount = manualCount;
             }
 
             var context = new FacilitySizingContext { OperationalData = opData, PassengerSummary = paxSummary, Standards = standards, Template = template };
@@ -127,7 +132,7 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             else if (template is BagDropTemplate) sizer = new BagDropSizer();
             else if (template is PassengerVerificationTemplate) sizer = new PassengerVerificationSizer();
             else if (template is BoardingTemplate) sizer = new BoardingSizer();
-            else if (template is RetailTemplate) sizer = new RetailSizer(); 
+            else if (template is RetailTemplate) sizer = new RetailSizer();
             else return;
 
             FacilitySizingResult result = sizer.SizeFacility(context);

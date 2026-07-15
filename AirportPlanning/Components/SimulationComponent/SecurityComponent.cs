@@ -11,6 +11,9 @@ namespace AirportPlanning.Components.SimulationComponent
 {
     public class SecurityComponent : GH_Component
     {
+        // 🚨 THE FIX: Keep the solver alive permanently so it remembers the cache!
+        private SecuritySolver _solver = new SecuritySolver();
+
         public SecurityComponent()
           : base("Security", "SEC", "Simulates passenger processing through security screening.", "Airport Planning", "Simulation")
         {
@@ -67,8 +70,8 @@ namespace AirportPlanning.Components.SimulationComponent
                 StaffingPercentage = staffingPercentage
             };
 
-            SecuritySolver solver = new SecuritySolver();
-            SecurityResults finalResult = solver.Solve(input);
+            // 🚨 Use the persistent class-level solver!
+            SecurityResults finalResult = _solver.Solve(input);
 
             DA.SetDataList(0, finalResult.QueueResults.Passengers);
             DA.SetData(1, finalResult.QueueResults);
