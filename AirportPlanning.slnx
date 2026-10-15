@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="AirportPlanning/AirportPlanning.csproj" />
+  <Project Path="Tests/AirportPlanning.Tests.csproj" />
 </Solution>

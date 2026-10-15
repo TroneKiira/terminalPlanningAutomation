@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 
 using AirportPlanning.Facilities.CheckIn;
+using AirportPlanning.Core.Inputs;
 using AirportPlanning.Core.Models;
 
 
@@ -65,7 +66,7 @@ namespace AirportPlanning.Components.Object_Creation
             pManager.AddNumberParameter(
                 "Service Time Multiplier",
                 "STM",
-                "Relative service time multiplier applied during queue simulation.",
+                "Deprecated: per-passenger service times are now supplied by the Service Time Map. This value is kept for file compatibility and ignored.",
                 GH_ParamAccess.item,
                 1.0);
 
@@ -75,8 +76,23 @@ namespace AirportPlanning.Components.Object_Creation
             pManager.AddGenericParameter(
                 "Arrival Profile",
                 "AP",
-                "Passenger arrival profile associated with this passenger type.",
+                "Optional legacy arrival profile for this passenger type. Only the legacy Passenger Generator uses it; the Windowed Passenger Generator ignores it. Leave unwired for windowed workflows.",
                 GH_ParamAccess.item);
+            pManager[8].Optional = true;
+
+            pManager.AddNumberParameter(
+                "Min Advance",
+                "AMIN",
+                "Minimum minutes before scheduled departure that this profile arrives at the terminal (windowed generation).",
+                GH_ParamAccess.item,
+                60.0);
+
+            pManager.AddNumberParameter(
+                "Max Advance",
+                "AMAX",
+                "Maximum minutes before scheduled departure that this profile arrives at the terminal (windowed generation).",
+                GH_ParamAccess.item,
+                150.0);
         }
 
         /// <summary>
@@ -106,6 +122,8 @@ namespace AirportPlanning.Components.Object_Creation
             double checkedBagProbability = 0.0;
             double serviceTimeMultiplier = 1.0;
             ArrivalProfile arrivalProfile = null;
+            double minAdvance = 60.0;
+            double maxAdvance = 150.0;
 
             if (!DA.GetData(0, ref name))
                 return;
@@ -128,8 +146,14 @@ namespace AirportPlanning.Components.Object_Creation
             if (!DA.GetData(6, ref serviceTimeMultiplier))
                 return;
             if (!DA.GetData(7, ref maleProb)) return;
-            if (!DA.GetData(8, ref arrivalProfile))
-                return;
+
+            // Arrival Profile is optional legacy data: null is valid and simply
+            // means the legacy generator falls back to a uniform spread, while
+            // the Windowed Passenger Generator ignores it entirely.
+            DA.GetData(8, ref arrivalProfile);
+
+            DA.GetData(9, ref minAdvance);
+            DA.GetData(10, ref maxAdvance);
 
             PassengerProfile profile =
                 new PassengerProfile
@@ -141,7 +165,9 @@ namespace AirportPlanning.Components.Object_Creation
                     CheckedBagProbability = checkedBagProbability,
                     ServiceTimeMultiplier = serviceTimeMultiplier,
                     MaleProbability = maleProb,
-                    ArrivalProfile = arrivalProfile
+                    ArrivalProfile = arrivalProfile,
+                    MinAdvanceMinutes = minAdvance,
+                    MaxAdvanceMinutes = maxAdvance
                 };
 
             DA.SetData(0, profile);

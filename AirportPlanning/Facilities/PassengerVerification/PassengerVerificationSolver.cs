@@ -16,7 +16,15 @@ namespace AirportPlanning.Facilities.PassengerVerification
             double eligiblePct = input.EligiblePercentage > 1.0 ? input.EligiblePercentage / 100.0 : input.EligiblePercentage;
             double utilization = input.DesignUtilization > 1.0 ? input.DesignUtilization / 100.0 : input.DesignUtilization;
 
-            int passengerCount = (int)Math.Round(input.Passengers.Count * eligiblePct);
+            // Size gates for the design hour when windowed; otherwise use the
+            // whole (non-warm-up) population for backwards compatibility.
+            bool windowed = input.Passengers.Any(p => p.IsDesignStep);
+
+            List<Passenger> basis = windowed
+                ? input.Passengers.Where(p => p.IsDesignStep && !p.IsWarmUp).ToList()
+                : input.Passengers.Where(p => !p.IsWarmUp).ToList();
+
+            int passengerCount = (int)Math.Round(basis.Count * eligiblePct);
             double effectiveCapacity = input.ThroughputPerGate * utilization;
             if (effectiveCapacity <= 0) effectiveCapacity = 1.0;
 

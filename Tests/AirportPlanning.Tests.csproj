@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net7.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>AirportPlanning.Tests</AssemblyName>
+    <RootNamespace>AirportPlanning.Tests</RootNamespace>
+    <!--
+      Items are listed explicitly rather than relying on the SDK default glob.
+      With EnableDefaultCompileItems on, the SDK's own <Compile> glob interferes
+      with the linked Core\** and Facilities\** globs below and silently drops
+      every file under Facilities\, which broke the build with
+      "the namespace 'AirportPlanning.Facilities' does not exist".
+    -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="**\*.cs" Exclude="bin\**\*.cs;obj\**\*.cs" />
+
+    <!-- Link the pure domain sources (no Grasshopper / Rhino dependency).
+         Core\Charts is presentation code: it pulls in OxyPlot and System.Drawing
+         and has no place in the domain test harness. -->
+    <Compile Include="..\AirportPlanning\Core\**\*.cs" Exclude="..\AirportPlanning\Core\Charts\**\*.cs" />
+    <Compile Include="..\AirportPlanning\Facilities\**\*.cs" />
+  </ItemGroup>
+
+</Project>

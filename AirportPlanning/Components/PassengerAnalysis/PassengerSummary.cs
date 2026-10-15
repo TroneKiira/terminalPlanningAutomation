@@ -97,6 +97,30 @@ namespace AirportPlanning.Components.PassengerAnalysis
                 "BD",
                 "Passengers requiring bag drop.",
                 GH_ParamAccess.item);
+
+            pManager.AddIntegerParameter(
+                "Domestic Departure",
+                "DOM-D",
+                "Number of domestic departure passengers.",
+                GH_ParamAccess.item);
+
+            pManager.AddIntegerParameter(
+                "Domestic Arrival",
+                "DOM-A",
+                "Number of domestic arrival passengers.",
+                GH_ParamAccess.item);
+
+            pManager.AddIntegerParameter(
+                "International Departure",
+                "INT-D",
+                "Number of international departure passengers.",
+                GH_ParamAccess.item);
+
+            pManager.AddIntegerParameter(
+                "International Arrival",
+                "INT-A",
+                "Number of international arrival passengers.",
+                GH_ParamAccess.item);
         }
 
         /// <summary>
@@ -159,6 +183,26 @@ namespace AirportPlanning.Components.PassengerAnalysis
                 9,
                 passengers.Count(
                     p => p.RequiresBagDrop));
+
+            DA.SetData(
+                10,
+                passengers.Count(
+                    p => p.DHPType == DHPType.DomesticDeparture));
+
+            DA.SetData(
+                11,
+                passengers.Count(
+                    p => p.DHPType == DHPType.DomesticArrival));
+
+            DA.SetData(
+                12,
+                passengers.Count(
+                    p => p.DHPType == DHPType.InternationalDeparture));
+
+            DA.SetData(
+                13,
+                passengers.Count(
+                    p => p.DHPType == DHPType.InternationalArrival));
         }
 
         /// <summary>

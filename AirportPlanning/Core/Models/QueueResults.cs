@@ -41,6 +41,61 @@ namespace AirportPlanning.Core.Models
 
         public int PhysicalProcessorCount { get; set; } = -1;
 
+        /// <summary>
+        /// Absolute simulation minute at which the global peak queue occurred.
+        /// </summary>
+        public double PeakQueueTime { get; set; }
+
+        /// <summary>
+        /// Demand step in which the global peak queue occurred (-1 when unknown).
+        /// </summary>
+        public int PeakQueueStepIndex { get; set; } = -1;
+
+        /// <summary>
+        /// Design hour step index selected for optimization and reporting
+        /// (-1 when not windowed).
+        /// </summary>
+        public int DesignStepIndex { get; set; } = -1;
+
+        /// <summary>Duration of the warm-up segment in minutes.</summary>
+        public double WarmUpMinutes { get; set; }
+
+        /// <summary>
+        /// Per-step performance statistics for windowed simulations. Warm-up
+        /// passengers are excluded.
+        /// </summary>
+        public List<IntervalQueueMetrics> IntervalMetrics { get; set; }
+
+        /// <summary>
+        /// Whole-run performance broken down by passenger channel
+        /// (keyed by channel name). Warm-up passengers are excluded.
+        /// </summary>
+        public Dictionary<string, ClassMetrics> ByChannel { get; set; } =
+            new Dictionary<string, ClassMetrics>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Whole-run performance broken down by passenger profile
+        /// (keyed by profile name). Warm-up passengers are excluded.
+        /// </summary>
+        public Dictionary<string, ClassMetrics> ByProfile { get; set; } =
+            new Dictionary<string, ClassMetrics>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Queue length after each queue event, i.e. the queue building and
+        /// draining over the reported window. Warm-up passengers are excluded,
+        /// so the series starts from an empty queue.
+        /// </summary>
+        public List<QueueTimelinePoint> QueueTimeline { get; set; } =
+            new List<QueueTimelinePoint>();
+
+        /// <summary>
+        /// Cumulative arrivals against cumulative departures, sampled onto a
+        /// regular time grid. The gap between the two is the queue. Warm-up
+        /// passengers are excluded.
+        /// </summary>
+        public List<QueueCumulativePoint> CumulativeFlow { get; set; } =
+            new List<QueueCumulativePoint>();
+
         public QueueResults()
         {
             Passengers =
@@ -54,6 +109,68 @@ namespace AirportPlanning.Core.Models
 
             CounterUtilization =
                 new List<double>();
+
+            IntervalMetrics =
+                new List<IntervalQueueMetrics>();
+
+            QueueTimeline =
+                new List<QueueTimelinePoint>();
+
+            CumulativeFlow =
+                new List<QueueCumulativePoint>();
+        }
+
+        /// <summary>
+        /// Design-hour diagnostic: the Wait95 of the design-hour step when the
+        /// run is windowed, otherwise the whole-run value. The resource
+        /// optimizer does NOT use this; it sizes against the whole-run
+        /// <see cref="Wait95"/> so the enforced target matches the reported W95.
+        /// </summary>
+        public double GetEvaluationWait95()
+        {
+            if (DesignStepIndex >= 0 && IntervalMetrics != null)
+            {
+                foreach (IntervalQueueMetrics metric in IntervalMetrics)
+                {
+                    if (metric.StepIndex == DesignStepIndex)
+                        return metric.Wait95;
+                }
+            }
+
+            return Wait95;
+        }
+
+        /// <summary>
+        /// Wait95 for one channel or profile. Prefers the design-hour step when
+        /// windowed; falls back to the whole-run value.
+        /// </summary>
+        public double GetEvaluationWait95(string key, bool byChannel = false)
+        {
+            if (string.IsNullOrEmpty(key))
+                return GetEvaluationWait95();
+
+            if (DesignStepIndex >= 0 && IntervalMetrics != null)
+            {
+                foreach (IntervalQueueMetrics metric in IntervalMetrics)
+                {
+                    if (metric.StepIndex != DesignStepIndex)
+                        continue;
+
+                    Dictionary<string, ClassMetrics> map =
+                        byChannel ? metric.ByChannel : metric.ByProfile;
+
+                    if (map != null && map.TryGetValue(key, out ClassMetrics stepValue) && stepValue.Count > 0)
+                        return stepValue.Wait95;
+                }
+            }
+
+            Dictionary<string, ClassMetrics> overall =
+                byChannel ? ByChannel : ByProfile;
+
+            if (overall != null && overall.TryGetValue(key, out ClassMetrics value) && value.Count > 0)
+                return value.Wait95;
+
+            return Wait95;
         }
     }
 }

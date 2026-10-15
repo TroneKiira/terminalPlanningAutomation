@@ -1,99 +1,101 @@
-﻿using AirportPlanning.Core.Distributions;
+using AirportPlanning.Core.Distributions;
 using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Queueing;
+using AirportPlanning.Core.Inputs;
 using AirportPlanning.Facilities;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace AirportPlanning.Facilities.Immigration
 {
     public class ImmigrationSolver : FacilitySolverBase
     {
-        private readonly QueueOptimizer _optimizer;
-
-        // 🧠 CACHE VARIABLES
+        // CACHE VARIABLES
         private string _lastCacheKey = "";
+        private List<ResourceSearchOutcome> _cachedOutcomes;
         private int _cachedBaselinePhysical = -1;
-        private int _cachedBaselineActive = -1;
 
         public ImmigrationSolver() : base()
         {
-            _optimizer = new QueueOptimizer();
         }
 
         public ImmigrationResults Solve(ImmigrationInputs input)
         {
             ImmigrationResults finalResult = new ImmigrationResults();
-            QueueResults results;
 
-            // 1. Generate the unique fingerprint for the current inputs
-            string currentCacheKey = $"{input.Passengers.Count}_{input.ServiceProfile?.MeanServiceTime}_{input.TargetMaximumWait}_{input.StaffingPercentage}_{input.Seed}";
+            IServiceTimeProvider serviceTimeProvider =
+                ResolveServiceTimeProvider(input.ServiceTimeProvider, input.ServiceProfile);
 
-            // 2. Only run the heavy optimizer if the inputs changed, or if we don't have a cache yet!
-            if (currentCacheKey != _lastCacheKey || _cachedBaselinePhysical <= 0)
+            List<ChannelResourcePlan> plans = ChannelResourcePlanResolver.Resolve(
+                input.Channels,
+                input.PhysicalResources,
+                input.TargetWait95,
+                input.ResourceDomain,
+                Warnings.Add);
+
+            if (serviceTimeProvider == null)
             {
-                OptimizationResult opt = _optimizer.Optimize(
-                        input, SolveWithoutOptimization, (i, r) => i.NumberOfResources = r,
-                        i => i.NumberOfResources, input.TargetMaximumWait, input.StaffingPercentage);
+                Warnings.Add(
+                    "Immigration has no service-time source: wire either Service Profile or " +
+                    "Service Profiles (Service Time Map). Without one every service time is 0 " +
+                    "and the result is meaningless.");
+            }
 
-                // Save the results to the cache
-                _cachedBaselinePhysical = opt.OptimalPhysicalResources;
-                _cachedBaselineActive = opt.OptimalActiveResources;
+            string currentCacheKey = BuildSolverCacheKey(
+                input.Passengers,
+                serviceTimeProvider,
+                input.Channels,
+                plans,
+                input.StaffingPercentage,
+                input.Seed,
+                input.OptimizeResources);
+
+            bool cacheHit = currentCacheKey == _lastCacheKey &&
+                            _cachedOutcomes != null &&
+                            _cachedBaselinePhysical > 0;
+
+            List<ResourceSearchOutcome> outcomes;
+
+            FacilitySolveResult solve = SolvePools(
+                input.Passengers,
+                plans,
+                input.Channels,
+                p => p.PassengerType == PassengerType.International,
+                serviceTimeProvider,
+                input.Seed,
+                input.OptimizeResources,
+                input.StaffingPercentage,
+                cacheHit ? _cachedOutcomes : null,
+                out outcomes,
+                Warnings.Add);
+
+            if (!cacheHit && input.OptimizeResources && outcomes != null)
+            {
+                _cachedOutcomes = outcomes;
+                _cachedBaselinePhysical = solve.TotalPhysical;
                 _lastCacheKey = currentCacheKey;
             }
 
-            int originalPhysical;
-            int activeN;
+            QueueResults results = solve.Results;
 
-            // 3. Determine which numbers to use for the final run
-            if (input.OptimizeResources)
-            {
-                originalPhysical = _cachedBaselinePhysical;
-                activeN = _cachedBaselineActive;
-            }
-            else
-            {
-                originalPhysical = input.NumberOfResources;
-                activeN = (int)Math.Max(1, Math.Round(originalPhysical * (input.StaffingPercentage / 100.0)));
-            }
+            results.Passengers = BuildOutputPopulation(input.Passengers, solve.Clones);
 
-            // 4. Do ONE single simulation run with the chosen numbers
-            input.NumberOfResources = activeN;
-            results = SolveWithoutOptimization(input);
-
-            // 5. Package the results and embed the secret baseline
-            finalResult.PhysicalCounters = originalPhysical;
-            finalResult.ActiveCounters = activeN;
-
-            // 🚨 THIS PASSES THE BASELINE TO THE REPORTER
-            results.BaselineProcessorCount = _cachedBaselinePhysical;
-
-            foreach (Passenger p in results.ProcessedPassengers)
-            {
-                p.History[FacilityType.Immigration] = new FacilityRecord
-                {
-                    ArrivalTime = p.ArrivalTime,
-                    StartServiceTime = p.StartServiceTime,
-                    EndServiceTime = p.EndServiceTime,
-                    WaitTime = p.WaitTime,
-                    AssignedResource = p.AssignedCounter
-                };
-            }
-
-            AdvancePassengers(results.ProcessedPassengers);
-            results.PhysicalProcessorCount = originalPhysical;
             finalResult.QueueResults = results;
-            return finalResult;
-        }
+            finalResult.PhysicalCounters = solve.TotalPhysical;
+            finalResult.ActiveCounters = solve.TotalActive;
+            finalResult.PhysicalPerChannel = solve.PhysicalPerChannel;
+            finalResult.ActivePerChannel = solve.ActivePerChannel;
+            finalResult.Wait95PerChannel = solve.Wait95PerChannel;
+            finalResult.PoolResults = solve.PoolResults;
+            finalResult.SearchOutcomes = solve.SearchOutcomes;
 
-        private QueueResults SolveWithoutOptimization(ImmigrationInputs input)
-        {
-            return ExecuteFacility(
-                input.Passengers, p => p.PassengerType == PassengerType.International,
-                input.NumberOfResources, input.ServiceProfile, new Random(input.Seed));
+            results.BaselineProcessorCount = _cachedBaselinePhysical;
+            results.PhysicalProcessorCount = solve.TotalPhysical;
+
+            WriteFacilityHistory(solve.Processed, FacilityType.Immigration);
+            AdvancePassengers(solve.Processed);
+
+            return finalResult;
         }
     }
 }

@@ -27,7 +27,8 @@ namespace AirportPlanning.Core.Generation
             WalkingProfile walkingProfile,
             int departureMinute,
             int horizon,
-            int seed)
+            int seed,
+            IChannelAssigner channelAssigner = null)
         {
             ValidateInputs(
                 demand,
@@ -35,6 +36,12 @@ namespace AirportPlanning.Core.Generation
                 internationalProfiles);
 
             Random rnd = new Random(seed);
+
+            // Channel draws use a dedicated stream so the main arrival/attribute
+            // stream is untouched when a channel map is wired.
+            Random channelRnd = channelAssigner != null
+                ? new Random(unchecked(seed * 31 + 7))
+                : null;
 
             PassengerGenerationResult result =
                 new PassengerGenerationResult();
@@ -55,6 +62,8 @@ namespace AirportPlanning.Core.Generation
                 departureMinute,
                 horizon,
                 rnd,
+                channelAssigner,
+                channelRnd,
                 passengers,
                 result.ArrivalSimulations,
                 ref nextPassengerId);
@@ -70,6 +79,8 @@ namespace AirportPlanning.Core.Generation
                 departureMinute,
                 horizon,
                 rnd,
+                channelAssigner,
+                channelRnd,
                 passengers,
                 result.ArrivalSimulations,
                 ref nextPassengerId);
@@ -96,6 +107,8 @@ namespace AirportPlanning.Core.Generation
             int departureMinute,
             int horizon,
             Random rnd,
+            IChannelAssigner channelAssigner,
+            Random channelRnd,
             List<Passenger> passengers,
             List<ArrivalSimulationResult> simulations,
             ref int nextPassengerId)
@@ -121,6 +134,13 @@ namespace AirportPlanning.Core.Generation
 
                 simulations.Add(arrivals);
 
+                // The legacy generator only produces departing passengers, so
+                // tag them explicitly. This keeps the four-way DHPType counts
+                // correct for legacy populations too.
+                DHPType dhpType = passengerType == PassengerType.Domestic
+                    ? DHPType.DomesticDeparture
+                    : DHPType.InternationalDeparture;
+
                 foreach (int arrival in arrivals.ArrivalMinutes)
                 {
                     Passenger passenger =
@@ -129,10 +149,16 @@ namespace AirportPlanning.Core.Generation
                         allocation.Profile,
                         walkingProfile,
                         arrival,
-                        rnd);
+                        rnd,
+                        channelAssigner,
+                        channelRnd,
+                        dhpType);
 
                     passenger.PassengerType =
                         passengerType;
+
+                    passenger.DHPType = dhpType;
+                    passenger.ShowUpSignature = "none";
 
                     passengers.Add(passenger);
                 }

@@ -20,6 +20,18 @@ namespace AirportPlanning.Core.Models
 
         public int Id { get; set; }
 
+        /// <summary>
+        /// Name of the passenger profile this passenger was generated from.
+        /// The modular key for per-type service times and channel mapping.
+        /// </summary>
+        public string ProfileName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Assigned service channel (e.g. "Counter", "Kiosk", "Web", "BagDrop").
+        /// Assigned at generation; user-defined names, nothing hardcoded.
+        /// </summary>
+        public string Channel { get; set; } = string.Empty;
+
         // ============================================================
         // Passenger Profile
         // ============================================================
@@ -53,6 +65,60 @@ namespace AirportPlanning.Core.Models
         public double WalkingSpeed { get; set; }
 
         public double WalkingTime { get; set; }
+
+        // ============================================================
+        // Demand / Window Tagging
+        // ============================================================
+
+        /// <summary>
+        /// Time step index of the demand window the passenger belongs to
+        /// (-1 when not generated from a windowed demand profile).
+        /// </summary>
+        public int DemandStepIndex { get; set; } = -1;
+
+        /// <summary>
+        /// Hour index within the analysis window (-1 when not windowed).
+        /// </summary>
+        public int DemandHourIndex { get; set; } = -1;
+
+        /// <summary>
+        /// True when the passenger belongs to the pre-window warm-up segment.
+        /// Warm-up passengers are simulated but excluded from reported metrics.
+        /// </summary>
+        public bool IsWarmUp { get; set; }
+
+        /// <summary>
+        /// True when the passenger belongs to the design hour step. Used to
+        /// evaluate design-hour performance downstream.
+        /// </summary>
+        public bool IsDesignStep { get; set; }
+
+        /// <summary>
+        /// Transit wave identifier (-1 when the passenger did not arrive in a
+        /// batch/wave).
+        /// </summary>
+        public int WaveId { get; set; } = -1;
+
+        /// <summary>
+        /// The demand type this passenger belongs to (Domestic Departure,
+        /// Domestic Arrival, International Departure, International Arrival).
+        /// </summary>
+        public Inputs.DHPType DHPType { get; set; }
+
+        /// <summary>
+        /// Scheduled flight departure time in simulation minutes. Assigned from
+        /// the passenger profile's advance range during windowed generation.
+        /// </summary>
+        public double ScheduledDepartureTime { get; set; }
+
+        /// <summary>
+        /// Deterministic fingerprint of the show-up profile that shaped this
+        /// passenger's arrival time ("none" when no show-up curve was used).
+        /// Carried on the passenger so downstream solver caches can tell a
+        /// Leisure run from a Business run even when the realized arrival
+        /// times happen to look similar. Preserved by <see cref="Clone"/>.
+        /// </summary>
+        public string ShowUpSignature { get; set; } = "none";
 
         // ============================================================
         // Queue Simulation
@@ -126,6 +192,8 @@ namespace AirportPlanning.Core.Models
             Passenger p = new Passenger
             {
                 Id = this.Id,
+                ProfileName = this.ProfileName,
+                Channel = this.Channel,
                 PassengerType = this.PassengerType,
                 Journey = this.Journey,
 
@@ -143,6 +211,14 @@ namespace AirportPlanning.Core.Models
                 EndServiceTime = this.EndServiceTime,
                 WaitTime = this.WaitTime,
                 AssignedCounter = this.AssignedCounter,
+                DemandStepIndex = this.DemandStepIndex,
+                DemandHourIndex = this.DemandHourIndex,
+                IsWarmUp = this.IsWarmUp,
+                IsDesignStep = this.IsDesignStep,
+                WaveId = this.WaveId,
+                DHPType = this.DHPType,
+                ScheduledDepartureTime = this.ScheduledDepartureTime,
+                ShowUpSignature = this.ShowUpSignature,
                 History = new Dictionary<FacilityType, FacilityRecord>()
             };
 

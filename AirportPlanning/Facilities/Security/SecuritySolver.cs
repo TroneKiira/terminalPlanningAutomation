@@ -1,84 +1,98 @@
-﻿using AirportPlanning.Core.Distributions;
+using AirportPlanning.Core.Distributions;
 using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Queueing;
+using AirportPlanning.Core.Inputs;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace AirportPlanning.Facilities.Security
 {
     public class SecuritySolver : FacilitySolverBase
     {
-        private readonly QueueOptimizer _optimizer;
         private string _lastCacheKey = "";
+        private List<ResourceSearchOutcome> _cachedOutcomes;
         private int _cachedBaselinePhysical = -1;
-        private int _cachedBaselineActive = -1;
 
-        public SecuritySolver() : base() { _optimizer = new QueueOptimizer(); }
+        public SecuritySolver() : base() { }
 
         public SecurityResults Solve(SecurityInputs input)
         {
             SecurityResults finalResult = new SecurityResults();
-            QueueResults results;
 
-            string currentCacheKey = $"{input.Passengers.Count}_{input.ServiceProfile?.MeanServiceTime}_{input.TargetMaximumWait}_{input.StaffingPercentage}_{input.Seed}";
+            IServiceTimeProvider serviceTimeProvider =
+                ResolveServiceTimeProvider(input.ServiceTimeProvider, input.ServiceProfile);
 
-            if (currentCacheKey != _lastCacheKey || _cachedBaselinePhysical <= 0)
+            List<ChannelResourcePlan> plans = ChannelResourcePlanResolver.Resolve(
+                input.Channels,
+                input.PhysicalResources,
+                input.TargetWait95,
+                input.ResourceDomain,
+                Warnings.Add);
+
+            if (serviceTimeProvider == null)
             {
-                OptimizationResult opt = _optimizer.Optimize(
-                        input, SolveWithoutOptimization, (i, r) => i.NumberOfResources = r,
-                        i => i.NumberOfResources, input.TargetMaximumWait, input.StaffingPercentage);
+                Warnings.Add(
+                    "Security has no service-time source: wire either Service Profile or " +
+                    "Service Profiles (Service Time Map). Without one every service time is 0 " +
+                    "and the result is meaningless.");
+            }
 
-                _cachedBaselinePhysical = opt.OptimalPhysicalResources;
-                _cachedBaselineActive = opt.OptimalActiveResources;
+            string currentCacheKey = BuildSolverCacheKey(
+                input.Passengers,
+                serviceTimeProvider,
+                input.Channels,
+                plans,
+                input.StaffingPercentage,
+                input.Seed,
+                input.OptimizeResources);
+
+            bool cacheHit = currentCacheKey == _lastCacheKey &&
+                            _cachedOutcomes != null &&
+                            _cachedBaselinePhysical > 0;
+
+            List<ResourceSearchOutcome> outcomes;
+
+            FacilitySolveResult solve = SolvePools(
+                input.Passengers,
+                plans,
+                input.Channels,
+                p => true,
+                serviceTimeProvider,
+                input.Seed,
+                input.OptimizeResources,
+                input.StaffingPercentage,
+                cacheHit ? _cachedOutcomes : null,
+                out outcomes,
+                Warnings.Add,
+                IsDeparturePassenger);
+
+            if (!cacheHit && input.OptimizeResources && outcomes != null)
+            {
+                _cachedOutcomes = outcomes;
+                _cachedBaselinePhysical = solve.TotalPhysical;
                 _lastCacheKey = currentCacheKey;
             }
 
-            int originalPhysical;
-            int activeN;
+            QueueResults results = solve.Results;
 
-            if (input.OptimizeResources)
-            {
-                originalPhysical = _cachedBaselinePhysical;
-                activeN = _cachedBaselineActive;
-            }
-            else
-            {
-                originalPhysical = input.NumberOfResources;
-                activeN = (int)Math.Max(1, Math.Round(originalPhysical * (input.StaffingPercentage / 100.0)));
-            }
+            results.Passengers = BuildOutputPopulation(input.Passengers, solve.Clones);
 
-            input.NumberOfResources = activeN;
-            results = SolveWithoutOptimization(input);
-
-            finalResult.PhysicalCounters = originalPhysical;
-            finalResult.ActiveCounters = activeN;
+            finalResult.QueueResults = results;
+            finalResult.PhysicalCounters = solve.TotalPhysical;
+            finalResult.ActiveCounters = solve.TotalActive;
+            finalResult.PhysicalPerChannel = solve.PhysicalPerChannel;
+            finalResult.ActivePerChannel = solve.ActivePerChannel;
+            finalResult.Wait95PerChannel = solve.Wait95PerChannel;
+            finalResult.PoolResults = solve.PoolResults;
+            finalResult.SearchOutcomes = solve.SearchOutcomes;
 
             results.BaselineProcessorCount = _cachedBaselinePhysical;
+            results.PhysicalProcessorCount = solve.TotalPhysical;
 
-            // 🚨 THE FIX: Pass the physical count down the wire!
-            results.PhysicalProcessorCount = originalPhysical;
+            WriteFacilityHistory(solve.Processed, FacilityType.Security);
+            AdvancePassengers(solve.Processed);
 
-            foreach (Passenger p in results.ProcessedPassengers)
-            {
-                p.History[FacilityType.Security] = new FacilityRecord
-                {
-                    ArrivalTime = p.ArrivalTime,
-                    StartServiceTime = p.StartServiceTime,
-                    EndServiceTime = p.EndServiceTime,
-                    WaitTime = p.WaitTime,
-                    AssignedResource = p.AssignedCounter
-                };
-            }
-
-            AdvancePassengers(results.ProcessedPassengers);
-            finalResult.QueueResults = results;
             return finalResult;
-        }
-
-        private QueueResults SolveWithoutOptimization(SecurityInputs input)
-        {
-            return ExecuteFacility(input.Passengers, p => true, input.NumberOfResources, input.ServiceProfile, new Random(input.Seed));
         }
     }
 }

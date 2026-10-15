@@ -30,6 +30,14 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             // 🚨 NEW: The Optimize Toggle and Manual Count!
             pManager.AddBooleanParameter("Optimize Sizing", "O", "True = Auto-calculate. False = Use Manual Count.", GH_ParamAccess.item, true);
             pManager.AddIntegerParameter("Manual Count", "C", "The manual number of Gates/Zones to build.", GH_ParamAccess.item, 10);
+
+            pManager.AddIntegerParameter("Metric Basis", "MB",
+                "Which operational metric to size against: 0 = Design Hour (default), 1 = Worst Step, 2 = Whole Run.",
+                GH_ParamAccess.item, 0);
+
+            pManager.AddIntegerParameter("Design Hour Index", "DH",
+                "Design hour step index used for the passenger summary. -1 = infer from passenger tags.",
+                GH_ParamAccess.item, -1);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -55,6 +63,8 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             FacilityTemplate template = null;
             bool optimize = true;
             int manualCount = 10;
+            int metricBasis = 0;
+            int designHourIndex = -1;
 
             DA.GetData(0, ref rawResultsObj);
             if (!DA.GetDataList(1, passengers)) return;
@@ -62,12 +72,30 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             if (!DA.GetData(3, ref template)) return;
             DA.GetData(4, ref optimize);
             DA.GetData(5, ref manualCount);
+            DA.GetData(6, ref metricBasis);
+            DA.GetData(7, ref designHourIndex);
 
-            int total = passengers.Count;
-            int domestic = passengers.Count(p => p.PassengerType == PassengerType.Domestic);
-            int checkedBags = passengers.Count(p => p.HasCheckedBag);
-            int transfers = passengers.Count(p => p.Journey == PassengerJourney.Transfer);
-            int males = passengers.Count(p => p.Gender == PassengerGender.Male);
+            // Design-step passenger summary: size against the design hour, not
+            // the whole multi-hour population.
+            bool windowed = passengers.Any(p => p.DemandStepIndex >= 0);
+
+            int designStep = designHourIndex;
+
+            if (designStep < 0 && windowed)
+            {
+                Passenger designPassenger = passengers.FirstOrDefault(p => p.IsDesignStep);
+                designStep = designPassenger != null ? designPassenger.DemandStepIndex : -1;
+            }
+
+            List<Passenger> summaryPax = windowed
+                ? passengers.Where(p => p.DemandStepIndex == designStep).ToList()
+                : passengers.Where(p => !p.IsWarmUp).ToList();
+
+            int total = summaryPax.Count;
+            int domestic = summaryPax.Count(p => p.PassengerType == PassengerType.Domestic);
+            int checkedBags = summaryPax.Count(p => p.HasCheckedBag);
+            int transfers = summaryPax.Count(p => p.Journey == PassengerJourney.Transfer);
+            int males = summaryPax.Count(p => p.Gender == PassengerGender.Male);
 
             var paxSummary = new PassengerSummaryData
             {
@@ -93,10 +121,25 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                     opData.ProcessorCount = qr.PhysicalProcessorCount > 0 ? qr.PhysicalProcessorCount : qr.Resources.Count;
                     opData.ActiveProcessorCount = qr.Resources.Count;
                     opData.BaselineProcessorCount = qr.BaselineProcessorCount; // From the Simulator!
-                    opData.PeakQueue = qr.PeakQueueLength;
                     opData.AverageWait = qr.AverageWait;
                     opData.MaximumWait = qr.MaxWait;
-                    opData.Wait95 = qr.Wait95;
+
+                    double wait95 = qr.GetEvaluationWait95();
+                    int peakQueue = qr.PeakQueueLength;
+
+                    if (metricBasis == 1 && qr.IntervalMetrics != null && qr.IntervalMetrics.Count > 0)
+                    {
+                        wait95 = qr.IntervalMetrics.Max(m => m.Wait95);
+                        peakQueue = qr.IntervalMetrics.Max(m => m.PeakQueueLength);
+                    }
+                    else if (metricBasis == 2)
+                    {
+                        wait95 = qr.Wait95;
+                        peakQueue = qr.PeakQueueLength;
+                    }
+
+                    opData.PeakQueue = peakQueue;
+                    opData.Wait95 = wait95;
                     opData.AnalysisMethod = AnalysisMethod.Simulation;
                 }
                 else if (rawResults is PassengerVerificationResults pvr)

@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using AirportPlanning.Core.Models;
 using AirportPlanning.Facilities.PassengerVerification;
 using AirportPlanning.Facility_Sizing.Models;
@@ -28,6 +29,8 @@ namespace AirportPlanning.Components.Analysis
         {
             pManager.AddTextParameter("Level of Service", "LOS", "The achieved Level of Service (LoS).", GH_ParamAccess.item);
             pManager.AddTextParameter("Executive Summary", "SUM", "Formatted narrative report of the facility's performance.", GH_ParamAccess.item);
+            pManager.AddNumberParameter("Facility Peak Time", "FPT", "Simulation minute at which this facility's own peak queue occurred.", GH_ParamAccess.item);
+            pManager.AddTextParameter("Step Report", "STEP", "Per-step performance table (Wait95, peak queue, throughput).", GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -46,6 +49,8 @@ namespace AirportPlanning.Components.Analysis
 
             double wait95 = 0.0;
             double utilization = 0.0;
+            double facilityPeakTime = 0.0;
+            string stepReport = "";
             int currentCount = sizingResult.ProcessorCount;
             int baselineCountActual = sizingResult.BaselineProcessorCount;
             if (baselineCountActual <= 0) baselineCountActual = currentCount;
@@ -65,6 +70,8 @@ namespace AirportPlanning.Components.Analysis
                     demand = qr.ProcessedPassengers.Count;
                     domDemand = qr.ProcessedPassengers.Count(p => p.PassengerType == PassengerType.Domestic);
                     intDemand = qr.ProcessedPassengers.Count(p => p.PassengerType == PassengerType.International);
+                    facilityPeakTime = qr.PeakQueueTime;
+                    stepReport = BuildStepReport(qr);
 
                     if (qr.CounterUtilization != null && qr.CounterUtilization.Count > 0)
                     {
@@ -181,6 +188,9 @@ namespace AirportPlanning.Components.Analysis
             {
                 statsBlock += $"{{*Wait95:*}}{cLabel} {{*{Math.Round(wait95, 1)} mins*}}{losColor} {{*(Target: < {Math.Round(targetWait, 1)} mins)*}}{cLabel}\n" +
                               $"{{*Utilization:*}}{cLabel} {{*{Math.Round(utilization * 100, 1)}%*}}{losColor}\n";
+
+                if (facilityPeakTime > 0.0)
+                    statsBlock += $"{{*Facility Peak:*}}{cLabel} {{*min {Math.Round(facilityPeakTime, 0)}*}}{cVal}\n";
             }
             statsBlock += "\n";
 
@@ -253,6 +263,26 @@ namespace AirportPlanning.Components.Analysis
 
             DA.SetData(0, losGrade);
             DA.SetData(1, finalSummary);
+            DA.SetData(2, facilityPeakTime);
+            DA.SetData(3, stepReport);
+        }
+
+        private static string BuildStepReport(QueueResults qr)
+        {
+            if (qr.IntervalMetrics == null || qr.IntervalMetrics.Count == 0)
+                return "";
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("Step | Arrivals | Wait95 | PeakQ | Thr/hr | PeakMin");
+
+            foreach (IntervalQueueMetrics m in qr.IntervalMetrics)
+            {
+                sb.AppendLine(
+                    $"{m.StepIndex} | {m.ArrivalCount} | {Math.Round(m.Wait95, 1)} | " +
+                    $"{m.PeakQueueLength} | {Math.Round(m.Throughput, 0)} | {Math.Round(m.PeakQueueTime, 0)}");
+            }
+
+            return sb.ToString();
         }
 
         protected override System.Drawing.Bitmap Icon { get { return null; } }

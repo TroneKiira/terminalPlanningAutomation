@@ -1,5 +1,6 @@
 ﻿using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Walking;
+using AirportPlanning.Core.Inputs;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,7 +16,10 @@ namespace AirportPlanning.Core.Generation
                  PassengerProfile profile,
                  WalkingProfile walkingProfile,
                  double arrivalTime,
-                 Random rnd)
+                 Random rnd,
+                 IChannelAssigner channelAssigner = null,
+                 Random channelRnd = null,
+                 Inputs.DHPType dhpType = Inputs.DHPType.DomesticDeparture)
         {
             Passenger passenger =
                 new Passenger();
@@ -24,6 +28,8 @@ namespace AirportPlanning.Core.Generation
             // Identity
             // -----------------------------
             passenger.Id = id;
+            passenger.ProfileName = profile != null ? profile.Name : string.Empty;
+            passenger.DHPType = dhpType;
 
             // -----------------------------
             // Passenger Behaviour
@@ -53,6 +59,15 @@ namespace AirportPlanning.Core.Generation
                 GenerateWalkingSpeed(
                     walkingProfile,
                     rnd);
+
+            // -----------------------------
+            // Channel (user-defined routing)
+            // -----------------------------
+            // With no map wired the deterministic default reproduces the built-in
+            // routing and consumes no RNG, so existing numbers are untouched.
+            IChannelAssigner assigner = channelAssigner ?? DefaultChannelAssigner.Instance;
+            Random assignRnd = channelRnd ?? rnd;
+            passenger.Channel = assigner.AssignChannel(passenger, assignRnd);
 
             return passenger;
         }

@@ -10,6 +10,19 @@ namespace AirportPlanning.Components.Object_Creation
     public class CreateArrivalProfile : GH_Component
     {
         /// <summary>
+        /// Default peak, in minutes before departure. Chosen to sit comfortably
+        /// inside a typical 120-180 minute simulation horizon.
+        /// </summary>
+        public const double DefaultPeakMinutes = 60.0;
+
+        /// <summary>
+        /// Default kernel width. Deliberately wide: a narrow sigma concentrates
+        /// the whole design-hour count into only a few minutes, which produces a
+        /// very large expected arrival count per minute.
+        /// </summary>
+        public const double DefaultSigmaMinutes = 30.0;
+
+        /// <summary>
         /// Initializes a new instance of the ArrivalProfile class.
         /// </summary>
         public CreateArrivalProfile()
@@ -28,13 +41,15 @@ namespace AirportPlanning.Components.Object_Creation
                "Peak",
                "P",
                "Peak arrival time before departure where passenger arrivals are most concentrated (minutes before departure).",
-               GH_ParamAccess.item);
+               GH_ParamAccess.item,
+               DefaultPeakMinutes);
 
             pManager.AddNumberParameter(
                 "Sigma",
                 "S",
-                "Standard deviation controlling the spread of passenger arrivals.",
-                GH_ParamAccess.item);
+                "Standard deviation controlling the spread of passenger arrivals (minutes). Wider values spread the same demand over more minutes.",
+                GH_ParamAccess.item,
+                DefaultSigmaMinutes);
         }
 
         /// <summary>
@@ -55,14 +70,27 @@ namespace AirportPlanning.Components.Object_Creation
         /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            double peak = 0.0;
-            double sigma = 0.0;
+            double peak = DefaultPeakMinutes;
+            double sigma = DefaultSigmaMinutes;
 
-            if (!DA.GetData(0, ref peak))
-                return;
+            DA.GetData(0, ref peak);
+            DA.GetData(1, ref sigma);
 
-            if (!DA.GetData(1, ref sigma))
-                return;
+            if (sigma <= 0.0)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"Sigma must be greater than 0; using the default {DefaultSigmaMinutes:0.#} minutes.");
+                sigma = DefaultSigmaMinutes;
+            }
+
+            if (peak <= 0.0)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"Peak must be greater than 0; using the default {DefaultPeakMinutes:0.#} minutes.");
+                peak = DefaultPeakMinutes;
+            }
 
             ArrivalProfile profile =
                 new ArrivalProfile

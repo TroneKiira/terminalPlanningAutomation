@@ -59,15 +59,26 @@ namespace AirportPlanning.Components.SimulationComponent
             double totalDwell = 0;
             int dwellCount = 0;
 
-            // Calculate the absolute simulation minutes
-            double a = departureMinute - gateOpen;  // Min (e.g., Minute 100)
-            double b = departureMinute - gateClose; // Max (e.g., Minute 135)
-
-            // Calculate the Mode (Peak) based on the percentage
-            double c = a + ((b - a) * peakPercent); // Mode (e.g., Minute 110.5)
-
             foreach (Passenger p in passengers)
             {
+                // Use the passenger's own scheduled departure when available
+                // (windowed generation); otherwise fall back to the global DM.
+                double departure = p.ScheduledDepartureTime > 0.0
+                    ? p.ScheduledDepartureTime
+                    : departureMinute;
+
+                // Calculate the absolute simulation minutes for this departure
+                double a = departure - gateOpen;  // Min
+                double b = departure - gateClose; // Max
+                double c = a + ((b - a) * peakPercent); // Mode
+
+                if (b - a <= 0.0)
+                {
+                    p.QueueArrivalTime = p.ArrivalTime;
+                    dwellCount++;
+                    continue;
+                }
+
                 // 🧮 TRIANGULAR DISTRIBUTION MATH
                 // This generates a mathematically defensible skewed bell curve
                 double u = rnd.NextDouble();

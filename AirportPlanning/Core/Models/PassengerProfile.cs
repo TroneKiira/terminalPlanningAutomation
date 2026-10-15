@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
+using AirportPlanning.Core.Inputs;
 using AirportPlanning.Core.Models;
 using AirportPlanning.Facilities.CheckIn;
 
@@ -54,6 +55,19 @@ namespace AirportPlanning.Core.Models
 
         public double MaleProbability { get; set; }
 
+        /// <summary>
+        /// Minimum time before scheduled departure that this profile arrives at
+        /// the terminal (minutes). Used to assign a per-passenger departure time
+        /// in windowed generation.
+        /// </summary>
+        public double MinAdvanceMinutes { get; set; } = 60.0;
+
+        /// <summary>
+        /// Maximum time before scheduled departure that this profile arrives at
+        /// the terminal (minutes).
+        /// </summary>
+        public double MaxAdvanceMinutes { get; set; } = 150.0;
+
         public PassengerProfile()
         {
             Percentage = 0;
@@ -61,6 +75,8 @@ namespace AirportPlanning.Core.Models
             CheckedBagProbability = 0;
             MaleProbability = 0.5; // Default to 50/50
             ServiceTimeMultiplier = 1.0;
+            MinAdvanceMinutes = 60.0;
+            MaxAdvanceMinutes = 150.0;
         }
     }
 }

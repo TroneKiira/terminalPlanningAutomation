@@ -70,7 +70,13 @@ namespace AirportPlanning.Components.SimulationComponent
                 "Random number seed used to ensure repeatable passenger generation.",
                 GH_ParamAccess.item,
                 1);
-            
+
+            pManager.AddGenericParameter(
+                "Channel Routing",
+                "CHR",
+                "Optional channel routing map. When wired it assigns a channel to each passenger at generation; otherwise the built-in routing (Counter / BagDrop / Web) is used.",
+                GH_ParamAccess.item);
+            pManager[7].Optional = true;
         }
 
         /// <summary>
@@ -116,6 +122,7 @@ namespace AirportPlanning.Components.SimulationComponent
             int departureMinute = 0;
             int simulationHorizon = 0;
             int seed = 1;
+            IChannelAssigner channelAssigner = null;
 
             if (!DA.GetData(0, ref demand))
                 return;
@@ -138,6 +145,8 @@ namespace AirportPlanning.Components.SimulationComponent
             if (!DA.GetData(6, ref seed))
                 return;
 
+            DA.GetData(7, ref channelAssigner);
+
             PassengerGenerator generator =
                 new PassengerGenerator();
 
@@ -149,7 +158,8 @@ namespace AirportPlanning.Components.SimulationComponent
                     walkingProfile,
                     departureMinute,
                     simulationHorizon,
-                    seed);
+                    seed,
+                    channelAssigner);
 
             DA.SetDataList(
                 0,

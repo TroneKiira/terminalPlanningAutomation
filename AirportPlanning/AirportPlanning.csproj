@@ -37,12 +37,21 @@
   
   <ItemGroup>
     <PackageReference Include="Grasshopper" Version="8.0.23304.9001" ExcludeAssets="runtime" />
+    <PackageReference Include="OxyPlot.Core" Version="2.1.2" />
   </ItemGroup>
   
   <!-- For Windows only builds -->
   <PropertyGroup Condition="$(TargetFramework.Contains('-windows')) or $(TargetFramework.StartsWith('net4'))">
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- Charts render through OxyPlot's WinForms exporter, which is Windows-only.
+         Guarded so the Rhino 8 macOS target still compiles; charts are simply
+         unavailable there. -->
+    <DefineConstants>$(DefineConstants);HAS_WINFORMS_EXPORTER</DefineConstants>
   </PropertyGroup>
+
+  <ItemGroup Condition="$(TargetFramework.Contains('-windows')) or $(TargetFramework.StartsWith('net4'))">
+    <PackageReference Include="OxyPlot.WindowsForms" Version="2.1.2" />
+  </ItemGroup>
 
   <!-- Reference WinForms for .NET 7.0 on macOS -->
   <ItemGroup Condition="!($(TargetFramework.Contains('-windows')) or $(TargetFramework.StartsWith('net4')))">

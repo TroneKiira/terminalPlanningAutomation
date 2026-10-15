@@ -2,6 +2,7 @@
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using AirportPlanning.Core.Queueing;
 using AirportPlanning.Core.Models;
@@ -53,7 +54,7 @@ namespace AirportPlanning.Components
             pManager.AddNumberParameter(
                 "95th Percentile Wait",
                 "W95",
-                "95th percentile passenger waiting time.",
+                "Whole-run 95th percentile passenger waiting time (warm-up excluded). This is the value the facility Target Wait applies to.",
                 GH_ParamAccess.item);
 
             pManager.AddIntegerParameter(
@@ -66,6 +67,84 @@ namespace AirportPlanning.Components
                 "Resource Utilization",
                 "RU",
                 "Utilization of each processing resource.",
+                GH_ParamAccess.list);
+
+            pManager.AddNumberParameter(
+                "Peak Queue Time",
+                "PQT",
+                "Simulation minute at which the peak queue occurred.",
+                GH_ParamAccess.item);
+
+            pManager.AddIntegerParameter(
+                "Step Indices",
+                "SI",
+                "Demand step index for each reported interval.",
+                GH_ParamAccess.list);
+
+            pManager.AddNumberParameter(
+                "Step Wait95",
+                "SW95",
+                "95th percentile wait per demand step (minutes).",
+                GH_ParamAccess.list);
+
+            pManager.AddIntegerParameter(
+                "Step Peak Queue",
+                "SPQ",
+                "Peak queue length per demand step.",
+                GH_ParamAccess.list);
+
+            pManager.AddNumberParameter(
+                "Step Throughput",
+                "STH",
+                "Passengers per hour serviced within each demand step.",
+                GH_ParamAccess.list);
+
+            pManager.AddTextParameter(
+                "Channel Names",
+                "CHN",
+                "Channel names present in the simulation.",
+                GH_ParamAccess.list);
+
+            pManager.AddIntegerParameter(
+                "Channel Counts",
+                "CHC",
+                "Passengers per channel (warm-up excluded).",
+                GH_ParamAccess.list);
+
+            pManager.AddNumberParameter(
+                "Channel Wait95",
+                "CHW95",
+                "95th percentile wait per channel (minutes).",
+                GH_ParamAccess.list);
+
+            pManager.AddIntegerParameter(
+                "Channel Peak Queue",
+                "CHPQ",
+                "Peak queue per channel.",
+                GH_ParamAccess.list);
+
+            pManager.AddTextParameter(
+                "Profile Names",
+                "PFN",
+                "Passenger-profile names present in the simulation.",
+                GH_ParamAccess.list);
+
+            pManager.AddIntegerParameter(
+                "Profile Counts",
+                "PFC",
+                "Passengers per profile (warm-up excluded).",
+                GH_ParamAccess.list);
+
+            pManager.AddNumberParameter(
+                "Profile Wait95",
+                "PFW95",
+                "95th percentile wait per profile (minutes).",
+                GH_ParamAccess.list);
+
+            pManager.AddIntegerParameter(
+                "Profile Peak Queue",
+                "PFPQ",
+                "Peak queue per profile.",
                 GH_ParamAccess.list);
         }
 
@@ -100,6 +179,73 @@ namespace AirportPlanning.Components
             DA.SetDataList(
                 4,
                 queueResults.CounterUtilization);
+
+            DA.SetData(
+                5,
+                queueResults.PeakQueueTime);
+
+            List<int> stepIndices = new List<int>();
+            List<double> stepWait95 = new List<double>();
+            List<int> stepPeakQueue = new List<int>();
+            List<double> stepThroughput = new List<double>();
+
+            if (queueResults.IntervalMetrics != null)
+            {
+                foreach (var metric in queueResults.IntervalMetrics)
+                {
+                    stepIndices.Add(metric.StepIndex);
+                    stepWait95.Add(metric.Wait95);
+                    stepPeakQueue.Add(metric.PeakQueueLength);
+                    stepThroughput.Add(metric.Throughput);
+                }
+            }
+
+            DA.SetDataList(6, stepIndices);
+            DA.SetDataList(7, stepWait95);
+            DA.SetDataList(8, stepPeakQueue);
+            DA.SetDataList(9, stepThroughput);
+
+            List<string> channelNames = new List<string>();
+            List<int> channelCounts = new List<int>();
+            List<double> channelWait95 = new List<double>();
+            List<int> channelPeak = new List<int>();
+
+            if (queueResults.ByChannel != null)
+            {
+                foreach (var pair in queueResults.ByChannel.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    channelNames.Add(pair.Key);
+                    channelCounts.Add(pair.Value.Count);
+                    channelWait95.Add(pair.Value.Wait95);
+                    channelPeak.Add(pair.Value.PeakQueueLength);
+                }
+            }
+
+            DA.SetDataList(10, channelNames);
+            DA.SetDataList(11, channelCounts);
+            DA.SetDataList(12, channelWait95);
+            DA.SetDataList(13, channelPeak);
+
+            List<string> profileNames = new List<string>();
+            List<int> profileCounts = new List<int>();
+            List<double> profileWait95 = new List<double>();
+            List<int> profilePeak = new List<int>();
+
+            if (queueResults.ByProfile != null)
+            {
+                foreach (var pair in queueResults.ByProfile.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    profileNames.Add(pair.Key);
+                    profileCounts.Add(pair.Value.Count);
+                    profileWait95.Add(pair.Value.Wait95);
+                    profilePeak.Add(pair.Value.PeakQueueLength);
+                }
+            }
+
+            DA.SetDataList(14, profileNames);
+            DA.SetDataList(15, profileCounts);
+            DA.SetDataList(16, profileWait95);
+            DA.SetDataList(17, profilePeak);
         }
 
         /// <summary>

@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-using Rhino;
 namespace AirportPlanning.Core.Queueing
 {
     public class QueueSimulator
@@ -26,7 +25,10 @@ namespace AirportPlanning.Core.Queueing
                 resource.Reset();
         }
 
-        public void RunQueue(List<Passenger> passengers, List<QueueResource> resources)
+        public void RunQueue(
+            List<Passenger> passengers,
+            List<QueueResource> resources,
+            bool sortPassengers = true)
         {
             if (passengers == null)
                 throw new ArgumentNullException(nameof(passengers));
@@ -36,8 +38,11 @@ namespace AirportPlanning.Core.Queueing
 
             QueueResourceHeap heap = new QueueResourceHeap(resources);
 
-            // FIX: Absolute safeguard to ensure chronological processing
-            passengers.Sort((a, b) => a.ArrivalTime.CompareTo(b.ArrivalTime));
+            // Chronological processing. Callers that already hold a chronologically
+            // ordered cohort (the optimizer reuses one pool across every candidate)
+            // can skip this to avoid an O(n log n) pass per capacity trial.
+            if (sortPassengers)
+                passengers.Sort((a, b) => a.ArrivalTime.CompareTo(b.ArrivalTime));
 
             foreach (Passenger passenger in passengers)
             {

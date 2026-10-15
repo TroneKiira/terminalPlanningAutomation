@@ -1,123 +1,226 @@
 ﻿using AirportPlanning.Core.Models;
-using AirportPlanning.Facilities;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace AirportPlanning.Core.Queueing
 {
+    /// <summary>
+    /// Result of sizing a single server pool (one channel, or the shared pool).
+    /// </summary>
+    public class ResourceSearchOutcome
+    {
+        public ChannelResourcePlan Plan { get; set; }
+
+        /// <summary>Physical resource count the search settled on.</summary>
+        public int OptimalPhysicalResources { get; set; }
+
+        /// <summary>Staffed (active) servers actually simulated for that count.</summary>
+        public int OptimalActiveResources { get; set; }
+
+        /// <summary>Wait95 the winning capacity produced.</summary>
+        public double Wait95 { get; set; }
+
+        /// <summary>Ratio of Wait95 to target when it landed inside the band, else -1.</summary>
+        public double Fitness { get; set; }
+
+        /// <summary>True when a capacity within the range met the target.</summary>
+        public bool Success { get; set; }
+
+        /// <summary>Number of candidate capacities simulated.</summary>
+        public int Iterations { get; set; }
+
+        /// <summary>Every (capacity, wait95) point evaluated during the search.</summary>
+        public List<SearchTracePoint> SearchTrace { get; set; } = new List<SearchTracePoint>();
+    }
+
+    public class SearchTracePoint
+    {
+        public int Capacity { get; set; }
+        public double Wait95 { get; set; }
+    }
+
+    /// <summary>
+    /// Finds the smallest physical capacity that meets a target Wait95 for each
+    /// pool, inside the bounds declared by <see cref="ChannelResourcePlan"/>.
+    ///
+    /// Wait95 falls as capacity rises, so the search is a lower-bound binary
+    /// search rather than the previous linear 1..cap scan. That turns up to
+    /// ~1200 simulations into ~log2(range) (about 11 for a 1..1200 window),
+    /// with a short downward refinement to absorb the mild non-monotonicity a
+    /// discrete queue can show. Independent pools are searched in parallel.
+    /// </summary>
     public class QueueOptimizer
     {
-        public OptimizationResult Optimize<TInput>(
-            TInput input,
-            Func<TInput, QueueResults> solver,
-            Action<TInput, int> setActiveServers,
-            Func<TInput, int> getPhysicalServers,
-            double targetWait95,
-            double staffingPercentage)
+        /// <summary>How many extra steps below the bisection hit to re-check for non-monotonicity.</summary>
+        private const int RefineWindow = 4;
+
+        /// <summary>
+        /// Sizes every supplied pool. <paramref name="evaluate"/> receives the plan
+        /// and a physical capacity and must return that capacity's Wait95; it is
+        /// called with different capacities and must not mutate shared state, so
+        /// pools can be searched concurrently.
+        /// </summary>
+        public List<ResourceSearchOutcome> Optimize(
+            IList<ChannelResourcePlan> plans,
+            double staffingPercentage,
+            Func<ChannelResourcePlan, int, double> evaluate,
+            Action<string> warn = null)
+        {
+            List<ResourceSearchOutcome> outcomes = new List<ResourceSearchOutcome>();
+
+            if (plans == null || plans.Count == 0 || evaluate == null)
+                return outcomes;
+
+            if (plans.Count == 1)
+            {
+                outcomes.Add(SearchOne(plans[0], staffingPercentage, evaluate));
+                return outcomes;
+            }
+
+            ResourceSearchOutcome[] results = new ResourceSearchOutcome[plans.Count];
+
+            Parallel.For(
+                0,
+                plans.Count,
+                index =>
+                {
+                    ChannelResourcePlan plan = plans[index];
+
+                    try
+                    {
+                        results[index] = SearchOne(plan, staffingPercentage, evaluate);
+                    }
+                    catch (Exception ex)
+                    {
+                        warn?.Invoke($"Optimization failed for '{plan}': {ex.Message}");
+                        results[index] = FailedOutcome(plan, staffingPercentage);
+                    }
+                });
+
+            foreach (ResourceSearchOutcome outcome in results)
+            {
+                if (outcome != null)
+                    outcomes.Add(outcome);
+            }
+
+            return outcomes;
+        }
+
+        private ResourceSearchOutcome SearchOne(
+            ChannelResourcePlan plan,
+            double staffingPercentage,
+            Func<ChannelResourcePlan, int, double> evaluate)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
-            OptimizationResult result = new OptimizationResult();
 
-            int physicalN = Math.Max(1, getPhysicalServers(input));
+            ResourceSearchRange range = (plan.Range ?? new ResourceSearchRange()).Normalized();
+            double target = plan.TargetWait95;
 
-            double staffPct = (staffingPercentage <= 0.0 || staffingPercentage > 100.0) ? 100.0 : staffingPercentage;
+            int evaluations = 0;
+            var trace = new List<SearchTracePoint>();
 
-            int startSearch = 1;
+            double waitAtMax = evaluate(plan, range.Max);
+            evaluations++;
+            trace.Add(new SearchTracePoint { Capacity = range.Max, Wait95 = waitAtMax });
 
-            // FIX 1: Increased the search space to handle massive passenger loads
-            int endSearch = Math.Max(1200, physicalN * 3);
-
-            int chosenN = physicalN;
-            int chosenActiveN = physicalN;
-            double bestFitness = -1.0;
-            QueueResults bestQueue = null;
-
-            int fallbackN = -1;
-            int fallbackActiveN = -1;
-            QueueResults fallbackQueue = null;
-
-            // FIX 2: Track the last simulation run so we NEVER return a null QueueResults
-            int lastN = physicalN;
-            int lastActiveN = physicalN;
-            QueueResults lastQueue = null;
-
-            int iterations = 0;
-
-            for (int currentN = startSearch; currentN <= endSearch; currentN++)
+            if (target <= 0.0 || waitAtMax > target)
             {
-                iterations++;
+                stopwatch.Stop();
 
-                int activeN = (int)Math.Max(1, Math.Round(currentN * (staffPct / 100.0)));
+                ResourceSearchOutcome unreachable = BuildOutcome(
+                    plan, staffingPercentage, range.Max, waitAtMax, evaluations, false);
+                unreachable.SearchTrace = trace;
 
-                setActiveServers(input, activeN);
-                QueueResults queue = solver(input);
+                return unreachable;
+            }
 
-                // Always store the absolute latest queue we tested
-                lastQueue = queue;
-                lastN = currentN;
-                lastActiveN = activeN;
+            int low = range.Min;
+            int high = range.Max;
 
-                double wait95 = queue.Wait95;
+            while (low < high)
+            {
+                int mid = low + ((high - low) / 2);
 
-                double x = (targetWait95 > 0.0) ? (wait95 / targetWait95) : 0.0;
-                double fitness = (x > 1.0 || x < 0.5) ? -1.0 : x;
+                double wait = evaluate(plan, mid);
+                evaluations++;
+                trace.Add(new SearchTracePoint { Capacity = mid, Wait95 = wait });
 
-                if (fitness > bestFitness)
-                {
-                    bestFitness = fitness;
-                    chosenN = currentN;
-                    chosenActiveN = activeN;
-                    bestQueue = queue;
-                }
+                if (wait <= target)
+                    high = mid;
+                else
+                    low = mid + 1;
+            }
 
-                if (wait95 <= targetWait95 && (fallbackN == -1 || currentN < fallbackN))
-                {
-                    fallbackN = currentN;
-                    fallbackActiveN = activeN;
-                    fallbackQueue = queue;
-                }
+            int best = low;
 
-                if (x >= 0.0 && x < 0.5)
-                {
+            for (int candidate = best - 1; candidate >= range.Min && candidate >= best - RefineWindow; candidate--)
+            {
+                double wait = evaluate(plan, candidate);
+                evaluations++;
+                trace.Add(new SearchTracePoint { Capacity = candidate, Wait95 = wait });
+
+                if (wait <= target)
+                    best = candidate;
+                else
                     break;
-                }
             }
 
-            if (bestFitness == -1.0 && fallbackN != -1)
-            {
-                chosenN = fallbackN;
-                chosenActiveN = fallbackActiveN;
-                bestQueue = fallbackQueue;
-                result.Success = true;
-            }
-            else if (bestFitness != -1.0)
-            {
-                result.Success = true;
-            }
-            else
-            {
-                // FIX 3: Safety Net! If EVERYTHING failed to meet the target, 
-                // return the highest capacity we tested so it doesn't crash with null.
-                result.Success = false;
-                chosenN = lastN;
-                chosenActiveN = lastActiveN;
-                bestQueue = lastQueue;
-            }
+            double waitAtBest = evaluate(plan, best);
+            evaluations++;
+            trace.Add(new SearchTracePoint { Capacity = best, Wait95 = waitAtBest });
 
             stopwatch.Stop();
 
-            result.OptimalPhysicalResources = chosenN;
-            result.OptimalActiveResources = chosenActiveN;
-            result.Fitness = bestFitness;
-            result.QueueResults = bestQueue;
-            result.Iterations = iterations;
-            result.ElapsedMilliseconds = stopwatch.ElapsedMilliseconds;
+            ResourceSearchOutcome outcome = BuildOutcome(plan, staffingPercentage, best, waitAtBest, evaluations, true);
+            outcome.SearchTrace = trace;
+            return outcome;
+        }
 
-            return result;
+        private static ResourceSearchOutcome BuildOutcome(
+            ChannelResourcePlan plan,
+            double staffingPercentage,
+            int physical,
+            double wait95,
+            int evaluations,
+            bool success)
+        {
+            double target = plan != null ? plan.TargetWait95 : 0.0;
+
+            double fitness = -1.0;
+
+            if (success && target > 0.0)
+            {
+                double x = wait95 / target;
+
+                if (x <= 1.0 && x >= 0.5)
+                    fitness = x;
+            }
+
+            return new ResourceSearchOutcome
+            {
+                Plan = plan,
+                OptimalPhysicalResources = physical,
+                OptimalActiveResources = ChannelResourcePlan.ToActiveResources(physical, staffingPercentage),
+                Wait95 = wait95,
+                Fitness = fitness,
+                Success = success,
+                Iterations = evaluations
+            };
+        }
+
+        private static ResourceSearchOutcome FailedOutcome(
+            ChannelResourcePlan plan,
+            double staffingPercentage)
+        {
+            return BuildOutcome(
+                plan,
+                staffingPercentage,
+                Math.Max(1, plan != null && plan.Range != null ? plan.Range.Max : 1),
+                0.0,
+                0,
+                false);
         }
     }
 }
