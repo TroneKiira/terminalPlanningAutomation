@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace AirportPlanning.Facility_Sizing.Standards
 {
-    public class ImmigrationStandards : FacilityStandards
+    public class EmigrationStandards : FacilityStandards
     {
     }
 }

@@ -57,7 +57,7 @@ namespace AirportPlanning.Components.Object_Creation
         {
             pManager.AddGenericParameter(
                 "Pool Plans", "PP",
-                "Keyed pool plans for Check-In, Bag Drop, Security or Immigration.",
+                "Keyed pool plans for Check-In, Bag Drop, Security or Emigration.",
                 GH_ParamAccess.list);
         }
 

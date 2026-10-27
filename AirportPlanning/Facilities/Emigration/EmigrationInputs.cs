@@ -9,18 +9,23 @@ using System.Text;
 using System.Threading.Tasks;
 
 
-
-namespace AirportPlanning.Facilities.Immigration
+namespace AirportPlanning.Facilities.Emigration
 {
-    public class ImmigrationInputs
+    public class EmigrationInputs
     {
         public List<Passenger> Passengers { get; set; }
 
         public ServiceProfile ServiceProfile { get; set; }
 
         /// <summary>
+        /// Share of international departing passengers routed to the e-gate
+        /// pool, from 0 to 100. The remainder use manual counters.
+        /// </summary>
+        public double EGateSharePercentage { get; set; } = 40.0;
+
+        /// <summary>
         /// Channels this facility serves. Empty means the legacy predicate
-        /// (international passengers) applies; non-empty filters on the channel.
+        /// (international departures) applies; non-empty filters on the channel.
         /// </summary>
         public List<string> Channels { get; set; } = new List<string>();
 
@@ -28,7 +33,7 @@ namespace AirportPlanning.Facilities.Immigration
         public IServiceTimeProvider ServiceTimeProvider { get; set; }
 
         /// <summary>
-        /// Physical immigration booths per channel. Used when optimization is
+        /// Physical emigration positions per channel. Used when optimization is
         /// switched off; a single value broadcasts to every channel.
         /// </summary>
         public List<int> PhysicalResources { get; set; } = new List<int>();
@@ -51,10 +56,9 @@ namespace AirportPlanning.Facilities.Immigration
 
         public int Seed { get; set; }
 
-        // NEW: Add Staffing Percentage
         public double StaffingPercentage { get; set; } = 100.0;
 
-        public ImmigrationInputs()
+        public EmigrationInputs()
         {
             Passengers = new List<Passenger>();
         }

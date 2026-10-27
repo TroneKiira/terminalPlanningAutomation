@@ -105,6 +105,10 @@ namespace AirportPlanning.Core.Area
         public Dictionary<string, int> PeakQueueByChannel { get; set; } =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>Peak queue length keyed by the exact solver pool identity.</summary>
+        public Dictionary<string, int> PeakQueueByPool { get; set; } =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>Peak queue length of the whole facility.</summary>
         public int GlobalPeakQueue { get; set; }
 
@@ -120,6 +124,12 @@ namespace AirportPlanning.Core.Area
 
         /// <summary>Queue space used when no standard supplies one, m²/pax.</summary>
         public double FallbackQueueSpacePerPax { get; set; }
+
+        /// <summary>
+        /// When true, installed counts come only from the solver count inputs;
+        /// missing entries are not silently replaced by counts copied into QR.
+        /// </summary>
+        public bool RequireExplicitCounts { get; set; }
     }
 
     /// <summary>
@@ -222,10 +232,11 @@ namespace AirportPlanning.Core.Area
                 return result;
 
             FacilityAreaStandardSet standards = input.Standards;
+            bool singlePool = rows.Count == 1;
 
             foreach (PoolRow row in rows)
             {
-                FacilityAreaLine line = SizePool(input, standards, row, result);
+                FacilityAreaLine line = SizePool(input, standards, row, result, singlePool);
 
                 result.Lines.Add(line);
                 result.EquipmentArea += line.EquipmentArea;
@@ -243,9 +254,10 @@ namespace AirportPlanning.Core.Area
             FacilityAreaInput input,
             FacilityAreaStandardSet standards,
             PoolRow row,
-            FacilityAreaResult result)
+            FacilityAreaResult result,
+            bool singlePool)
         {
-            FacilityUnitStandard standard = ResolveStandard(standards, row, result);
+            FacilityUnitStandard standard = ResolveStandard(standards, row, result, singlePool);
 
             double areaPerUnit;
             double queueSpace;
@@ -262,7 +274,7 @@ namespace AirportPlanning.Core.Area
             }
             else
             {
-                areaPerUnit = input.FallbackAreaPerUnit;
+                areaPerUnit = input.RequireExplicitCounts ? 0.0 : input.FallbackAreaPerUnit;
 
                 queueSpace = standards != null && standards.DefaultQueueSpacePerPax > 0.0
                     ? standards.DefaultQueueSpacePerPax
@@ -270,7 +282,9 @@ namespace AirportPlanning.Core.Area
 
                 result.Warnings.Add(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Pool '{0}' has no area standard; the facility's own unit size ({1:0.##} m2) was used instead.",
+                    input.RequireExplicitCounts
+                        ? "Pool '{0}' has no matching area standard; no equipment area was assigned."
+                        : "Pool '{0}' has no area standard; the facility's own unit size ({1:0.##} m2) was used instead.",
                     row.Name,
                     areaPerUnit));
             }
@@ -349,7 +363,8 @@ namespace AirportPlanning.Core.Area
         private static FacilityUnitStandard ResolveStandard(
             FacilityAreaStandardSet standards,
             PoolRow row,
-            FacilityAreaResult result)
+            FacilityAreaResult result,
+            bool singlePool)
         {
             if (standards == null)
                 return null;
@@ -370,7 +385,33 @@ namespace AirportPlanning.Core.Area
                 return mapped;
             }
 
-            return standards.Find(row.Name);
+            FacilityUnitStandard matched = standards.Find(row.Name);
+
+            if (matched == null && !string.IsNullOrWhiteSpace(row.Channel) &&
+                !string.Equals(row.Channel, row.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                // Solver pool identities may add demand/profile tags after the
+                // physical channel, e.g. Counter|DomesticDeparture|Economy.
+                // The channel prefix is the standard key; no manual alias is
+                // needed for these solver-generated names.
+                matched = standards.Find(row.Channel);
+            }
+
+            if (matched == null && singlePool && standards.Units != null)
+            {
+                List<FacilityUnitStandard> usableUnits = standards.Units
+                    .Where(unit => unit != null && !string.IsNullOrWhiteSpace(unit.Key))
+                    .Take(2)
+                    .ToList();
+
+                // A single configured unit key is an unambiguous default for
+                // a shared pool named "Shared" (or a solver with no pool
+                // metadata); no per-pool mapping is needed.
+                if (usableUnits.Count == 1)
+                    matched = usableUnits[0];
+            }
+
+            return matched;
         }
 
         /// <summary>
@@ -389,8 +430,14 @@ namespace AirportPlanning.Core.Area
             if (row.IsShared)
                 return Math.Max(0, input.GlobalPeakQueue);
 
+            if (input.PeakQueueByPool != null &&
+                input.PeakQueueByPool.TryGetValue(row.Name, out int poolPeak))
+            {
+                return Math.Max(0, poolPeak);
+            }
+
             if (input.PeakQueueByChannel != null &&
-                input.PeakQueueByChannel.TryGetValue(row.Name, out int peak))
+                input.PeakQueueByChannel.TryGetValue(row.Channel ?? row.Name, out int peak))
             {
                 return Math.Max(0, peak);
             }
@@ -415,10 +462,21 @@ namespace AirportPlanning.Core.Area
             if (names.Count == 0)
                 return rows;
 
-            WarnOnShortList(input.PhysicalPerPool, names.Count, "Physical per Pool", result);
+            WarnOnShortList(input.PhysicalPerPool, names.Count, "Physical per Pool", result,
+                input.RequireExplicitCounts);
             WarnOnShortList(input.ActivePerPool, names.Count, "Active per Pool", result);
             WarnOnShortList(input.FacilityKeyPerPool, names.Count, "Facility Key per Pool", result);
             WarnOnShortList(input.NoPhysicalAreaPerPool, names.Count, "No Physical Area", result);
+
+            if (input.RequireExplicitCounts && input.PhysicalPerPool != null &&
+                input.PhysicalPerPool.Count > names.Count)
+            {
+                result.Warnings.Add(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "The solver returned {0} physical count(s) for {1} QR pool(s); extra counts were ignored.",
+                    input.PhysicalPerPool.Count,
+                    names.Count));
+            }
 
             for (int i = 0; i < names.Count; i++)
             {
@@ -426,19 +484,28 @@ namespace AirportPlanning.Core.Area
 
                 ProcessorPoolInfo meta = FindPool(input.Pools, name);
 
+                bool hasPhysicalCount = input.PhysicalPerPool != null && i < input.PhysicalPerPool.Count;
                 int physical = ValueAt(input.PhysicalPerPool, i);
 
-                if (physical <= 0 && meta != null)
+                if (!hasPhysicalCount && !input.RequireExplicitCounts && meta != null)
                 {
                     physical = meta.PhysicalResourceCount > 0
                         ? meta.PhysicalResourceCount
                         : meta.ResourceCount;
                 }
 
+                bool hasActiveCount = input.ActivePerPool != null && i < input.ActivePerPool.Count;
                 int active = ValueAt(input.ActivePerPool, i);
 
-                if (active <= 0 && meta != null)
+                if (!hasActiveCount && meta != null)
                     active = meta.ResourceCount;
+
+                if (!hasActiveCount && active <= 0)
+                    active = physical;
+
+                string channel = meta != null && !string.IsNullOrWhiteSpace(meta.Name)
+                    ? GetChannelName(meta.Name)
+                    : GetChannelName(name);
 
                 rows.Add(new PoolRow
                 {
@@ -447,7 +514,8 @@ namespace AirportPlanning.Core.Area
                     Active = active,
                     FacilityKey = ValueAt(input.FacilityKeyPerPool, i),
                     NoPhysicalArea = ValueAt(input.NoPhysicalAreaPerPool, i),
-                    IsShared = IsSharedPool(input, meta, name)
+                    IsShared = IsSharedPool(input, meta, name),
+                    Channel = channel
                 });
             }
 
@@ -474,8 +542,24 @@ namespace AirportPlanning.Core.Area
             if (names.Count > 0)
                 return names;
 
-            if (input.Pools == null)
+            if (input.Pools == null || input.Pools.Count == 0)
+            {
+                if (input.PhysicalPerPool != null && input.PhysicalPerPool.Count == 1 &&
+                    input.Standards != null && input.Standards.Units != null &&
+                    input.Standards.Units.Count == 1 && input.Standards.Units[0] != null)
+                {
+                    names.Add(input.Standards.Units[0].Key);
+                    return names;
+                }
+
+                if (input.PhysicalPerPool != null)
+                {
+                    for (int i = 0; i < input.PhysicalPerPool.Count; i++)
+                        names.Add("Pool " + (i + 1));
+                }
+
                 return names;
+            }
 
             foreach (ProcessorPoolInfo pool in input.Pools)
             {
@@ -483,6 +567,12 @@ namespace AirportPlanning.Core.Area
                     continue;
 
                 names.Add(string.IsNullOrWhiteSpace(pool.Name) ? "Shared" : pool.Name);
+            }
+
+            if (names.Count == 0 && input.PhysicalPerPool != null)
+            {
+                for (int i = 0; i < input.PhysicalPerPool.Count; i++)
+                    names.Add("Pool " + (i + 1));
             }
 
             return names;
@@ -512,11 +602,21 @@ namespace AirportPlanning.Core.Area
             return string.Equals(name, "Shared", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static string GetChannelName(string poolName)
+        {
+            if (string.IsNullOrWhiteSpace(poolName))
+                return string.Empty;
+
+            int separator = poolName.IndexOf('|');
+            return (separator < 0 ? poolName : poolName.Substring(0, separator)).Trim();
+        }
+
         private static void WarnOnShortList<T>(
             List<T> values,
             int poolCount,
             string label,
-            FacilityAreaResult result)
+            FacilityAreaResult result,
+            bool missingPhysicalCountsAreZero = false)
         {
             if (values == null || values.Count == 0)
                 return;
@@ -524,12 +624,17 @@ namespace AirportPlanning.Core.Area
             if (values.Count >= poolCount)
                 return;
 
+            string fallback = missingPhysicalCountsAreZero
+                ? "Missing solver counts are treated as zero."
+                : "Pools not covered take their values from Queue Results.";
+
             result.Warnings.Add(string.Format(
                 CultureInfo.InvariantCulture,
-                "'{0}' has {1} value(s) for {2} pool(s); the pools it does not cover take their values from the Queue Results.",
+                "'{0}' has {1} value(s) for {2} pool(s). {3}",
                 label,
                 values.Count,
-                poolCount));
+                poolCount,
+                fallback));
         }
 
         private static int ValueAt(List<int> values, int index)
@@ -559,6 +664,7 @@ namespace AirportPlanning.Core.Area
         private class PoolRow
         {
             public string Name;
+            public string Channel;
             public int Physical;
             public int Active;
             public string FacilityKey;

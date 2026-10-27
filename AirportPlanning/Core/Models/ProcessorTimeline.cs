@@ -51,6 +51,10 @@ namespace AirportPlanning.Core.Models
     /// Only passengers the facility actually served are considered; warm-up
     /// passengers are excluded by default so the occupancy lines up with the
     /// reported queue timeline, which also excludes them.
+    ///
+    /// Pool membership comes from <see cref="Passenger.AssignedPool"/> first,
+    /// falling back to the bare channel for older results. The assignment is
+    /// what keeps multiple keyed pools in one channel separate.
     /// </summary>
     public static class ProcessorTimeline
     {
@@ -144,6 +148,19 @@ namespace AirportPlanning.Core.Models
             Dictionary<string, ProcessorTimelinePool> byName,
             Passenger passenger)
         {
+            // The solver records the exact pool that served the passenger.
+            // This is required for keyed sub-pools: their names include the
+            // pool key, while Passenger.Channel holds only the channel name.
+            string assignedPool = passenger.AssignedPool;
+
+            if (!string.IsNullOrWhiteSpace(assignedPool) &&
+                byName.TryGetValue(assignedPool.Trim(), out ProcessorTimelinePool assignedMatch))
+            {
+                return assignedMatch;
+            }
+
+            // Fallback for results produced before pool identities were
+            // recorded, and for one pool per bare channel.
             string channel = passenger.Channel;
 
             if (!string.IsNullOrWhiteSpace(channel) &&

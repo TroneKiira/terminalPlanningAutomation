@@ -2,28 +2,28 @@
 using AirportPlanning.Core.Queueing;
 using System.Collections.Generic;
 
-namespace AirportPlanning.Facilities.Immigration
+namespace AirportPlanning.Facilities.Emigration
 {
-    public class ImmigrationResults
+    public class EmigrationResults
     {
-        /// <summary>Aggregate physical booths across every pool.</summary>
-        public int PhysicalBooths { get; set; }
+        /// <summary>Aggregate physical positions across every pool.</summary>
+        public int PhysicalPositions { get; set; }
 
-        /// <summary>Aggregate staffed booths actually simulated.</summary>
-        public int ActiveBooths { get; set; }
+        /// <summary>Aggregate staffed positions actually simulated.</summary>
+        public int ActivePositions { get; set; }
 
         /// <summary>Alias kept for callers that speak in counters.</summary>
         public int PhysicalCounters
         {
-            get { return PhysicalBooths; }
-            set { PhysicalBooths = value; }
+            get { return PhysicalPositions; }
+            set { PhysicalPositions = value; }
         }
 
         /// <summary>Alias kept for callers that speak in counters.</summary>
         public int ActiveCounters
         {
-            get { return ActiveBooths; }
-            set { ActiveBooths = value; }
+            get { return ActivePositions; }
+            set { ActivePositions = value; }
         }
 
         public QueueResults QueueResults { get; set; }
@@ -34,10 +34,10 @@ namespace AirportPlanning.Facilities.Immigration
         /// <summary>Nominal physical resources per pool, in output order.</summary>
         public List<int> NominalPerChannel { get; set; } = new List<int>();
 
-        /// <summary>Physical booths per dedicated channel pool (empty for a shared pool).</summary>
+        /// <summary>Physical positions per dedicated channel pool (empty for a shared pool).</summary>
         public List<int> PhysicalPerChannel { get; set; } = new List<int>();
 
-        /// <summary>Staffed booths per dedicated channel pool.</summary>
+        /// <summary>Staffed positions per dedicated channel pool.</summary>
         public List<int> ActivePerChannel { get; set; } = new List<int>();
 
         /// <summary>Wait95 per dedicated channel pool.</summary>

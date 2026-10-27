@@ -15,7 +15,7 @@ using AirportPlanning.Core.Queueing;
 using AirportPlanning.Core.Walking;
 using AirportPlanning.Facilities;
 using AirportPlanning.Facilities.CheckIn;
-using AirportPlanning.Facilities.Immigration;
+using AirportPlanning.Facilities.Emigration;
 using AirportPlanning.Facilities.Security;
 using AirportPlanning.Facility_Sizing.Base;
 using AirportPlanning.Facility_Sizing.Models;
@@ -51,6 +51,7 @@ namespace AirportPlanning.Tests
             RunProcessorTimeline();
             RunFacilityArea();
             RunFacilityAreaWiring();
+            RunGenericFacilitySizing();
             RunGateSizing();
             RunFlightScheduleImport();
             RunLargeDemandTiming();
@@ -83,6 +84,11 @@ namespace AirportPlanning.Tests
             RunShowUpCacheInvalidation();
             RunWholeRunOptimizationTarget();
             RunInfeasibleTargetWarning();
+            RunTerminalEntryQueueAndRouting();
+            RunTerminalEntryScheduleTiming();
+            RunTerminalEntryOptimizer();
+            RunTerminalEntryPoolPlans();
+            RunTerminalEntrySizing();
 
             Console.WriteLine();
             Console.WriteLine(_failures == 0
@@ -1689,6 +1695,32 @@ namespace AirportPlanning.Tests
             Check(!checkInSolver.Warnings.Any(w => w.Contains("no pool plan")),
                 "Every routed channel is covered by a plan");
 
+            Check(planned.QueueResults.ProcessedPassengers.All(p =>
+                    planned.PoolNames.Contains(p.AssignedPool, StringComparer.OrdinalIgnoreCase)),
+                "The solver tags every processed passenger with its exact pool");
+
+            List<ProcessorTimelinePool> plannedAllocation =
+                ProcessorTimeline.Build(planned.QueueResults);
+
+            Check(plannedAllocation.Count == planned.PoolNames.Count,
+                $"Processor allocation keeps every planned pool ({plannedAllocation.Count})");
+
+            int plannedServed = planned.QueueResults.ProcessedPassengers.Count(p => !p.IsWarmUp);
+
+            Check(plannedAllocation.Sum(p => p.Blocks.Count) == plannedServed,
+                $"Keyed pools allocate all served passengers ({plannedAllocation.Sum(p => p.Blocks.Count)} == {plannedServed})");
+
+            bool plannedCountsMatch = planned.QueueResults.PoolResults.All(pool =>
+            {
+                ProcessorTimelinePool timeline = plannedAllocation.FirstOrDefault(p =>
+                    string.Equals(p.Name, pool.Name, StringComparison.OrdinalIgnoreCase));
+
+                return timeline != null && timeline.Blocks.Count == pool.PassengerCount;
+            });
+
+            Check(plannedCountsMatch,
+                "Each planned pool's processor blocks match its own served count");
+
             CheckInResults plannedOptimized = new CheckInSolver().Solve(new CheckInInputs
             {
                 Passengers = checkInPassengers.Select(p => p.Clone()).ToList(),
@@ -1831,17 +1863,17 @@ namespace AirportPlanning.Tests
                 "Bag Drop applies its keyed plan and nominal count");
 
             // ---------------------------------------------------------
-            // Immigration: keyed plans for e-gate and counter
+            // Emigration: keyed plans for e-gate and counter
             // ---------------------------------------------------------
-            List<Passenger> immigrationPassengers = new List<Passenger>();
+            List<Passenger> emigrationPassengers = new List<Passenger>();
 
             for (int i = 0; i < 24; i++)
             {
-                immigrationPassengers.Add(new Passenger
+                emigrationPassengers.Add(new Passenger
                 {
                     Id = 3000 + i,
-                    Channel = i % 2 == 0 ? "EGate" : "Counter",
-                    DHPType = i % 2 == 0 ? DHPType.InternationalArrival : DHPType.InternationalDeparture,
+                    Channel = "Counter",
+                    DHPType = i % 2 == 0 ? DHPType.InternationalDeparture : DHPType.InternationalArrival,
                     ProfileName = "Economy",
                     ArrivalTime = i * 0.2,
                     QueueArrivalTime = i * 0.2,
@@ -1849,26 +1881,45 @@ namespace AirportPlanning.Tests
                 });
             }
 
-            ImmigrationResults immigrated = new ImmigrationSolver().Solve(new ImmigrationInputs
+            EmigrationResults emigrated = new EmigrationSolver().Solve(new EmigrationInputs
             {
-                Passengers = immigrationPassengers,
+                Passengers = emigrationPassengers,
                 ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
-                Channels = new List<string> { "EGate", "Counter" },
+                EGateSharePercentage = 50.0,
+                Channels = new List<string> { EmigrationSolver.EGatePool, EmigrationSolver.CounterPool },
                 PoolPlans = new List<PoolPlan>
                 {
-                    new PoolPlan { Channel = "EGate", PhysicalResources = 2, TargetWait95 = 2.0, Range = new ResourceSearchRange(1, 4) },
-                    new PoolPlan { Channel = "Counter", PhysicalResources = 5, TargetWait95 = 10.0, Range = new ResourceSearchRange(2, 8) }
+                    new PoolPlan { Channel = EmigrationSolver.EGatePool, PhysicalResources = 2, TargetWait95 = 2.0, Range = new ResourceSearchRange(1, 4) },
+                    new PoolPlan { Channel = EmigrationSolver.CounterPool, PhysicalResources = 5, TargetWait95 = 10.0, Range = new ResourceSearchRange(2, 8) }
                 },
                 OptimizeResources = false,
                 Seed = 17,
                 StaffingPercentage = 100.0
             });
 
-            Check(immigrated.PoolNames.SequenceEqual(new[] { "EGate", "Counter" }),
-                "Immigration consumes keyed plans and reports plan-derived pool names");
-            Check(immigrated.PhysicalPerChannel.SequenceEqual(new[] { 2, 5 }) &&
-                  immigrated.NominalPerChannel.SequenceEqual(new[] { 2, 5 }),
-                "Immigration applies each plan's PNR and reports it as nominal");
+            Check(emigrated.PoolNames.SequenceEqual(new[]
+                {
+                    EmigrationSolver.EGatePool,
+                    EmigrationSolver.CounterPool
+                }),
+                "Emigration consumes keyed plans and reports plan-derived pool names");
+            Check(emigrated.PhysicalPerChannel.SequenceEqual(new[] { 2, 5 }) &&
+                  emigrated.NominalPerChannel.SequenceEqual(new[] { 2, 5 }),
+                "Emigration applies each plan's PNR and reports it as nominal");
+            Check(emigrated.QueueResults.ProcessedPassengers.Count == 12 &&
+                  emigrated.QueueResults.ProcessedPassengers.All(p =>
+                      p.DHPType == DHPType.InternationalDeparture),
+                "Emigration serves international departures only");
+            Check(emigrated.QueueResults.ProcessedPassengers.Count(p =>
+                      p.EmigrationRoute == EmigrationSolver.EGatePool) == 6 &&
+                  emigrated.QueueResults.ProcessedPassengers.Count(p =>
+                      p.EmigrationRoute == EmigrationSolver.CounterPool) == 6,
+                "Emigration applies the e-gate share across the departing population");
+            Check(emigrated.QueueResults.ProcessedPassengers.All(p => p.Channel == "Counter"),
+                "Emigration restores the upstream check-in channel");
+            Check(emigrated.PoolResults.Count == 2 &&
+                  emigrated.PoolResults.All(p => p.ProcessedPassengers.Count > 0),
+                "Both e-gate and counter pools receive passengers without an upstream EGate channel");
         }
 
         // -------------------------------------------------------------
@@ -1994,6 +2045,74 @@ namespace AirportPlanning.Tests
 
             Check(ProcessorTimeline.Build(null).Count == 0,
                 "Null results produce no pools");
+
+            // Keyed sub-pools share their parent channel, so the bare channel
+            // alone cannot identify the pool that served a passenger.
+            QueueResults keyed = new QueueResults
+            {
+                ProcessedPassengers = new List<Passenger>
+                {
+                    new Passenger
+                    {
+                        Id = 8, Channel = "Counter", ProfileName = "Economy",
+                        AssignedPool = "Counter|DomesticDeparture|Economy",
+                        AssignedCounter = 0, StartServiceTime = 10.0, EndServiceTime = 11.0
+                    },
+                    new Passenger
+                    {
+                        Id = 9, Channel = "Counter", ProfileName = "Business",
+                        AssignedPool = "Counter|DomesticDeparture|Business",
+                        AssignedCounter = 0, StartServiceTime = 11.0, EndServiceTime = 12.0
+                    },
+                    new Passenger
+                    {
+                        Id = 10, Channel = "Kiosk", ProfileName = "Economy",
+                        AssignedPool = "Kiosk",
+                        AssignedCounter = 0, StartServiceTime = 12.0, EndServiceTime = 13.0
+                    }
+                },
+                Resources = new List<QueueResource>
+                {
+                    new QueueResource { Id = 0 },
+                    new QueueResource { Id = 0 },
+                    new QueueResource { Id = 0 }
+                },
+                ResourcesUsed = 3,
+                ProcessorPools = new List<ProcessorPoolInfo>
+                {
+                    new ProcessorPoolInfo
+                    {
+                        Name = "Counter|DomesticDeparture|Economy",
+                        ResourceCount = 1, FirstResourceIndex = 0
+                    },
+                    new ProcessorPoolInfo
+                    {
+                        Name = "Counter|DomesticDeparture|Business",
+                        ResourceCount = 1, FirstResourceIndex = 1
+                    },
+                    new ProcessorPoolInfo
+                    {
+                        Name = "Kiosk", ResourceCount = 1, FirstResourceIndex = 2
+                    }
+                }
+            };
+
+            List<ProcessorTimelinePool> keyedPools = ProcessorTimeline.Build(keyed);
+
+            Check(keyedPools.Count == 3,
+                $"Keyed results keep every pool ({keyedPools.Count})");
+
+            Check(keyedPools.Sum(p => p.Blocks.Count) == 3,
+                $"Every keyed-pool passenger is assigned to a processor band ({keyedPools.Sum(p => p.Blocks.Count)})");
+
+            Check(keyedPools[0].Blocks.Count == 1 && keyedPools[0].Blocks[0].PassengerId == 8,
+                "Economy service stays in Counter|DomesticDeparture|Economy");
+
+            Check(keyedPools[1].Blocks.Count == 1 && keyedPools[1].Blocks[0].PassengerId == 9,
+                "Business service stays in Counter|DomesticDeparture|Business");
+
+            Check(keyedPools[2].Blocks.Count == 1 && keyedPools[2].Blocks[0].PassengerId == 10,
+                "A bare channel pool still receives its passengers");
 
             List<Passenger> passengers = new List<Passenger>();
 
@@ -2548,7 +2667,161 @@ namespace AirportPlanning.Tests
         }
 
         // -------------------------------------------------------------
-        // 14e. Gate stands and gate lounges
+        // 14e. Generic solver-count facility sizing
+        // -------------------------------------------------------------
+        private static void RunGenericFacilitySizing()
+        {
+            Console.WriteLine("== Generic facility sizing ==");
+
+            FacilityAreaStandardSet standards = new FacilityAreaStandardSet
+            {
+                SupportPercent = 10.0,
+                CirculationPercent = 15.0,
+                MepPercent = 10.0,
+                StructurePercent = 5.0
+            };
+            standards.Units.Add(new FacilityUnitStandard
+            {
+                Key = "Counter",
+                AreaPerUnit = 15.0,
+                QueueSpacePerPax = 1.2
+            });
+            standards.Units.Add(new FacilityUnitStandard
+            {
+                Key = "Kiosk",
+                AreaPerUnit = 2.0,
+                QueueSpacePerPax = 0.8
+            });
+            standards.FixedAreas.Add(new NamedArea { Name = "Store", Area = 4.0 });
+
+            FacilitySizingContext context = new FacilitySizingContext
+            {
+                OperationalData = new FacilityOperationalData
+                {
+                    ProcessorCount = 12,
+                    ActiveProcessorCount = 9,
+                    BaselineProcessorCount = 11
+                },
+                PassengerSummary = new PassengerSummaryData { TotalPassengers = 100 },
+                AreaStandards = standards,
+                PoolNames = new List<string> { "Counter", "Kiosk" },
+                PhysicalPerPool = new List<int> { 8, 4 },
+                ActivePerPool = new List<int> { 6, 3 },
+                ProcessorPools = new List<ProcessorPoolInfo>
+                {
+                    new ProcessorPoolInfo
+                    {
+                        Name = "Counter",
+                        PhysicalResourceCount = 99,
+                        ResourceCount = 90,
+                        IsShared = false
+                    },
+                    new ProcessorPoolInfo
+                    {
+                        Name = "Kiosk",
+                        PhysicalResourceCount = 99,
+                        ResourceCount = 90,
+                        IsShared = false
+                    }
+                },
+                GlobalPeakQueue = 15,
+                PeakQueueByChannel = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "Counter", 10 },
+                    { "Kiosk", 5 }
+                },
+                PeakQueueByPool = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "Counter", 10 },
+                    { "Kiosk", 5 }
+                }
+            };
+
+            FacilitySizingResult result = new GenericFacilitySizer().SizeFacility(context);
+
+            Check(Math.Abs(result.ProcessingArea - 128.0) < 1e-9,
+                $"Installed counts come from solver outputs, not QR counts ({result.ProcessingArea})");
+            Check(Math.Abs(result.QueueArea - 16.0) < 1e-9,
+                $"Each pool uses its matching A-STD queue space ({result.QueueArea})");
+            Check(Math.Abs(result.SupportArea - 12.8) < 1e-9,
+                $"Support uses the A-STD percentage ({result.SupportArea})");
+            Check(Math.Abs(result.NetArea - 160.8) < 1e-9,
+                $"Net area includes equipment, queue, support and fixed rooms ({result.NetArea})");
+            Check(Math.Abs(result.GrossArea - 213.5826) < 1e-8,
+                $"A-STD allowances build the gross area ({result.GrossArea})");
+            Check(result.ProcessorCount == 12,
+                $"Result processor total comes from the solver counts ({result.ProcessorCount})");
+            Check(result.EquipmentCounts["Counter units (installed)"] == 8 &&
+                  result.EquipmentCounts["Kiosk units (installed)"] == 4,
+                "Per-pool solver counts are reported against automatically matched names");
+            Check(result.Warnings.Count == 0,
+                $"Matching pool names and standards need no warnings ({string.Join(" | ", result.Warnings)})");
+
+            string taggedPool = "Counter|DomesticDeparture|Economy";
+            FacilityAreaResult taggedArea = FacilityAreaCalculator.Calculate(new FacilityAreaInput
+            {
+                PoolNames = new List<string> { taggedPool },
+                PhysicalPerPool = new List<int> { 2 },
+                Pools = new List<ProcessorPoolInfo>
+                {
+                    new ProcessorPoolInfo { Name = taggedPool, IsShared = false }
+                },
+                PeakQueueByChannel = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "Counter", 0 }
+                },
+                Standards = standards,
+                RequireExplicitCounts = true
+            });
+
+            Check(Math.Abs(taggedArea.EquipmentArea - 30.0) < 1e-9 &&
+                  taggedArea.Lines[0].FacilityKey == "Counter",
+                "Tagged solver pool names automatically match their channel's A-STD key");
+
+            FacilityAreaStandardSet oneUnitStandard = new FacilityAreaStandardSet();
+            oneUnitStandard.Units.Add(new FacilityUnitStandard
+            {
+                Key = "Counter",
+                AreaPerUnit = 15.0
+            });
+            FacilityAreaResult sharedPoolArea = FacilityAreaCalculator.Calculate(new FacilityAreaInput
+            {
+                PoolNames = new List<string> { "Shared" },
+                PhysicalPerPool = new List<int> { 2 },
+                Pools = new List<ProcessorPoolInfo>
+                {
+                    new ProcessorPoolInfo { Name = "Shared", IsShared = true }
+                },
+                Standards = oneUnitStandard,
+                RequireExplicitCounts = true
+            });
+
+            Check(Math.Abs(sharedPoolArea.EquipmentArea - 30.0) < 1e-9 &&
+                  sharedPoolArea.Lines[0].FacilityKey == "Counter",
+                "A single A-STD unit key automatically applies to a shared single pool");
+
+            FacilitySizingContext unmatched = new FacilitySizingContext
+            {
+                OperationalData = new FacilityOperationalData { ProcessorCount = 3 },
+                PassengerSummary = new PassengerSummaryData(),
+                AreaStandards = standards,
+                PoolNames = new List<string> { "Kiosk East" },
+                PhysicalPerPool = new List<int> { 3 },
+                ProcessorPools = new List<ProcessorPoolInfo>
+                {
+                    new ProcessorPoolInfo { Name = "Kiosk East", IsShared = true }
+                }
+            };
+
+            FacilitySizingResult unmatchedResult = new GenericFacilitySizer().SizeFacility(unmatched);
+
+            Check(Math.Abs(unmatchedResult.ProcessingArea) < 1e-9 &&
+                  unmatchedResult.Warnings.Any(w => w.Contains("no matching area standard")),
+                "An unmatched pool warns instead of silently borrowing another unit standard");
+        }
+
+        // -------------------------------------------------------------
+        // 14f. Gate stands and gate lounges
         // -------------------------------------------------------------
         private static void RunGateSizing()
         {
@@ -4722,8 +4995,8 @@ namespace AirportPlanning.Tests
             Check(security.QueueResults.ProcessedPassengers.Count == departures,
                 $"Security serves exactly the departures ({security.QueueResults.ProcessedPassengers.Count} == {departures})");
 
-            // Immigration stays bidirectional: international arrivals are served.
-            ImmigrationResults immigration = new ImmigrationSolver().Solve(new ImmigrationInputs
+            // Emigration is departure-only: international arrivals are not served.
+            EmigrationResults emigration = new EmigrationSolver().Solve(new EmigrationInputs
             {
                 Passengers = gen.Passengers.Select(p => p.Clone()).ToList(),
                 ServiceProfile = map.Default,
@@ -4736,13 +5009,15 @@ namespace AirportPlanning.Tests
                 ResourceDomain = new ResourceSearchRange(1, 1200)
             });
 
-            int expectedImmigration = gen.Passengers.Count(p => p.PassengerType == PassengerType.International);
+            int expectedEmigration = gen.Passengers.Count(p =>
+                p.PassengerType == PassengerType.International &&
+                p.DHPType == DHPType.InternationalDeparture);
 
-            Check(immigration.QueueResults.ProcessedPassengers.Count == expectedImmigration,
-                $"Immigration still serves all international passengers ({immigration.QueueResults.ProcessedPassengers.Count} == {expectedImmigration})");
+            Check(emigration.QueueResults.ProcessedPassengers.Count == expectedEmigration,
+                $"Emigration serves exactly the international departures ({emigration.QueueResults.ProcessedPassengers.Count} == {expectedEmigration})");
 
-            Check(immigration.QueueResults.ProcessedPassengers.Any(p => p.DHPType == DHPType.InternationalArrival),
-                "Immigration still processes international arrivals");
+            Check(emigration.QueueResults.ProcessedPassengers.All(p => p.DHPType == DHPType.InternationalDeparture),
+                "Emigration excludes international arrivals");
         }
 
         // -------------------------------------------------------------

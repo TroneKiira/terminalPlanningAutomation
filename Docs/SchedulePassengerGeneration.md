@@ -20,8 +20,9 @@ Walking Profile (optional; defaults to 1.35 m/s)
   -> Schedule Passenger Generator (WP)
 
 Schedule Passenger Generator (PAX)
+  -> Terminal Entry (optional but recommended for departures)
   -> optional walking segment(s)
-  -> existing Check-In / Bag Drop / Security / Immigration components
+  -> existing Check-In / Bag Drop / Security / Emigration components
 
 Schedule Passenger Generator (PGR)
   -> Schedule Peak Profile (chart)
@@ -86,6 +87,16 @@ The Arrival Profile workbook curve is the primary source for this shape. Leisure
 - `1` Check-In Queue
 
 When `Apply Entry Walk` is on, the generator adds `distance / walking speed` to terminal-entry passengers. Do not add the same walking segment again downstream.
+
+The generator also records the original checkpoint time on every terminal-entry
+passenger. If a **Terminal Entry** stage is used, it queues at that recorded
+time and re-applies the walk after entry service. This keeps the entry queue
+ahead of the walk even when the generator has already advanced the passenger to
+check-in. For a more visible definition, leave `Apply Entry Walk` off and add a
+separate Walking component between Terminal Entry and Check-In.
+
+With `Arrival Basis = Check-In Queue`, passengers have no terminal-entry
+timestamp; the Terminal Entry stage passes them through with a warning.
 
 ## Check-in windows
 

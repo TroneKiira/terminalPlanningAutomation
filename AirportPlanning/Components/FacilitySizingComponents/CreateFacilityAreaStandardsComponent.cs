@@ -20,8 +20,8 @@ namespace AirportPlanning.Components.FacilitySizingComponents
     public class CreateFacilityAreaStandardsComponent : GH_Component
     {
         public CreateFacilityAreaStandardsComponent()
-          : base("Facility Area Standards", "A-STD",
-            "Area standards for a facility: m2 per installed unit by facility key, queue space per passenger, fixed rooms, and the circulation, MEP and structure allowances.",
+            : base("Facility Area Standards", "A-STD",
+            "Area standards for a facility: m2 per installed unit by pool name, queue space per passenger, support, fixed rooms, and area allowances.",
             "Airport Planning", "Facility Sizing")
         {
         }
@@ -31,7 +31,8 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             pManager.AddTextParameter(
                 "Facility Keys", "KEYS",
                 "One name per kind of installed unit, e.g. Counter, Kiosk, BagDrop. " +
-                "Matched against the facility's pool names, case insensitively.",
+                "Matched case-insensitively to solver pool names; tagged pool names " +
+                "such as Counter|DomesticDeparture|Economy match Counter.",
                 GH_ParamAccess.list);
 
             pManager.AddNumberParameter(
@@ -80,12 +81,18 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 "Area of each named fixed area, m2, in the same order.",
                 GH_ParamAccess.list);
             pManager[7].Optional = true;
+
+            // Appended to keep the existing input order stable in saved definitions.
+            pManager.AddNumberParameter(
+                "Support %", "SUP%",
+                "Operational support area as a percentage of installed-unit area.",
+                GH_ParamAccess.item, 10.0);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
             pManager.AddGenericParameter(
-                "Area Standards", "STD",
+                "Area Standards", "A-STD",
                 "The area standards and allowances.",
                 GH_ParamAccess.item);
         }
@@ -101,6 +108,7 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             double structure = 5.0;
             List<string> fixedNames = new List<string>();
             List<double> fixedAreas = new List<double>();
+            double support = 10.0;
 
             DA.GetDataList(0, keys);
             DA.GetDataList(1, areaPerUnit);
@@ -111,11 +119,13 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             DA.GetData(6, ref structure);
             DA.GetDataList(7, fixedNames);
             DA.GetDataList(8, fixedAreas);
+            DA.GetData(9, ref support);
 
             FacilityAreaStandardSet standards = new FacilityAreaStandardSet
             {
                 DefaultQueueSpacePerPax = Math.Max(0.0, defaultQueueSpace),
                 CirculationPercent = Math.Max(0.0, circulation),
+                SupportPercent = Math.Max(0.0, support),
                 MepPercent = Math.Max(0.0, mep),
                 StructurePercent = Math.Max(0.0, structure)
             };

@@ -50,9 +50,10 @@ namespace AirportPlanning.Facility_Sizing.Models
         CheckIn,
         BagDrop,
         Security,
-        Immigration,
+        Emigration,
         DepartureLounge,
         Boarding,
+        TerminalEntry,
         Exit
     }
 }

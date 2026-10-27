@@ -135,7 +135,7 @@ namespace AirportPlanning.Facilities
         /// <summary>
         /// True when the passenger is a departing passenger (Domestic or
         /// International Departure). Arrival passengers never use Check-In,
-        /// Bag Drop or Security; Immigration stays bidirectional.
+        /// Bag Drop, Security or Emigration.
         /// </summary>
         public static bool IsDeparturePassenger(Passenger passenger)
         {
@@ -352,7 +352,9 @@ namespace AirportPlanning.Facilities
                 solve.TotalPhysical += physical;
                 solve.TotalActive += active;
 
-                solve.PoolNames.Add(plan.IsSharedPool ? "Shared" : plan.PoolIdentity);
+                string poolName = plan.IsSharedPool ? "Shared" : plan.PoolIdentity;
+
+                solve.PoolNames.Add(poolName);
                 solve.PoolIsShared.Add(plan.IsSharedPool);
                 solve.TargetPerPool.Add(plan.TargetWait95);
 
@@ -366,6 +368,8 @@ namespace AirportPlanning.Facilities
                 }
 
                 QueueResults poolResults = FinalizePool(pools[i], active);
+
+                AssignPoolIdentity(poolResults.ProcessedPassengers, poolName);
 
                 solve.PoolResults.Add(poolResults);
                 solve.Processed.AddRange(poolResults.ProcessedPassengers);
@@ -535,6 +539,25 @@ namespace AirportPlanning.Facilities
 
             channel = identity.Substring(0, separator).Trim();
             poolKey = identity.Substring(separator + 1).Trim();
+        }
+
+        /// <summary>
+        /// Tags every passenger a pool served with that pool's identity, so
+        /// downstream charts can keep pools that share a channel apart. The
+        /// tag is assigned after simulation because queue resets clear it.
+        /// </summary>
+        private static void AssignPoolIdentity(
+            IEnumerable<Passenger> passengers,
+            string poolIdentity)
+        {
+            if (passengers == null)
+                return;
+
+            foreach (Passenger passenger in passengers)
+            {
+                if (passenger != null)
+                    passenger.AssignedPool = poolIdentity ?? string.Empty;
+            }
         }
 
         /// <summary>

@@ -112,6 +112,21 @@ namespace AirportPlanning.Core.Models
         public double ScheduledDepartureTime { get; set; }
 
         /// <summary>
+        /// Arrival at the terminal-entry checkpoint in simulation minutes.
+        /// NaN when the passenger was not generated on a terminal-entry basis.
+        /// </summary>
+        public double TerminalEntryArrivalTime { get; set; } = double.NaN;
+
+        /// <summary>Walk from terminal entry to check-in, in minutes.</summary>
+        public double TerminalEntryWalkMinutes { get; set; }
+
+        /// <summary>The route assigned at terminal entry, e.g. Manual Verification or DigiYatra.</summary>
+        public string TerminalEntryRoute { get; set; } = string.Empty;
+
+        /// <summary>The processor route assigned at emigration, e.g. EGate or Counter.</summary>
+        public string EmigrationRoute { get; set; } = string.Empty;
+
+        /// <summary>
         /// Scheduled flight arrival time in simulation minutes for arrival-leg
         /// passengers. Zero for departure passengers and unscheduled runs.
         /// </summary>
@@ -176,6 +191,15 @@ namespace AirportPlanning.Core.Models
         public int AssignedCounter { get; set; } = -1;
 
         /// <summary>
+        /// Identity of the server pool that served this passenger in the most
+        /// recent facility solve, for example
+        /// "Counter|DomesticDeparture|Economy" or "Shared". Empty when the
+        /// result predates pool-level allocation. This keeps a passenger tied
+        /// to the exact pool when several pools share one channel.
+        /// </summary>
+        public string AssignedPool { get; set; } = string.Empty;
+
+        /// <summary>
         /// Stores a permanent record of the passenger's wait times and service times 
         /// at every facility they visit.
         /// </summary>
@@ -225,6 +249,7 @@ namespace AirportPlanning.Core.Models
             WaitTime = 0.0;
 
             AssignedCounter = -1;
+            AssignedPool = string.Empty;
         }
 
         // NEW: Deep Clone to prevent Grasshopper pass-by-reference mutation bugs
@@ -252,6 +277,7 @@ namespace AirportPlanning.Core.Models
                 EndServiceTime = this.EndServiceTime,
                 WaitTime = this.WaitTime,
                 AssignedCounter = this.AssignedCounter,
+                AssignedPool = this.AssignedPool,
                 DemandStepIndex = this.DemandStepIndex,
                 DemandHourIndex = this.DemandHourIndex,
                 IsWarmUp = this.IsWarmUp,
@@ -259,6 +285,10 @@ namespace AirportPlanning.Core.Models
                 WaveId = this.WaveId,
                 DHPType = this.DHPType,
                 ScheduledDepartureTime = this.ScheduledDepartureTime,
+                TerminalEntryArrivalTime = this.TerminalEntryArrivalTime,
+                TerminalEntryWalkMinutes = this.TerminalEntryWalkMinutes,
+                TerminalEntryRoute = this.TerminalEntryRoute,
+                EmigrationRoute = this.EmigrationRoute,
                 ScheduledArrivalTime = this.ScheduledArrivalTime,
                 FlightLegId = this.FlightLegId,
                 FlightLinkId = this.FlightLinkId,

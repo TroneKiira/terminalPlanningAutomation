@@ -268,6 +268,12 @@ namespace AirportPlanning.Core.Generation
                         passenger.ArrivalTime = facilityTime;
                     }
 
+                    passenger.TerminalEntryArrivalTime =
+                        arrivalBasis == PassengerArrivalBasis.TerminalEntry
+                            ? terminalEntryTime
+                            : double.NaN;
+                    passenger.TerminalEntryWalkMinutes = entryWalkMinutes;
+
                     bool checkInTimeKnown =
                         arrivalBasis == PassengerArrivalBasis.CheckInQueue ||
                         (arrivalBasis == PassengerArrivalBasis.TerminalEntry && applyEntryWalk);

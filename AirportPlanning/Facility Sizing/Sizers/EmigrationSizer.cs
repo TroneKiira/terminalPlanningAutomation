@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace AirportPlanning.Facility_Sizing.Sizers
 {
-    public class ImmigrationSizer : FacilitySizerBase
+    public class EmigrationSizer : FacilitySizerBase
     {
         protected override void CalculateProcessingArea()
         {
@@ -21,7 +21,7 @@ namespace AirportPlanning.Facility_Sizing.Sizers
                 int physicalBooths = (Context.OperationalData.ProcessorCount + 1) / 2;
                 procZone.Area = physicalBooths * pairedArea;
 
-                Result.EquipmentCounts["Immigration Booths"] = physicalBooths;
+                Result.EquipmentCounts["Emigration Positions"] = physicalBooths;
 
                 // 🚨 Uses ActiveProcessorCount (15) for the text readout
                 Result.EquipmentCounts["Active Agent Positions"] = Context.OperationalData.ActiveProcessorCount;

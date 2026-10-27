@@ -29,7 +29,7 @@ namespace AirportPlanning.Components.PassengerAnalysis
 
             // NEW: Add an optional input to select WHICH facility's data you want to see!
             pManager.AddIntegerParameter("Facility Type", "F",
-                "Optional: Enter facility index to view history (0=CheckIn, 1=BagDrop, 2=Security, 3=Immigration). If empty, shows latest data.",
+                "Optional: Enter facility index to view history (0=CheckIn, 1=BagDrop, 2=Security, 3=Emigration, 4=Verification, 5=Departure Lounge, 6=Boarding, 7=Terminal Entry). If empty, shows latest data.",
                 GH_ParamAccess.item);
             pManager[1].Optional = true; // Make it optional
         }

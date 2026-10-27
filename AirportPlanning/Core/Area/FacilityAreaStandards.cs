@@ -17,7 +17,7 @@ namespace AirportPlanning.Core.Area
     {
         /// <summary>
         /// Name of the unit this standard describes. Matched case
-        /// insensitively against a pool name.
+        /// insensitively against a pool name or its channel prefix.
         /// </summary>
         public string Key { get; set; } = string.Empty;
 
@@ -70,6 +70,9 @@ namespace AirportPlanning.Core.Area
 
         /// <summary>Circulation as a percentage of the net area.</summary>
         public double CirculationPercent { get; set; } = 15.0;
+
+        /// <summary>Operational support area as a percentage of equipment area.</summary>
+        public double SupportPercent { get; set; } = 10.0;
 
         /// <summary>
         /// Mechanical, electrical and plumbing as a percentage of the area

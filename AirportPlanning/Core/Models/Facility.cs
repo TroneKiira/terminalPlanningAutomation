@@ -33,9 +33,10 @@ namespace AirportPlanning.Core.Models
         CheckIn,
         BagDrop,
         Security,
-        Immigration,
+        Emigration,
         PassengerVerification,
         DepartureLounge, // NEW: Added for retail dwell time
-        Boarding
+        Boarding,
+        TerminalEntry
     }
 }

@@ -58,6 +58,9 @@ namespace AirportPlanning.Facility_Sizing.Base
         /// <summary>Peak queue length per channel.</summary>
         public Dictionary<string, int> PeakQueueByChannel { get; set; }
 
+        /// <summary>Peak queue length per solver pool, when available.</summary>
+        public Dictionary<string, int> PeakQueueByPool { get; set; }
+
         /// <summary>Peak queue length of the whole facility.</summary>
         public int GlobalPeakQueue { get; set; }
 

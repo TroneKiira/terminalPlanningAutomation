@@ -16,7 +16,7 @@ namespace AirportPlanning.Components.Analysis
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddIntegerParameter("Facility Type", "T", "0=CheckIn, 1=BagDrop, 2=Security, 3=Immigration, 4=Verification, 5=Boarding, 6=Retail", GH_ParamAccess.item, 0);
+            pManager.AddIntegerParameter("Facility Type", "T", "0=CheckIn, 1=BagDrop, 2=Security, 3=Emigration, 4=Verification, 5=Boarding, 6=Retail, 7=Terminal Entry", GH_ParamAccess.item, 0);
             pManager.AddGenericParameter("Operational Results", "RES", "Optional: Queue Results or Verification Results.", GH_ParamAccess.item);
             pManager[1].Optional = true;
             pManager.AddGenericParameter("Sizing Result", "SR", "The Facility Sizing Result.", GH_ParamAccess.item);
@@ -95,7 +95,7 @@ namespace AirportPlanning.Components.Analysis
 
             string facilityName = "";
             string unitName = "";
-            bool isQueue = facilityType <= 3;
+            bool isQueue = facilityType <= 3 || facilityType == 7;
             bool isVerification = facilityType == 4;
             bool isBoarding = facilityType == 5;
             bool isRetail = facilityType == 6;
@@ -105,10 +105,11 @@ namespace AirportPlanning.Components.Analysis
                 case 0: facilityName = "CHECK-IN"; unitName = "Counters"; break;
                 case 1: facilityName = "BAG DROP"; unitName = "SBD Units"; break;
                 case 2: facilityName = "SECURITY"; unitName = "X-Ray Lanes"; break;
-                case 3: facilityName = "IMMIGRATION"; unitName = "Active Agents"; break;
+                case 3: facilityName = "EMIGRATION"; unitName = "Active Positions"; break;
                 case 4: facilityName = "VERIFICATION"; unitName = "E-Gates"; break;
                 case 5: facilityName = "BOARDING"; unitName = "Gates"; break;
                 case 6: facilityName = "RETAIL"; unitName = "Zones"; break;
+                case 7: facilityName = "TERMINAL ENTRY"; unitName = "Entry Positions"; break;
                 default: facilityName = "FACILITY"; unitName = "Processors"; break;
             }
 
