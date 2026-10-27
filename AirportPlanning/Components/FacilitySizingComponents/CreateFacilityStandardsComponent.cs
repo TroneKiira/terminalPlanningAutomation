@@ -22,8 +22,8 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             pManager.AddNumberParameter("Processor Width", "PW", "Physical width of a single desk/lane (m).", GH_ParamAccess.item, 1.5);
             pManager.AddNumberParameter("Processor Depth", "PD", "Physical depth of a single desk/lane (m).", GH_ParamAccess.item, 2.0);
             pManager.AddNumberParameter("Processor Pitch", "PP", "Center-to-center distance between desks/lanes (m).", GH_ParamAccess.item, 1.8);
-            pManager.AddNumberParameter("Circulation %", "C%", "Percentage of total area dedicated to circulation.", GH_ParamAccess.item, 25.0);
-            pManager.AddNumberParameter("Support %", "S%", "Percentage of processing area dedicated to support.", GH_ParamAccess.item, 10.0);
+            pManager.AddNumberParameter("Circulation %", "C%", "Percentage of total area dedicated to circulation. A Facility Area Standards set, when wired, takes precedence over this.", GH_ParamAccess.item, 25.0);
+            pManager.AddNumberParameter("Support %", "S%", "Percentage of processing area dedicated to support. This is operational support (staff space, back of house), not mechanical plant.", GH_ParamAccess.item, 10.0);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)

@@ -1,9 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 using AirportPlanning.Core.Distributions;
+using AirportPlanning.Core.Area;
+using AirportPlanning.Core.Charts;
+using AirportPlanning.Core.Gates;
 using AirportPlanning.Core.Generation;
+using AirportPlanning.Core.Schedules;
 using AirportPlanning.Core.Inputs;
 using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Queueing;
@@ -12,10 +17,14 @@ using AirportPlanning.Facilities;
 using AirportPlanning.Facilities.CheckIn;
 using AirportPlanning.Facilities.Immigration;
 using AirportPlanning.Facilities.Security;
+using AirportPlanning.Facility_Sizing.Base;
+using AirportPlanning.Facility_Sizing.Models;
+using AirportPlanning.Facility_Sizing.Sizers;
+using AirportPlanning.Facility_Sizing.Standards;
 
 namespace AirportPlanning.Tests
 {
-    public static class Program
+    public static partial class Program
     {
         private static int _failures;
 
@@ -33,8 +42,17 @@ namespace AirportPlanning.Tests
             RunClassMetrics();
             RunOptimizerDeterminismWithProvider();
             RunAnalyticComparison();
+            RunNegativeArrivalQueue();
             RunResourceDomainBounds();
             RunPerChannelPools();
+            RunCheckInRoutedPoolSegregation();
+            RunCheckInMergedBagDropChannel();
+            RunPoolPlanArchitecture();
+            RunProcessorTimeline();
+            RunFacilityArea();
+            RunFacilityAreaWiring();
+            RunGateSizing();
+            RunFlightScheduleImport();
             RunLargeDemandTiming();
             RunPoissonSampler();
             RunLargeDemandPassengerGenerator();
@@ -43,6 +61,11 @@ namespace AirportPlanning.Tests
             RunLegacyNullArrivalProfile();
             RunShowUpCurves();
             RunShowUpCurveGeneration();
+            RunScheduleGeneratorTiming();
+            RunScheduleDemandPeaksWithoutDhp();
+            RunScheduleGeneratorCheckInAndArrivals();
+            RunScheduleCheckInLastAdmission();
+            RunScheduleFallbacksAndRules();
 
             RunDHPTypeTagging();
             RunPerTypeDemandCounts();
@@ -431,6 +454,81 @@ namespace AirportPlanning.Tests
             Check(ReferenceEquals(map.Resolve(fallback), defaultProfile), "default used when no key matches");
             Check(ReferenceEquals(map.Resolve(null), defaultProfile), "null passenger -> default");
 
+            ServiceProfile dhpSpecific = new ServiceProfile { MeanServiceTime = 8.0, StandardDeviation = 0.0 };
+            map.Entries.Add(new ServiceTimeEntry
+            {
+                Key = "DomesticDeparture|DomEcon|Kiosk",
+                Profile = dhpSpecific
+            });
+            Passenger domesticComposite = new Passenger
+            {
+                DHPType = DHPType.DomesticDeparture,
+                ProfileName = "DomEcon",
+                Channel = "Kiosk"
+            };
+            Check(ReferenceEquals(map.Resolve(domesticComposite), dhpSpecific),
+                "legacy DHPType|profile|channel key resolves when no Pool Plans key exists");
+
+            map.Entries.Add(new ServiceTimeEntry
+            {
+                Key = "InternationalDeparture|DomEcon",
+                Profile = new ServiceProfile { MeanServiceTime = 9.0, StandardDeviation = 0.0 }
+            });
+            Passenger intlProfile = new Passenger
+            {
+                DHPType = DHPType.InternationalDeparture,
+                ProfileName = "DomEcon",
+                Channel = "Web"
+            };
+            Check(map.Resolve(intlProfile).MeanServiceTime == 9.0,
+                "DHPType|profile service key resolves when no channel-specific key exists");
+
+            // Pool Plans identity keys use "Channel|DHPType|ProfileName", the
+            // reverse segment order of the legacy key, and must win when both
+            // are present.
+            ServiceProfile ppExact = new ServiceProfile { MeanServiceTime = 5.0, StandardDeviation = 0.0 };
+            ServiceProfile legacyExact = new ServiceProfile { MeanServiceTime = 7.0, StandardDeviation = 0.0 };
+            ServiceProfile ppProfileOnly = new ServiceProfile { MeanServiceTime = 6.0, StandardDeviation = 0.0 };
+
+            ServiceTimeMap ppMap = new ServiceTimeMap { Default = defaultProfile };
+            ppMap.Entries.Add(new ServiceTimeEntry
+            {
+                Key = "Counter|DomesticDeparture|Economy",
+                Profile = ppExact
+            });
+            ppMap.Entries.Add(new ServiceTimeEntry
+            {
+                Key = "DomesticDeparture|Economy|Counter",
+                Profile = legacyExact
+            });
+
+            Passenger ppPassenger = new Passenger
+            {
+                DHPType = DHPType.DomesticDeparture,
+                ProfileName = "Economy",
+                Channel = "Counter"
+            };
+            Check(ReferenceEquals(ppMap.Resolve(ppPassenger), ppExact),
+                "Channel|DHPType|profile (Pool Plans identity) wins over the legacy order");
+
+            ServiceTimeMap ppProfileOnlyMap = new ServiceTimeMap { Default = defaultProfile };
+            ppProfileOnlyMap.Entries.Add(new ServiceTimeEntry
+            {
+                Key = "Counter|Economy",
+                Profile = ppProfileOnly
+            });
+            Check(ReferenceEquals(ppProfileOnlyMap.Resolve(ppPassenger), ppProfileOnly),
+                "Channel|profile (Pool Plans profile-only identity) resolves");
+
+            Passenger ppUnmatched = new Passenger
+            {
+                DHPType = DHPType.InternationalArrival,
+                ProfileName = "Other",
+                Channel = "Web"
+            };
+            Check(ReferenceEquals(ppProfileOnlyMap.Resolve(ppUnmatched), defaultProfile),
+                "default profile used when no Pool Plans or legacy key matches");
+
             string before = map.CacheKey;
             map.Entries.Add(new ServiceTimeEntry { Key = "New", Profile = baseProfile });
             Check(before != map.CacheKey, "CacheKey changes when the map changes");
@@ -639,6 +737,165 @@ namespace AirportPlanning.Tests
         }
 
         // -------------------------------------------------------------
+        // 13b. Pre-midnight arrivals are served before minute 0
+        // -------------------------------------------------------------
+        private static void RunNegativeArrivalQueue()
+        {
+            Console.WriteLine("== Pre-midnight queue timing ==");
+
+            List<Passenger> MakeCohort(params double[] arrivals)
+            {
+                return arrivals
+                    .Select((time, index) => new Passenger
+                    {
+                        Id = index + 1,
+                        ArrivalTime = time,
+                        QueueArrivalTime = time,
+                        ServiceTime = 1.0
+                    })
+                    .ToList();
+            }
+
+            QueueResults Run(List<Passenger> cohort, int resourceCount)
+            {
+                List<QueueResource> fleet = QueueResource.Create(resourceCount);
+                QueueSimulator simulator = new QueueSimulator();
+
+                simulator.ResetPassengers(cohort);
+                simulator.ResetResources(fleet);
+                simulator.RunQueue(cohort, fleet);
+
+                return new QueueMetricsCalculator().Calculate(cohort, fleet);
+            }
+
+            // Enough servers: every pre-midnight passenger starts on arrival.
+            List<Passenger> clear = MakeCohort(-30.0, -20.0, -10.0, -5.0);
+            QueueResults clearResults = Run(clear, 4);
+
+            Check(clear.All(p => Math.Abs(p.WaitTime) < 1e-9),
+                "Pre-midnight arrivals start service on arrival, not at minute 0");
+
+            Check(clear.All(p => Math.Abs(p.StartServiceTime - p.ArrivalTime) < 1e-9),
+                "Pre-midnight start times keep their negative arrival times");
+
+            Check(clearResults.PeakQueueLength == 0 && clearResults.Wait95 == 0.0,
+                $"No synthetic midnight queue or wait (peak {clearResults.PeakQueueLength}, W95 {clearResults.Wait95})");
+
+            // One server: the queue is real, but it runs on its own clock and
+            // may cross minute 0 rather than collapsing there.
+            List<Passenger> congested = MakeCohort(-10.0, -9.0, -8.0);
+            congested.ForEach(p => p.ServiceTime = 5.0);
+            QueueResults congestedResults = Run(congested, 1);
+
+            Check(Math.Abs(congested[0].StartServiceTime + 10.0) < 1e-9 &&
+                  Math.Abs(congested[1].StartServiceTime + 5.0) < 1e-9,
+                "A busy server blocks the next pre-midnight arrival until service frees up");
+
+            Check(Math.Abs(congested[2].StartServiceTime) < 1e-9 &&
+                  Math.Abs(congested[2].WaitTime - 8.0) < 1e-9,
+                $"Congestion crosses minute 0 without a reset (start {congested[2].StartServiceTime}, wait {congested[2].WaitTime})");
+
+            Check(congestedResults.QueueTimeline.Count > 0 &&
+                  congestedResults.QueueTimeline[0].Time < 0.0,
+                "Queue timeline records pre-midnight waiting");
+
+            Check(congestedResults.PeakQueueLength == 2 &&
+                  Math.Abs(congestedResults.PeakQueueTime + 8.0) < 1e-9,
+                $"Peak queue {congestedResults.PeakQueueLength} occurs at {congestedResults.PeakQueueTime} min, before 0");
+
+            Check(congestedResults.QueueTimeline.Last().Queue == 0,
+                "The pre-midnight queue drains when its last passenger starts service");
+
+            QueueResource probe = QueueResource.Create(1)[0];
+            probe.NextAvailableTime = 0.0;
+            probe.BusyTime = 12.0;
+            probe.Reset();
+
+            Check(double.IsNegativeInfinity(probe.NextAvailableTime) && probe.BusyTime == 0.0,
+                "QueueResource.Reset opens servers before any simulated time");
+
+            Check(double.IsNegativeInfinity(QueueResource.Create(1)[0].NextAvailableTime),
+                "QueueResource.Create starts servers available before time 0");
+
+            Check(ChartText.DescribeActivity(new QueuePoolResult { PassengerCount = 3 })
+                    .Contains("re-run"),
+                "Old pool snapshots without an arrival span ask for a solver re-run");
+
+            // End-to-end: the solver's per-pool snapshot must keep the same
+            // negative-clock timing, otherwise the fixed simulator would still
+            // be reported through a stale pool summary.
+            List<Passenger> midnight = Enumerable.Range(0, 6)
+                .Select(i => new Passenger
+                {
+                    Id = i + 1,
+                    Channel = "Counter",
+                    DHPType = DHPType.DomesticDeparture,
+                    ProfileName = "Economy",
+                    ArrivalTime = -30.0 + i,
+                    QueueArrivalTime = -30.0 + i,
+                    ServiceTime = 1.0
+                })
+                .ToList();
+
+            CheckInResults midnightResult = new CheckInSolver().Solve(new CheckInInputs
+            {
+                Passengers = midnight,
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
+                Channels = new List<string> { "Counter" },
+                PhysicalResources = new List<int> { 6 },
+                OptimizeResources = false,
+                TargetWait95 = new List<double> { 10.0 },
+                Seed = 11,
+                StaffingPercentage = 100.0
+            });
+
+            QueuePoolResult midnightPool = midnightResult.QueueResults.PoolResults.Single();
+
+            Check(midnightPool.FirstArrivalTime < 0.0 && midnightPool.LastArrivalTime < 0.0,
+                $"Pool snapshot keeps pre-midnight arrivals ({midnightPool.FirstArrivalTime} to {midnightPool.LastArrivalTime})");
+
+            Check(midnightPool.WaitingPassengerCount == 0 &&
+                  midnightPool.QueueTimeline.Count == 0 &&
+                  Math.Abs(midnightPool.Wait95) < 1e-9,
+                "Pool snapshot reports no wait and no queue when pre-midnight demand has enough servers");
+
+            Check(ChartText.DescribeActivity(midnightPool).Contains("no passenger waited"),
+                "Pool activity line explains an empty queue instead of leaving it ambiguous");
+
+            List<Passenger> midnightQueue = MakeCohort(-10.0, -9.0, -8.0);
+
+            foreach (Passenger passenger in midnightQueue)
+            {
+                passenger.Channel = "Counter";
+                passenger.DHPType = DHPType.DomesticDeparture;
+                passenger.ProfileName = "Economy";
+            }
+
+            CheckInResults queuedResult = new CheckInSolver().Solve(new CheckInInputs
+            {
+                Passengers = midnightQueue,
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 5.0, StandardDeviation = 0.0 },
+                Channels = new List<string> { "Counter" },
+                PhysicalResources = new List<int> { 1 },
+                OptimizeResources = false,
+                TargetWait95 = new List<double> { 10.0 },
+                Seed = 12,
+                StaffingPercentage = 100.0
+            });
+
+            QueuePoolResult queuedPool = queuedResult.QueueResults.PoolResults.Single();
+
+            Check(queuedPool.WaitingPassengerCount == 2 &&
+                  Math.Abs(queuedPool.Wait95 - 8.0) < 1e-9 &&
+                  Math.Abs(queuedPool.FirstQueueEventTime + 9.0) < 1e-9 &&
+                  Math.Abs(queuedPool.LastQueueEventTime) < 1e-9,
+                $"Pool snapshot reports pre-midnight queue events ({queuedPool.FirstQueueEventTime} to {queuedPool.LastQueueEventTime})");
+
+            Check(ChartText.DescribeActivity(queuedPool).Contains("queue events -9 to 0"),
+                "Pool activity line reports the exact queue-event span");
+        }
+
+        // -------------------------------------------------------------
         // 13. Resource domain bounds are respected
         // -------------------------------------------------------------
         private static void RunResourceDomainBounds()
@@ -751,6 +1008,15 @@ namespace AirportPlanning.Tests
             Check(shared.PhysicalPerChannel.Count == 1,
                 $"No channels wired -> exactly one shared pool ({shared.PhysicalPerChannel.Count})");
 
+            Check(shared.QueueResults.ProcessorPools.Count == 1 &&
+                  shared.QueueResults.ProcessorPools[0].IsShared,
+                "Shared run records one shared processor pool");
+
+            Check(shared.QueueResults.ProcessorPools[0].ResourceCount ==
+                  shared.QueueResults.Resources.Count,
+                $"Shared pool resource count matches the simulated resources " +
+                $"({shared.QueueResults.ProcessorPools[0].ResourceCount} == {shared.QueueResults.Resources.Count})");
+
             Check(shared.Wait95PerChannel.Count == 0,
                 "A shared pool reports no per-channel waits");
 
@@ -777,6 +1043,37 @@ namespace AirportPlanning.Tests
             Check(pooled.Wait95PerChannel.ContainsKey("Counter") &&
                   pooled.Wait95PerChannel.ContainsKey("Kiosk"),
                 "Wait95 reported per channel");
+
+            List<ProcessorPoolInfo> poolInfo = pooled.QueueResults.ProcessorPools;
+
+            Check(poolInfo.Count == 2 &&
+                  poolInfo[0].Name == "Counter" &&
+                  poolInfo[1].Name == "Kiosk",
+                "Each dedicated channel records its own processor pool");
+
+            Check(poolInfo.All(p => !p.IsShared),
+                "Dedicated channel pools are not marked shared");
+
+            Check(poolInfo.Sum(p => p.ResourceCount) == pooled.QueueResults.Resources.Count,
+                $"Pool resource counts sum to the merged resources " +
+                $"({poolInfo.Sum(p => p.ResourceCount)} == {pooled.QueueResults.Resources.Count})");
+
+            Check(poolInfo[0].FirstResourceIndex == 0 &&
+                  poolInfo[1].FirstResourceIndex == poolInfo[0].ResourceCount,
+                "Pool resource offsets are cumulative and collision-free");
+
+            Check(poolInfo[0].PhysicalResourceCount == pooled.PhysicalPerChannel[0] &&
+                  poolInfo[1].PhysicalResourceCount == pooled.PhysicalPerChannel[1],
+                $"Each pool carries its installed unit count " +
+                $"({poolInfo[0].PhysicalResourceCount}, {poolInfo[1].PhysicalResourceCount})");
+
+            Check(poolInfo.Sum(p => p.PhysicalResourceCount) == pooled.QueueResults.PhysicalProcessorCount,
+                $"Installed counts sum to the facility's physical count " +
+                $"({poolInfo.Sum(p => p.PhysicalResourceCount)} == {pooled.QueueResults.PhysicalProcessorCount})");
+
+            Check(shared.QueueResults.ProcessorPools[0].PhysicalResourceCount == 30,
+                $"The shared pool records its installed count " +
+                $"({shared.QueueResults.ProcessorPools[0].PhysicalResourceCount})");
 
             double counterWait = pooled.Wait95PerChannel["Counter"];
             double kioskWait = pooled.Wait95PerChannel["Kiosk"];
@@ -823,6 +1120,2295 @@ namespace AirportPlanning.Tests
 
             Check(!source.Any(p => p.History.ContainsKey(FacilityType.CheckIn)) && !historyBefore,
                 "Solve left the source population's history untouched");
+        }
+
+        // -------------------------------------------------------------
+        // Check-In: routed service channels and counter sector/class sub-pools
+        // -------------------------------------------------------------
+        private static void RunCheckInRoutedPoolSegregation()
+        {
+            Console.WriteLine("== Check-In routed pools / counter segregation ==");
+
+            List<Passenger> passengers = new List<Passenger>();
+            int id = 1;
+
+            void AddPassengers(string channel, DHPType type, string profile, int count, double arrival, bool online = false)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    passengers.Add(new Passenger
+                    {
+                        Id = id++,
+                        Channel = channel,
+                        DHPType = type,
+                        ProfileName = profile,
+                        ArrivalTime = arrival + i * 0.01,
+                        QueueArrivalTime = arrival + i * 0.01,
+                        UsesOnlineCheckIn = online
+                    });
+                }
+            }
+
+            AddPassengers("Counter", DHPType.DomesticDeparture, "Economy", 8, 0.0);
+            AddPassengers("Counter", DHPType.DomesticDeparture, "Business", 7, 0.0);
+            AddPassengers("Counter", DHPType.InternationalDeparture, "Economy", 6, 0.0);
+            AddPassengers("Counter", DHPType.InternationalDeparture, "Business", 5, 0.0);
+            AddPassengers("Kiosk", DHPType.DomesticDeparture, "Economy", 4, 0.0);
+            AddPassengers("BagDrop", DHPType.InternationalDeparture, "Economy", 3, 0.0, online: true);
+            AddPassengers("Counter", DHPType.DomesticArrival, "Economy", 2, 0.0);
+            AddPassengers("Web", DHPType.DomesticDeparture, "Economy", 2, 0.0);
+
+            ServiceTimeMap serviceTimes = new ServiceTimeMap
+            {
+                Default = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 }
+            };
+
+            string[] profiles = { "Economy", "Business" };
+            DHPType[] sectors = { DHPType.DomesticDeparture, DHPType.InternationalDeparture };
+            double counterServiceTime = 2.0;
+            foreach (DHPType sector in sectors)
+            {
+                foreach (string profile in profiles)
+                {
+                    serviceTimes.Entries.Add(new ServiceTimeEntry
+                    {
+                        Key = $"{sector}|{profile}|Counter",
+                        Profile = new ServiceProfile
+                        {
+                            MeanServiceTime = counterServiceTime,
+                            StandardDeviation = 0.0
+                        }
+                    });
+                    counterServiceTime += 1.0;
+                }
+            }
+
+            serviceTimes.Entries.Add(new ServiceTimeEntry
+            {
+                Key = "Kiosk",
+                Profile = new ServiceProfile { MeanServiceTime = 0.5, StandardDeviation = 0.0 }
+            });
+            serviceTimes.Entries.Add(new ServiceTimeEntry
+            {
+                Key = "BagDrop",
+                Profile = new ServiceProfile { MeanServiceTime = 0.75, StandardDeviation = 0.0 }
+            });
+
+            CheckInResults result = new CheckInSolver().Solve(new CheckInInputs
+            {
+                Passengers = passengers,
+                ServiceTimeProvider = serviceTimes,
+                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
+                PoolPhysicalResources = new List<int> { 2, 3, 4, 5, 6, 7 },
+                PoolTargetWait95 = new List<double> { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 },
+                PoolMinimumResources = new List<int> { 1, 2, 3, 4, 5, 6 },
+                PoolMaximumResources = new List<int> { 8, 9, 10, 11, 12, 13 },
+                OptimizeResources = false,
+                Seed = 41,
+                StaffingPercentage = 100.0
+            });
+
+            List<string> expectedPoolNames = new List<string>
+            {
+                "Counter|DomesticDeparture|Business",
+                "Counter|DomesticDeparture|Economy",
+                "Counter|InternationalDeparture|Business",
+                "Counter|InternationalDeparture|Economy",
+                "Kiosk",
+                "BagDrop"
+            };
+
+            Check(result.PoolNames.SequenceEqual(expectedPoolNames),
+                "Four counter pools plus separate Kiosk and BagDrop channel pools are reported");
+            Check(result.PhysicalPerChannel.SequenceEqual(new[] { 2, 3, 4, 5, 6, 7 }),
+                "Nominal resources are independently assigned in expanded pool order");
+            Check(result.PhysicalCounters == 27,
+                $"Total physical resources equal the sum across all routed pools ({result.PhysicalCounters} == 27)");
+            Check(result.ChannelNames.SequenceEqual(new[] { "Counter", "Kiosk", "BagDrop" }) &&
+                  result.PhysicalPerChannelTotal.SequenceEqual(new[] { 14, 6, 7 }),
+                "Channel resource totals aggregate Counter sub-pools and retain other channel totals");
+
+            List<Passenger> processed = result.QueueResults.ProcessedPassengers;
+            Check(processed.Count == 33,
+                $"All routed departures are served, including online BagDrop passengers ({processed.Count} == 33)");
+            Check(processed.All(p => p.Channel != "Web" && p.DHPType != DHPType.DomesticArrival),
+                "Unconfigured Web and arrival passengers are excluded from physical Check-In pools");
+
+            Dictionary<string, double> expectedMeans = new Dictionary<string, double>
+            {
+                ["Counter|DomesticDeparture|Economy"] = 2.0,
+                ["Counter|DomesticDeparture|Business"] = 3.0,
+                ["Counter|InternationalDeparture|Economy"] = 4.0,
+                ["Counter|InternationalDeparture|Business"] = 5.0,
+                ["Kiosk"] = 0.5,
+                ["BagDrop"] = 0.75
+            };
+
+            for (int i = 0; i < expectedPoolNames.Count; i++)
+            {
+                List<Passenger> poolPassengers = result.PoolResults[i].ProcessedPassengers;
+                double mean = poolPassengers.Count > 0 ? poolPassengers.Average(p => p.ServiceTime) : 0.0;
+                Check(Math.Abs(mean - expectedMeans[expectedPoolNames[i]]) < 1e-9,
+                    $"Pool '{expectedPoolNames[i]}' uses its own service-time mapping");
+            }
+
+            Check(result.Wait95PerChannel.Keys.Count == 6,
+                "Wait95 is reported independently for every expanded pool");
+
+            List<PassengerProfile> classes = new List<PassengerProfile>
+            {
+                MakeProfile("Economy", 50.0, 60.0, 150.0, 0.0, 0.0),
+                MakeProfile("Business", 50.0, 60.0, 150.0, 0.0, 0.0)
+            };
+            ProfileChannelMap routing = new ProfileChannelMap { DefaultChannel = "Counter" };
+            foreach (string profile in profiles)
+            {
+                routing.Entries.Add(new ProfileChannelEntry
+                {
+                    ProfileName = profile,
+                    Shares = new List<ChannelShare>
+                    {
+                        new ChannelShare { Channel = "Counter", Share = 0.75 },
+                        new ChannelShare { Channel = "Kiosk", Share = 0.25 }
+                    }
+                });
+            }
+
+            PassengerGenerationResult generated = GenerateWithProfiles(
+                BuildGroupsWithProfiles(1200, 1, new[] { 100.0 }, 0, 100.0, 50.0, classes, classes),
+                301,
+                routing);
+            int generatedCounter = generated.Passengers.Count(p => p.Channel == "Counter");
+            int generatedKiosk = generated.Passengers.Count(p => p.Channel == "Kiosk");
+
+            Check(Math.Abs(generatedCounter / (double)generated.Passengers.Count - 0.75) < 0.04,
+                "CHR Counter share is realized across domestic/international Economy and Business profiles");
+            Check(Math.Abs(generatedKiosk / (double)generated.Passengers.Count - 0.25) < 0.04,
+                "CHR Kiosk share is realized without changing generation or channel labels");
+
+            CheckInResults generatedPools = new CheckInSolver().Solve(new CheckInInputs
+            {
+                Passengers = generated.Passengers,
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
+                ChannelRouting = routing,
+                PoolPhysicalResources = new List<int> { 2, 2, 2, 2, 2 },
+                OptimizeResources = false,
+                Seed = 13,
+                StaffingPercentage = 100.0
+            });
+
+            Check(generatedPools.PoolNames.Count == 5 &&
+                  generatedPools.PoolNames.Take(4).Distinct().Count() == 4,
+                "Check-In consumes CHR directly and creates four dedicated counter queues");
+            Check(generatedPools.PoolResults.Take(4).All(pool => pool.ProcessedPassengers.Count > 0),
+                "All four generated domestic/international Economy/Business counter queues receive demand");
+            Check(generatedPools.PoolResults.Take(4).Sum(pool => pool.ProcessedPassengers.Count) == generatedCounter &&
+                  generatedPools.PoolResults[4].ProcessedPassengers.Count == generatedKiosk,
+                "Generated Counter and Kiosk populations are served exactly once in their routed pools");
+
+            CheckInResults optimized = new CheckInSolver().Solve(new CheckInInputs
+            {
+                Passengers = passengers.Select(p => p.Clone()).ToList(),
+                ServiceTimeProvider = serviceTimes,
+                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
+                PoolTargetWait95 = new List<double> { 1, 2, 3, 4, 5, 6 },
+                PoolMinimumResources = new List<int> { 2, 3, 4, 5, 6, 7 },
+                PoolMaximumResources = new List<int> { 4, 5, 6, 7, 8, 9 },
+                OptimizeResources = true,
+                Seed = 41,
+                StaffingPercentage = 100.0
+            });
+
+            Check(optimized.SearchOutcomes.Count == 6,
+                "Optimizer searches each routed channel/sub-pool independently");
+
+            bool eachPoolUsesOwnSettings = optimized.SearchOutcomes.Count == 6 &&
+                optimized.SearchOutcomes.Select((outcome, index) =>
+                    outcome.Plan.TargetWait95 == index + 1 &&
+                    outcome.Plan.Range.Min == index + 2 &&
+                    outcome.Plan.Range.Max == index + 4 &&
+                    outcome.OptimalPhysicalResources >= index + 2 &&
+                    outcome.OptimalPhysicalResources <= index + 4).All(x => x);
+
+            Check(eachPoolUsesOwnSettings,
+                "Each optimizer pool respects its own target and Min/Max resource bounds");
+
+            // ---------------------------------------------------------
+            // Pool-level queue history and chart filtering
+            // ---------------------------------------------------------
+            List<QueuePoolResult> queuePools = result.QueueResults.PoolResults;
+
+            Check(queuePools.Count == expectedPoolNames.Count,
+                $"Merged results keep every pool's own queue history ({queuePools.Count} == {expectedPoolNames.Count})");
+
+            Check(queuePools.Select(p => p.Name).SequenceEqual(expectedPoolNames),
+                "Per-pool queue identities match the solver's Pool Names output");
+
+            Check(queuePools.Zip(result.PoolResults, (summary, raw) => summary.Wait95 == raw.Wait95).All(x => x),
+                "Each pool keeps its own Wait95 instead of the facility aggregate");
+
+            Check(queuePools.All(p => p.Channel == "Counter" ? p.PoolKey.Length > 0 : p.PoolKey.Length == 0),
+                "Channel and PoolKey are split from the full pool identity");
+
+            Check(queuePools.Sum(p => p.PassengerCount) == processed.Count,
+                $"Per-pool passenger counts sum to the merged population ({queuePools.Sum(p => p.PassengerCount)} == {processed.Count})");
+
+            Check(queuePools.All(p => p.QueueTimeline != null && p.CumulativeFlow != null),
+                "Every pool carries its own queue timeline and cumulative flow");
+
+            Check(queuePools.All(p => p.ActiveResources > 0),
+                "Every pool records its staffed processor count");
+
+            Check(queuePools.Select(p => p.TargetWait95).SequenceEqual(new double[] { 1, 2, 3, 4, 5, 6 }),
+                "Per-pool targets survive the merge in pool order");
+
+            Check(queuePools.All(p =>
+                {
+                    QueueCumulativePoint last = p.CumulativeFlow.LastOrDefault();
+                    return last != null &&
+                           last.CumulativeArrivals == p.PassengerCount &&
+                           last.CumulativeDepartures == p.PassengerCount;
+                }),
+                "Each pool's cumulative flow reconciles with its own served count");
+
+            QueueCumulativePoint facilityLast = result.QueueResults.CumulativeFlow.LastOrDefault();
+
+            Check(facilityLast != null &&
+                  queuePools.Sum(p => p.CumulativeFlow.LastOrDefault()?.CumulativeArrivals ?? 0) ==
+                  facilityLast.CumulativeArrivals,
+                "Pool cumulative arrivals sum to the facility cumulative arrivals");
+
+            Check(ChartText.SelectPools(queuePools, "").Count == 0,
+                "An empty pool filter leaves the chart on the facility total");
+
+            Check(ChartText.SelectPools(queuePools, "*").Count == queuePools.Count,
+                "The '*' filter selects every recorded pool");
+
+            Check(ChartText.SelectPools(queuePools, "Counter").Count == 4,
+                "A channel filter selects all of that channel's sub-pools");
+
+            Check(ChartText.SelectPools(queuePools, "Counter|DomesticDeparture|Economy").Count == 1,
+                "A full pool identity selects exactly one pool");
+
+            Check(ChartText.SelectPools(queuePools, "Kiosk,BagDrop").Count == 2,
+                "A comma-separated filter selects several pools");
+
+            Check(ChartText.SelectPools(queuePools, "Nope").Count == 0,
+                "An unmatched filter selects no pool");
+
+            Check(ChartText.Row("a", "1,2", "x\"y") == "a,\"1,2\",\"x\"\"y\"",
+                "CSV rows escape commas and quotes");
+
+            List<Passenger> sharedDemand = passengers
+                .Where(p => p.DHPType == DHPType.DomesticDeparture)
+                .Take(12)
+                .Select(p => p.Clone())
+                .ToList();
+
+            CheckInResults shared = new CheckInSolver().Solve(new CheckInInputs
+            {
+                Passengers = sharedDemand,
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
+                Channels = new List<string>(),
+                PhysicalResources = new List<int> { 3 },
+                OptimizeResources = false,
+                TargetWait95 = new List<double> { 10.0 },
+                Seed = 7,
+                StaffingPercentage = 100.0
+            });
+
+            Check(shared.QueueResults.PoolResults.Count == 1 &&
+                  shared.QueueResults.PoolResults[0].Name == "Shared",
+                "A single facility-wide queue is reported as one Shared pool");
+        }
+
+        // -------------------------------------------------------------
+        // Check-In: BagDrop is a physical channel driven by Channel Routing
+        // -------------------------------------------------------------
+        private static void RunCheckInMergedBagDropChannel()
+        {
+            Console.WriteLine("== Check-In merged BagDrop channel ==");
+
+            ProfileChannelMap routing = new ProfileChannelMap { DefaultChannel = "Counter" };
+            routing.Entries.Add(new ProfileChannelEntry
+            {
+                ProfileName = "Solo",
+                Shares = new List<ChannelShare>
+                {
+                    new ChannelShare { Channel = "Counter", Share = 0.4 },
+                    new ChannelShare { Channel = "BagDrop", Share = 0.35 },
+                    new ChannelShare { Channel = "Web", Share = 0.25 }
+                }
+            });
+
+            ServiceTimeMap serviceTimes = new ServiceTimeMap
+            {
+                Default = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 }
+            };
+
+            serviceTimes.Entries.Add(new ServiceTimeEntry
+            {
+                Key = "Counter",
+                Profile = new ServiceProfile { MeanServiceTime = 2.0, StandardDeviation = 0.0 }
+            });
+
+            serviceTimes.Entries.Add(new ServiceTimeEntry
+            {
+                Key = "BagDrop",
+                Profile = new ServiceProfile { MeanServiceTime = 0.5, StandardDeviation = 0.0 }
+            });
+
+            List<Passenger> passengers = new List<Passenger>();
+            int id = 1;
+
+            Action<string, int, bool, bool> addPassengers = (channel, count, online, bag) =>
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    passengers.Add(new Passenger
+                    {
+                        Id = id,
+                        Channel = channel,
+                        DHPType = DHPType.DomesticDeparture,
+                        ProfileName = "Solo",
+                        ArrivalTime = id * 0.01,
+                        QueueArrivalTime = id * 0.01,
+                        UsesOnlineCheckIn = online,
+                        HasCheckedBag = bag,
+                        PassengerType = PassengerType.Domestic
+                    });
+
+                    id++;
+                }
+            };
+
+            addPassengers("Counter", 8, false, false);
+            addPassengers("BagDrop", 6, true, true);
+            addPassengers("Web", 5, true, false);
+
+            CheckInSolver solver = new CheckInSolver();
+
+            CheckInResults merged = solver.Solve(new CheckInInputs
+            {
+                Passengers = passengers,
+                ChannelRouting = routing,
+                ServiceTimeProvider = serviceTimes,
+                PhysicalResources = new List<int> { 2, 2 },
+                OptimizeResources = false,
+                TargetWait95 = new List<double> { 10.0, 10.0 },
+                Seed = 9,
+                StaffingPercentage = 100.0
+            });
+
+            Check(merged.ChannelNames.SequenceEqual(new[] { "Counter", "BagDrop" }),
+                "CHR-derived physical channels are Counter and BagDrop; virtual Web is excluded");
+            Check(merged.PoolNames.SequenceEqual(new[] { "Counter", "BagDrop" }),
+                "Check-In exposes BagDrop as its own routed processor pool");
+            Check(merged.PhysicalCounters == 4,
+                $"Physical counters sum the Counter and BagDrop pools ({merged.PhysicalCounters} == 4)");
+            Check(merged.Wait95PerChannel.ContainsKey("BagDrop") &&
+                  !merged.Wait95PerChannel.ContainsKey("Web"),
+                "Wait95 is reported for BagDrop and never for virtual Web");
+
+            List<Passenger> processed = merged.QueueResults.ProcessedPassengers;
+
+            Check(processed.Count == 14,
+                $"Check-In serves both Counter and BagDrop passengers exactly once ({processed.Count} == 14)");
+            Check(processed.All(p => p.Channel != "Web"),
+                "Web passengers bypass physical Check-In processors");
+            Check(processed
+                    .Where(p => p.Channel == "BagDrop")
+                    .All(p => p.History.ContainsKey(FacilityType.CheckIn) &&
+                              p.History.ContainsKey(FacilityType.BagDrop)),
+                "BagDrop passengers carry both Check-In and Bag Drop history");
+
+            int bagDropPool = merged.PoolNames.IndexOf("BagDrop");
+            double bagDropMean = merged.PoolResults[bagDropPool].ProcessedPassengers
+                .Average(p => p.ServiceTime);
+
+            Check(Math.Abs(bagDropMean - 0.5) < 1e-9,
+                $"BagDrop uses its own service-time mapping ({bagDropMean} == 0.5)");
+            Check(solver.Warnings.Any(w => w.Contains("Web") && w.Contains("Virtual")),
+                "The skipped virtual route is reported as a warning");
+
+            BagDropResults separate = new BagDropSolver().Solve(new BagDropInputs
+            {
+                Passengers = merged.QueueResults.Passengers,
+                ServiceTimeProvider = serviceTimes,
+                Channels = new List<string> { "BagDrop" },
+                PhysicalResources = new List<int> { 2 },
+                OptimizeResources = false,
+                TargetWait95 = new List<double> { 10.0 },
+                Seed = 9,
+                StaffingPercentage = 100.0
+            });
+
+            Check(separate.QueueResults.ProcessedPassengers.Count == 0,
+                "A separate Bag Drop stage skips passengers already served by the Check-In BagDrop channel");
+        }
+
+        // -------------------------------------------------------------
+        // Pool Plan architecture: keyed plans, PDomain, PNR, and per-facility use
+        // -------------------------------------------------------------
+        private static void RunPoolPlanArchitecture()
+        {
+            Console.WriteLine("== Pool Plan architecture ==");
+
+            ResourceSearchRange fallback = new ResourceSearchRange(3, 40);
+            List<string> warnings = new List<string>();
+
+            List<PoolPlan> resolverPlans = new List<PoolPlan>
+            {
+                new PoolPlan
+                {
+                    Channel = "Counter", PoolKey = "DomesticDeparture|Economy",
+                    PhysicalResources = 12, TargetWait95 = 10.0
+                },
+                new PoolPlan
+                {
+                    Channel = "Counter", PoolKey = "DomesticDeparture|Business",
+                    PhysicalResources = 4, TargetWait95 = 3.0,
+                    Range = new ResourceSearchRange(1, 11)
+                },
+                new PoolPlan
+                {
+                    Channel = "Counter", PoolKey = "DomesticDeparture|Economy",
+                    PhysicalResources = 99, TargetWait95 = 99.0
+                }
+            };
+
+            List<ChannelResourcePlan> resolved =
+                PoolPlanResolver.Resolve(resolverPlans, fallback, warnings.Add);
+
+            Check(resolved.Count == 2,
+                $"Keyed plans resolve to one pool per unique identity ({resolved.Count} == 2)");
+            Check(resolved[0].Range.Min == 3 && resolved[0].Range.Max == 40,
+                "A plan with no PDomain inherits the solver fallback");
+            Check(resolved[1].Range.Min == 1 && resolved[1].Range.Max == 11,
+                "An explicit PDomain is preserved");
+            Check(warnings.Any(w => w.Contains("listed more than once")),
+                "A duplicate pool identity is warned on");
+
+            warnings.Clear();
+
+            List<ChannelResourcePlan> shared =
+                PoolPlanResolver.Resolve(new List<PoolPlan>
+                {
+                    new PoolPlan { Channel = "Counter", PhysicalResources = 5, TargetWait95 = 3.0 },
+                    new PoolPlan
+                    {
+                        Channel = null, PhysicalResources = 9, TargetWait95 = 7.0,
+                        Range = new ResourceSearchRange(2, 20)
+                    }
+                }, fallback, warnings.Add);
+
+            Check(shared.Count == 1 && shared[0].IsSharedPool,
+                "A shared plan replaces every channel plan");
+            Check(shared[0].PhysicalResources == 9 && shared[0].TargetWait95 == 7.0,
+                "The shared plan's PNR and PTW are used");
+            Check(warnings.Any(w => w.Contains("shared-pool plan")),
+                "Channel plans are warned on when a shared plan exists");
+            Check(PoolPlanResolver.Resolve(new List<PoolPlan>(), fallback, warnings.Add) == null,
+                "No plans returns null so legacy resolution is used");
+
+            // ---------------------------------------------------------
+            // Check-In: keyed plans drive the four counter subpools
+            // ---------------------------------------------------------
+            List<Passenger> checkInPassengers = new List<Passenger>();
+            int id = 1;
+
+            void AddCheckIn(string channel, DHPType type, string profile, int count, bool online, bool bag)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    checkInPassengers.Add(new Passenger
+                    {
+                        Id = id++,
+                        Channel = channel,
+                        DHPType = type,
+                        ProfileName = profile,
+                        ArrivalTime = i * 0.01,
+                        QueueArrivalTime = i * 0.01,
+                        UsesOnlineCheckIn = online,
+                        HasCheckedBag = bag,
+                        PassengerType = type == DHPType.InternationalDeparture || type == DHPType.InternationalArrival
+                            ? PassengerType.International
+                            : PassengerType.Domestic
+                    });
+                }
+            }
+
+            AddCheckIn("Counter", DHPType.DomesticDeparture, "Economy", 8, false, false);
+            AddCheckIn("Counter", DHPType.DomesticDeparture, "Business", 7, false, false);
+            AddCheckIn("Counter", DHPType.InternationalDeparture, "Economy", 6, false, false);
+            AddCheckIn("Counter", DHPType.InternationalDeparture, "Business", 5, false, false);
+            AddCheckIn("Kiosk", DHPType.DomesticDeparture, "Economy", 4, false, false);
+            AddCheckIn("BagDrop", DHPType.InternationalDeparture, "Economy", 3, true, true);
+
+            List<PoolPlan> checkInPlans = new List<PoolPlan>
+            {
+                new PoolPlan { Channel = "Counter", PoolKey = "DomesticDeparture|Business", PhysicalResources = 2, TargetWait95 = 3.0, Range = new ResourceSearchRange(1, 8) },
+                new PoolPlan { Channel = "Counter", PoolKey = "DomesticDeparture|Economy", PhysicalResources = 3, TargetWait95 = 10.0, Range = new ResourceSearchRange(2, 9) },
+                new PoolPlan { Channel = "Counter", PoolKey = "InternationalDeparture|Business", PhysicalResources = 4, TargetWait95 = 3.0, Range = new ResourceSearchRange(3, 10) },
+                new PoolPlan { Channel = "Counter", PoolKey = "InternationalDeparture|Economy", PhysicalResources = 5, TargetWait95 = 10.0, Range = new ResourceSearchRange(4, 11) },
+                new PoolPlan { Channel = "Kiosk", PhysicalResources = 6, TargetWait95 = 2.0, Range = new ResourceSearchRange(5, 12) },
+                new PoolPlan { Channel = "BagDrop", PhysicalResources = 7, TargetWait95 = 3.0, Range = new ResourceSearchRange(6, 13) }
+            };
+
+            CheckInSolver checkInSolver = new CheckInSolver();
+
+            CheckInResults planned = checkInSolver.Solve(new CheckInInputs
+            {
+                Passengers = checkInPassengers,
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
+                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
+                PoolPlans = checkInPlans,
+                OptimizeResources = false,
+                Seed = 7,
+                StaffingPercentage = 100.0
+            });
+
+            Check(planned.PoolNames.SequenceEqual(new[]
+                {
+                    "Counter|DomesticDeparture|Business",
+                    "Counter|DomesticDeparture|Economy",
+                    "Counter|InternationalDeparture|Business",
+                    "Counter|InternationalDeparture|Economy",
+                    "Kiosk",
+                    "BagDrop"
+                }),
+                "Keyed Check-In plans define the four counter subpools plus Kiosk and BagDrop");
+            Check(planned.PhysicalPerChannel.SequenceEqual(new[] { 2, 3, 4, 5, 6, 7 }),
+                "Nominal resources come from each plan's PNR");
+            Check(planned.NominalPerChannel.SequenceEqual(new[] { 2, 3, 4, 5, 6, 7 }),
+                "Nominal resources are reported separately from the simulated count");
+            Check(planned.PhysicalCounters == 27,
+                $"Physical total is the sum of the planned pools ({planned.PhysicalCounters} == 27)");
+            Check(!checkInSolver.Warnings.Any(w => w.Contains("received no passengers")),
+                "Every configured pool receives its routed demand");
+            Check(!checkInSolver.Warnings.Any(w => w.Contains("no pool plan")),
+                "Every routed channel is covered by a plan");
+
+            CheckInResults plannedOptimized = new CheckInSolver().Solve(new CheckInInputs
+            {
+                Passengers = checkInPassengers.Select(p => p.Clone()).ToList(),
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
+                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
+                PoolPlans = checkInPlans,
+                OptimizeResources = true,
+                Seed = 7,
+                StaffingPercentage = 100.0
+            });
+
+            bool checkInDomainsRespected = plannedOptimized.SearchOutcomes.Count == 6;
+
+            for (int i = 0; i < plannedOptimized.SearchOutcomes.Count; i++)
+            {
+                PoolPlan expected = checkInPlans[i];
+                ResourceSearchOutcome outcome = plannedOptimized.SearchOutcomes[i];
+
+                bool inside = outcome.OptimalPhysicalResources >= expected.Range.Min &&
+                              outcome.OptimalPhysicalResources <= expected.Range.Max;
+                bool target = Math.Abs(outcome.Plan.TargetWait95 - expected.TargetWait95) < 1e-9;
+
+                if (!inside || !target)
+                    checkInDomainsRespected = false;
+            }
+
+            Check(checkInDomainsRespected,
+                "Each planned pool honours its own PTW and PDomain during optimization");
+            Check(plannedOptimized.NominalPerChannel.SequenceEqual(planned.NominalPerChannel),
+                "PNR is retained as a benchmark when optimization is on");
+
+            // Missing plan and empty pool diagnostics.
+            CheckInSolver uncovered = new CheckInSolver();
+            uncovered.Solve(new CheckInInputs
+            {
+                Passengers = checkInPassengers.Select(p => p.Clone()).ToList(),
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
+                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
+                PoolPlans = checkInPlans.Where(p => p.Channel != "Kiosk").ToList(),
+                OptimizeResources = false,
+                Seed = 7,
+                StaffingPercentage = 100.0
+            });
+
+            Check(uncovered.Warnings.Any(w => w.Contains("Kiosk") && w.Contains("no pool plan")),
+                "A routed channel without a plan is reported");
+
+            CheckInSolver emptyPool = new CheckInSolver();
+            emptyPool.Solve(new CheckInInputs
+            {
+                Passengers = checkInPassengers.Where(p => p.Channel != "Kiosk").Select(p => p.Clone()).ToList(),
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
+                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
+                PoolPlans = checkInPlans,
+                OptimizeResources = false,
+                Seed = 7,
+                StaffingPercentage = 100.0
+            });
+
+            Check(emptyPool.Warnings.Any(w => w.Contains("Kiosk") && w.Contains("received no passengers")),
+                "A plan with no demand is reported");
+
+            // ---------------------------------------------------------
+            // Security: keyed plans and per-pool domains
+            // ---------------------------------------------------------
+            List<Passenger> securityPassengers = new List<Passenger>();
+
+            for (int i = 0; i < 30; i++)
+            {
+                securityPassengers.Add(new Passenger
+                {
+                    Id = 1000 + i,
+                    Channel = i % 2 == 0 ? "Standard" : "Fast",
+                    DHPType = DHPType.DomesticDeparture,
+                    ProfileName = "Economy",
+                    ArrivalTime = i * 0.2,
+                    QueueArrivalTime = i * 0.2
+                });
+            }
+
+            List<PoolPlan> securityPlans = new List<PoolPlan>
+            {
+                new PoolPlan { Channel = "Standard", PhysicalResources = 4, TargetWait95 = 20.0, Range = new ResourceSearchRange(2, 10) },
+                new PoolPlan { Channel = "Fast", PhysicalResources = 2, TargetWait95 = 5.0, Range = new ResourceSearchRange(1, 6) }
+            };
+
+            SecurityResults secured = new SecuritySolver().Solve(new SecurityInputs
+            {
+                Passengers = securityPassengers,
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
+                Channels = new List<string> { "Standard", "Fast" },
+                PoolPlans = securityPlans,
+                OptimizeResources = false,
+                Seed = 11,
+                StaffingPercentage = 100.0
+            });
+
+            Check(secured.PoolNames.SequenceEqual(new[] { "Standard", "Fast" }),
+                "Security consumes keyed plans and reports plan-derived pool names");
+            Check(secured.PhysicalPerChannel.SequenceEqual(new[] { 4, 2 }) &&
+                  secured.NominalPerChannel.SequenceEqual(new[] { 4, 2 }),
+                "Security applies each plan's PNR and reports it as nominal");
+
+            // ---------------------------------------------------------
+            // Bag Drop: keyed plans
+            // ---------------------------------------------------------
+            List<Passenger> bagPassengers = new List<Passenger>();
+
+            for (int i = 0; i < 20; i++)
+            {
+                bagPassengers.Add(new Passenger
+                {
+                    Id = 2000 + i,
+                    Channel = "BagDrop",
+                    DHPType = DHPType.DomesticDeparture,
+                    ProfileName = "Economy",
+                    ArrivalTime = i * 0.2,
+                    QueueArrivalTime = i * 0.2,
+                    UsesOnlineCheckIn = true,
+                    HasCheckedBag = true
+                });
+            }
+
+            BagDropResults bagged = new BagDropSolver().Solve(new BagDropInputs
+            {
+                Passengers = bagPassengers,
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
+                Channels = new List<string> { "BagDrop" },
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan { Channel = "BagDrop", PhysicalResources = 3, TargetWait95 = 3.0, Range = new ResourceSearchRange(1, 7) }
+                },
+                OptimizeResources = false,
+                Seed = 13,
+                StaffingPercentage = 100.0
+            });
+
+            Check(bagged.PoolNames.SequenceEqual(new[] { "BagDrop" }) &&
+                  bagged.PhysicalPerChannel.SequenceEqual(new[] { 3 }),
+                "Bag Drop applies its keyed plan and nominal count");
+
+            // ---------------------------------------------------------
+            // Immigration: keyed plans for e-gate and counter
+            // ---------------------------------------------------------
+            List<Passenger> immigrationPassengers = new List<Passenger>();
+
+            for (int i = 0; i < 24; i++)
+            {
+                immigrationPassengers.Add(new Passenger
+                {
+                    Id = 3000 + i,
+                    Channel = i % 2 == 0 ? "EGate" : "Counter",
+                    DHPType = i % 2 == 0 ? DHPType.InternationalArrival : DHPType.InternationalDeparture,
+                    ProfileName = "Economy",
+                    ArrivalTime = i * 0.2,
+                    QueueArrivalTime = i * 0.2,
+                    PassengerType = PassengerType.International
+                });
+            }
+
+            ImmigrationResults immigrated = new ImmigrationSolver().Solve(new ImmigrationInputs
+            {
+                Passengers = immigrationPassengers,
+                ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
+                Channels = new List<string> { "EGate", "Counter" },
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan { Channel = "EGate", PhysicalResources = 2, TargetWait95 = 2.0, Range = new ResourceSearchRange(1, 4) },
+                    new PoolPlan { Channel = "Counter", PhysicalResources = 5, TargetWait95 = 10.0, Range = new ResourceSearchRange(2, 8) }
+                },
+                OptimizeResources = false,
+                Seed = 17,
+                StaffingPercentage = 100.0
+            });
+
+            Check(immigrated.PoolNames.SequenceEqual(new[] { "EGate", "Counter" }),
+                "Immigration consumes keyed plans and reports plan-derived pool names");
+            Check(immigrated.PhysicalPerChannel.SequenceEqual(new[] { 2, 5 }) &&
+                  immigrated.NominalPerChannel.SequenceEqual(new[] { 2, 5 }),
+                "Immigration applies each plan's PNR and reports it as nominal");
+        }
+
+        // -------------------------------------------------------------
+        // Processor allocation timeline (chart data preparation)
+        // -------------------------------------------------------------
+        private static void RunProcessorTimeline()
+        {
+            Console.WriteLine("== Processor allocation timeline ==");
+
+            QueueResults results = new QueueResults
+            {
+                ProcessedPassengers = new List<Passenger>
+                {
+                    new Passenger
+                    {
+                        Id = 1, Channel = "Counter", ProfileName = "Domestic Economy",
+                        AssignedCounter = 0, StartServiceTime = 10.0, EndServiceTime = 14.0
+                    },
+                    new Passenger
+                    {
+                        Id = 2, Channel = "Counter", ProfileName = "Domestic Economy",
+                        AssignedCounter = 1, StartServiceTime = 11.0, EndServiceTime = 12.5
+                    },
+                    new Passenger
+                    {
+                        Id = 3, Channel = "Counter", ProfileName = "Domestic Business",
+                        AssignedCounter = 0, StartServiceTime = 15.0, EndServiceTime = 16.0
+                    },
+                    new Passenger
+                    {
+                        Id = 4, Channel = "Kiosk", ProfileName = "Domestic Economy",
+                        AssignedCounter = 0, StartServiceTime = 10.5, EndServiceTime = 11.5
+                    },
+                    new Passenger
+                    {
+                        Id = 5, Channel = "Counter", ProfileName = "Domestic Economy",
+                        AssignedCounter = 0, StartServiceTime = 9.0, EndServiceTime = 9.0
+                    },
+                    new Passenger
+                    {
+                        Id = 6, Channel = "Counter", ProfileName = "Domestic Economy",
+                        AssignedCounter = 0, StartServiceTime = 8.0, EndServiceTime = 9.0,
+                        IsWarmUp = true
+                    },
+                    new Passenger
+                    {
+                        Id = 7, Channel = "Counter", ProfileName = "Domestic Economy",
+                        AssignedCounter = -1, StartServiceTime = 9.0, EndServiceTime = 10.0
+                    }
+                },
+                Resources = new List<QueueResource>
+                {
+                    new QueueResource { Id = 0 },
+                    new QueueResource { Id = 1 },
+                    new QueueResource { Id = 0 }
+                },
+                ResourcesUsed = 3,
+                ProcessorPools = new List<ProcessorPoolInfo>
+                {
+                    new ProcessorPoolInfo
+                    {
+                        Name = "Counter", ResourceCount = 2, FirstResourceIndex = 0
+                    },
+                    new ProcessorPoolInfo
+                    {
+                        Name = "Kiosk", ResourceCount = 1, FirstResourceIndex = 2
+                    }
+                },
+                QueueTimeline = new List<QueueTimelinePoint>
+                {
+                    new QueueTimelinePoint(10.0, 1),
+                    new QueueTimelinePoint(12.0, 0)
+                }
+            };
+
+            List<ProcessorTimelinePool> pools = ProcessorTimeline.Build(results);
+
+            Check(pools.Count == 2,
+                $"Two processor pools built ({pools.Count})");
+
+            Check(pools[0].Name == "Counter" && pools[0].ProcessorCount == 2,
+                $"Counter pool keeps its own processor count ({pools[0].ProcessorCount})");
+
+            Check(pools[1].Name == "Kiosk" && pools[1].ProcessorCount == 1,
+                $"Kiosk pool keeps its own processor count ({pools[1].ProcessorCount})");
+
+            Check(pools[0].Blocks.Count == 3,
+                $"Counter blocks = 3 served passengers ({pools[0].Blocks.Count})");
+
+            Check(pools[1].Blocks.Count == 1,
+                $"Kiosk blocks = 1 served passenger ({pools[1].Blocks.Count})");
+
+            Check(pools[0].Blocks.All(b => b.ProcessorId >= 0 && b.ProcessorId < pools[0].ProcessorCount),
+                "Counter processor IDs stay inside the pool");
+
+            Check(pools.All(p => p.Blocks.All(b => b.EndTime > b.StartTime)),
+                "Zero-length service intervals are excluded");
+
+            Check(pools.All(p => p.Blocks.All(b => b.PassengerId != 6)),
+                "Warm-up passengers are excluded by default");
+
+            Check(pools.All(p => p.Blocks.All(b => b.PassengerId != 7)),
+                "Passengers without a processor assignment are excluded");
+
+            Check(pools[0].Blocks.Select(b => b.StartTime).SequenceEqual(new[] { 10.0, 11.0, 15.0 }),
+                "Blocks are ordered by service start time");
+
+            List<ProcessorTimelinePool> withWarmUp = ProcessorTimeline.Build(results, true);
+
+            Check(withWarmUp[0].Blocks.Any(b => b.PassengerId == 6),
+                "Warm-up passengers can be included explicitly");
+
+            QueueResults fallback = new QueueResults
+            {
+                ResourcesUsed = 3,
+                ProcessedPassengers = results.ProcessedPassengers
+            };
+
+            List<ProcessorTimelinePool> single = ProcessorTimeline.Build(fallback);
+
+            Check(single.Count == 1 && single[0].IsShared && single[0].ProcessorCount == 3,
+                $"Results without pool metadata fall back to one shared pool ({single.Count})");
+
+            Check(ProcessorTimeline.Build(null).Count == 0,
+                "Null results produce no pools");
+
+            List<Passenger> passengers = new List<Passenger>();
+
+            for (int i = 0; i < 60; i++)
+            {
+                passengers.Add(new Passenger
+                {
+                    Id = i,
+                    ProfileName = "Economy",
+                    ArrivalTime = i * 0.5,
+                    QueueArrivalTime = i * 0.5
+                });
+            }
+
+            CheckInResults staffed = new CheckInSolver().Solve(new CheckInInputs
+            {
+                Passengers = passengers,
+                ServiceProfile = new ServiceProfile
+                {
+                    MeanServiceTime = 2.0,
+                    StandardDeviation = 0.2
+                },
+                PhysicalResources = new List<int> { 10 },
+                OptimizeResources = false,
+                TargetWait95 = new List<double> { 10.0 },
+                Seed = 3,
+                StaffingPercentage = 70.0
+            });
+
+            Check(staffed.QueueResults.Resources.Count == 7,
+                $"70% staffing of 10 counters opens 7 ({staffed.QueueResults.Resources.Count})");
+
+            Check(staffed.QueueResults.ProcessorPools.Count == 1 &&
+                  staffed.QueueResults.ProcessorPools[0].ResourceCount == 7,
+                "Processor pool reports the staffed count, not the physical count");
+        }
+
+        // -------------------------------------------------------------
+        // 14c. Facility area calculation (routed pools, net to gross)
+        // -------------------------------------------------------------
+        private static void RunFacilityArea()
+        {
+            Console.WriteLine("== Facility area ==");
+
+            FacilityAreaStandardSet standards = new FacilityAreaStandardSet
+            {
+                DefaultQueueSpacePerPax = 1.2,
+                CirculationPercent = 15.0,
+                MepPercent = 10.0,
+                StructurePercent = 5.0
+            };
+
+            standards.Units.Add(new FacilityUnitStandard
+            {
+                Key = "Counter",
+                AreaPerUnit = 15.0,
+                QueueSpacePerPax = 1.8
+            });
+
+            standards.Units.Add(new FacilityUnitStandard
+            {
+                Key = "Kiosk",
+                AreaPerUnit = 2.0
+            });
+
+            FacilityAreaInput routed = new FacilityAreaInput
+            {
+                PoolNames = new List<string> { "Counter", "Kiosk" },
+                PhysicalPerPool = new List<int> { 10, 4 },
+                ActivePerPool = new List<int> { 8, 4 },
+                GlobalPeakQueue = 30,
+                PeakQueueByChannel = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "Counter", 25 },
+                    { "Kiosk", 9 }
+                },
+                Standards = standards,
+                FallbackAreaPerUnit = 3.0,
+                FallbackQueueSpacePerPax = 1.2
+            };
+
+            FacilityAreaResult area = FacilityAreaCalculator.Calculate(routed);
+
+            Check(area.Lines.Count == 2,
+                $"Both routed pools are sized separately ({area.Lines.Count})");
+
+            Check(Math.Abs(area.Lines[0].EquipmentArea - 150.0) < 1e-6,
+                $"Counter equipment = 10 x 15 m2 = 150 m2 ({area.Lines[0].EquipmentArea})");
+
+            Check(Math.Abs(area.Lines[1].EquipmentArea - 8.0) < 1e-6,
+                $"Kiosk equipment = 4 x 2 m2 = 8 m2 ({area.Lines[1].EquipmentArea})");
+
+            Check(Math.Abs(area.Lines[0].QueueArea - 45.0) < 1e-6,
+                $"Counter queue = 25 waiting x 1.8 m2 = 45 m2 ({area.Lines[0].QueueArea})");
+
+            Check(Math.Abs(area.Lines[1].QueueArea - 10.8) < 1e-6,
+                $"Kiosk queue = 9 waiting x the default 1.2 m2 = 10.8 m2 ({area.Lines[1].QueueArea})");
+
+            Check(Math.Abs(area.NetArea - 213.8) < 1e-6,
+                $"Net area = 158 equipment + 55.8 queue = 213.8 m2 ({area.NetArea})");
+
+            Check(area.UsedStandards,
+                "Routed area reports that the unit standards were used");
+
+            // A shared pool waits in one queue, so it is sized on the whole
+            // facility's peak.
+            FacilityAreaInput shared = new FacilityAreaInput
+            {
+                PoolNames = new List<string> { "Shared" },
+                PhysicalPerPool = new List<int> { 20 },
+                GlobalPeakQueue = 30,
+                Standards = standards,
+                FallbackAreaPerUnit = 3.0
+            };
+
+            FacilityAreaResult sharedArea = FacilityAreaCalculator.Calculate(shared);
+
+            Check(Math.Abs(sharedArea.Lines[0].QueueArea - 36.0) < 1e-6,
+                $"Shared pool queue = the facility peak 30 x 1.2 m2 = 36 m2 ({sharedArea.Lines[0].QueueArea})");
+
+            Check(Math.Abs(sharedArea.Lines[0].EquipmentArea - 60.0) < 1e-6,
+                $"Shared pool has no standard, so the fallback 3 m2 was used ({sharedArea.Lines[0].EquipmentArea})");
+
+            Check(sharedArea.Warnings.Any(w => w.Contains("no area standard")),
+                "An unmatched pool is reported, not silently dropped");
+
+            // No queue metric for the channel: the facility peak stands in.
+            FacilityAreaInput missingQueue = new FacilityAreaInput
+            {
+                PoolNames = new List<string> { "Counter" },
+                PhysicalPerPool = new List<int> { 10 },
+                GlobalPeakQueue = 30,
+                Standards = standards
+            };
+
+            FacilityAreaResult missingArea = FacilityAreaCalculator.Calculate(missingQueue);
+
+            Check(missingArea.Lines[0].QueuePax == 30,
+                $"A channel with no queue metric falls back to the facility peak ({missingArea.Lines[0].QueuePax})");
+
+            Check(missingArea.Warnings.Any(w => w.Contains("No queue metric")),
+                "The missing queue metric is reported");
+
+            // ---- the net to gross build-up, through a real sizer ----
+            CheckInStandards checkInStandards = new CheckInStandards
+            {
+                Width = 1.5,
+                Depth = 2.0,
+                Pitch = 1.8,
+                QueueAreaPerPassenger = 1.2,
+                SupportPercent = 10.0,
+                CirculationPercent = 15.0
+            };
+
+            FacilitySizingContext context = new FacilitySizingContext
+            {
+                OperationalData = new FacilityOperationalData
+                {
+                    ProcessorCount = 10,
+                    ActiveProcessorCount = 8,
+                    PeakQueue = 25,
+                    AnalysisMethod = AnalysisMethod.Simulation
+                },
+                PassengerSummary = new PassengerSummaryData { TotalPassengers = 100 },
+                Standards = checkInStandards,
+                AreaStandards = standards,
+                UseRoutedPoolAreas = true,
+                PoolNames = new List<string> { "Counter" },
+                PhysicalPerPool = new List<int> { 10 },
+                ActivePerPool = new List<int> { 8 },
+                GlobalPeakQueue = 25,
+                PeakQueueByChannel = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "Counter", 25 }
+                }
+            };
+
+            FacilitySizingResult routedResult = new CheckInSizer().SizeFacility(context);
+
+            Check(Math.Abs(routedResult.QueueArea - 45.0) < 1e-6,
+                $"Routed queue area = 25 x 1.8 m2 = 45 m2 ({routedResult.QueueArea})");
+
+            Check(Math.Abs(routedResult.ProcessingArea - 150.0) < 1e-6,
+                $"Routed processing area = 10 x 15 m2 = 150 m2 ({routedResult.ProcessingArea})");
+
+            Check(Math.Abs(routedResult.SupportArea - 45.0) < 1e-6,
+                $"Check-in support = the rear working space, 10 x 1.8 x 2.5 = 45 m2 ({routedResult.SupportArea})");
+
+            Check(Math.Abs(routedResult.NetArea - 240.0) < 1e-6,
+                $"Net = 45 + 150 + 45 = 240 m2 ({routedResult.NetArea})");
+
+            Check(Math.Abs(routedResult.CirculationArea - 36.0) < 1e-6,
+                $"Circulation = 15% of 240 = 36 m2 ({routedResult.CirculationArea})");
+
+            Check(Math.Abs(routedResult.MepArea - 27.6) < 1e-6,
+                $"MEP = 10% of 276 = 27.6 m2 ({routedResult.MepArea})");
+
+            Check(Math.Abs(routedResult.StructureArea - 15.18) < 1e-6,
+                $"Structure = 5% of 303.6 = 15.18 m2 ({routedResult.StructureArea})");
+
+            Check(Math.Abs(routedResult.GrossArea - 318.78) < 1e-6,
+                $"Gross = 303.6 + 15.18 = 318.78 m2 ({routedResult.GrossArea})");
+
+            Check(Math.Abs(routedResult.TotalArea - routedResult.GrossArea) < 1e-9,
+                "Total area is the gross area");
+
+            Check(routedResult.PoolAreas.Count > 0,
+                "The routed breakdown is reported");
+
+            // Without area standards the facility's own rules are used, and
+            // there is no MEP or structure allowance.
+            FacilitySizingContext legacy = new FacilitySizingContext
+            {
+                OperationalData = new FacilityOperationalData
+                {
+                    ProcessorCount = 10,
+                    ActiveProcessorCount = 8,
+                    PeakQueue = 25,
+                    AnalysisMethod = AnalysisMethod.Simulation
+                },
+                PassengerSummary = new PassengerSummaryData { TotalPassengers = 100 },
+                Standards = checkInStandards
+            };
+
+            FacilitySizingResult legacyResult = new CheckInSizer().SizeFacility(legacy);
+
+            Check(Math.Abs(legacyResult.QueueArea - 30.0) < 1e-6,
+                $"Legacy queue area = 25 x 1.2 m2 = 30 m2 ({legacyResult.QueueArea})");
+
+            Check(Math.Abs(legacyResult.ProcessingArea - 36.0) < 1e-6,
+                $"Legacy processing area = 10 x 1.8 x 2 = 36 m2 ({legacyResult.ProcessingArea})");
+
+            Check(Math.Abs(legacyResult.TotalArea - 127.65) < 1e-6,
+                $"Legacy total = 30 + 36 + 45 + 16.65 = 127.65 m2 ({legacyResult.TotalArea})");
+
+            Check(Math.Abs(legacyResult.MepArea) < 1e-9 &&
+                  Math.Abs(legacyResult.StructureArea) < 1e-9,
+                "No MEP or structure allowance without area standards");
+
+            // A fixed room is added as a lump, and is not the MEP allowance.
+            FacilityAreaStandardSet withFixed = new FacilityAreaStandardSet
+            {
+                DefaultQueueSpacePerPax = 1.2,
+                CirculationPercent = 15.0,
+                MepPercent = 10.0,
+                StructurePercent = 5.0
+            };
+
+            withFixed.Units.Add(new FacilityUnitStandard { Key = "Counter", AreaPerUnit = 15.0 });
+            withFixed.FixedAreas.Add(new NamedArea { Name = "Reconciliation room", Area = 50.0 });
+
+            FacilitySizingContext fixedContext = new FacilitySizingContext
+            {
+                OperationalData = new FacilityOperationalData
+                {
+                    ProcessorCount = 10,
+                    PeakQueue = 25,
+                    AnalysisMethod = AnalysisMethod.Simulation
+                },
+                PassengerSummary = new PassengerSummaryData { TotalPassengers = 100 },
+                Standards = checkInStandards,
+                AreaStandards = withFixed,
+                UseRoutedPoolAreas = true,
+                PoolNames = new List<string> { "Counter" },
+                PhysicalPerPool = new List<int> { 10 },
+                GlobalPeakQueue = 25
+            };
+
+            FacilitySizingResult fixedResult = new CheckInSizer().SizeFacility(fixedContext);
+
+            Check(Math.Abs(fixedResult.NetArea - 275.0) < 1e-6,
+                $"A fixed room joins the net: 30 + 150 + 45 + 50 = 275 m2 ({fixedResult.NetArea})");
+
+            Check(Math.Abs(fixedResult.MepArea - 31.625) < 1e-6,
+                $"MEP rides on the net including the fixed room: 10% of 316.25 = 31.63 m2 ({fixedResult.MepArea})");
+        }
+
+        // -------------------------------------------------------------
+        // 14d. Facility area wiring (pool fallbacks, mapping, routes)
+        // -------------------------------------------------------------
+        private static void RunFacilityAreaWiring()
+        {
+            Console.WriteLine("== Facility area wiring ==");
+
+            FacilityAreaStandardSet standards = new FacilityAreaStandardSet
+            {
+                DefaultQueueSpacePerPax = 1.2,
+                CirculationPercent = 15.0,
+                MepPercent = 10.0,
+                StructurePercent = 5.0
+            };
+
+            standards.Units.Add(new FacilityUnitStandard { Key = "Counter", AreaPerUnit = 15.0 });
+            standards.Units.Add(new FacilityUnitStandard { Key = "Kiosk", AreaPerUnit = 2.0 });
+
+            List<ProcessorPoolInfo> pools = new List<ProcessorPoolInfo>
+            {
+                new ProcessorPoolInfo
+                {
+                    Name = "Counter",
+                    ResourceCount = 8,
+                    PhysicalResourceCount = 10,
+                    FirstResourceIndex = 0,
+                    IsShared = false
+                },
+                new ProcessorPoolInfo
+                {
+                    Name = "Kiosk",
+                    ResourceCount = 4,
+                    PhysicalResourceCount = 4,
+                    FirstResourceIndex = 8,
+                    IsShared = false
+                }
+            };
+
+            Dictionary<string, int> byChannel =
+                new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "Counter", 25 },
+                    { "Kiosk", 9 }
+                };
+
+            // Pool names only: the counts come from the queue results.
+            FacilityAreaInput namesOnly = new FacilityAreaInput
+            {
+                PoolNames = new List<string> { "Counter", "Kiosk" },
+                Pools = pools,
+                GlobalPeakQueue = 30,
+                PeakQueueByChannel = byChannel,
+                Standards = standards,
+                FallbackAreaPerUnit = 3.0
+            };
+
+            FacilityAreaResult namesArea = FacilityAreaCalculator.Calculate(namesOnly);
+
+            Check(Math.Abs(namesArea.Lines[0].EquipmentArea - 150.0) < 1e-6,
+                $"A pool with no count takes its installed count from the results " +
+                $"({namesArea.Lines[0].EquipmentArea})");
+
+            Check(Math.Abs(namesArea.Lines[0].ActiveUnits - 8) < 1e-6,
+                $"A pool with no staffed count takes it from the results too ({namesArea.Lines[0].ActiveUnits})");
+
+            Check(Math.Abs(namesArea.Lines[1].EquipmentArea - 8.0) < 1e-6,
+                $"The second pool falls back the same way ({namesArea.Lines[1].EquipmentArea})");
+
+            // Explicit counts win over the results.
+            FacilityAreaInput explicitCounts = new FacilityAreaInput
+            {
+                PoolNames = new List<string> { "Counter", "Kiosk" },
+                PhysicalPerPool = new List<int> { 12, 6 },
+                ActivePerPool = new List<int> { 12, 6 },
+                Pools = pools,
+                GlobalPeakQueue = 30,
+                PeakQueueByChannel = byChannel,
+                Standards = standards
+            };
+
+            FacilityAreaResult explicitArea = FacilityAreaCalculator.Calculate(explicitCounts);
+
+            Check(Math.Abs(explicitArea.Lines[0].EquipmentArea - 180.0) < 1e-6,
+                $"An explicit count overrides the results ({explicitArea.Lines[0].EquipmentArea})");
+
+            // A pool name that is not a unit standard can be mapped to one.
+            FacilityAreaInput aliased = new FacilityAreaInput
+            {
+                PoolNames = new List<string> { "Kiosk East" },
+                PhysicalPerPool = new List<int> { 5 },
+                FacilityKeyPerPool = new List<string> { "Kiosk" },
+                Pools = pools,
+                GlobalPeakQueue = 30,
+                Standards = standards
+            };
+
+            FacilityAreaResult aliasArea = FacilityAreaCalculator.Calculate(aliased);
+
+            Check(Math.Abs(aliasArea.Lines[0].EquipmentArea - 10.0) < 1e-6,
+                $"A pool mapped to a unit standard is sized with it ({aliasArea.Lines[0].EquipmentArea})");
+
+            Check(aliasArea.Lines[0].HasStandard,
+                "A mapped pool reports that a standard was used");
+
+            // A route with no physical counterpart contributes no equipment.
+            FacilityAreaInput routeOnly = new FacilityAreaInput
+            {
+                PoolNames = new List<string> { "Counter", "Web" },
+                PhysicalPerPool = new List<int> { 10, 0 },
+                NoPhysicalAreaPerPool = new List<bool> { false, true },
+                Pools = pools,
+                GlobalPeakQueue = 30,
+                PeakQueueByChannel = byChannel,
+                Standards = standards
+            };
+
+            FacilityAreaResult routeArea = FacilityAreaCalculator.Calculate(routeOnly);
+
+            Check(Math.Abs(routeArea.Lines[1].EquipmentArea) < 1e-9,
+                $"A route with no physical area contributes no equipment area ({routeArea.Lines[1].EquipmentArea})");
+
+            Check(routeArea.Warnings.Any(w => w.Contains("no physical area")),
+                "A route with no physical area is reported");
+
+            // A pool with nothing to size is reported rather than ignored.
+            FacilityAreaInput emptyPool = new FacilityAreaInput
+            {
+                PoolNames = new List<string> { "Nothing" },
+                Standards = standards
+            };
+
+            FacilityAreaResult emptyArea = FacilityAreaCalculator.Calculate(emptyPool);
+
+            Check(emptyArea.Warnings.Any(w => w.Contains("no units and no queue metric")),
+                "A pool with no units and no queue metric is reported");
+
+            // A short list is reported, and the pools it misses still work.
+            FacilityAreaInput shortList = new FacilityAreaInput
+            {
+                PoolNames = new List<string> { "Counter", "Kiosk" },
+                PhysicalPerPool = new List<int> { 10 },
+                Pools = pools,
+                GlobalPeakQueue = 30,
+                PeakQueueByChannel = byChannel,
+                Standards = standards
+            };
+
+            FacilityAreaResult shortArea = FacilityAreaCalculator.Calculate(shortList);
+
+            Check(shortArea.Warnings.Any(w => w.Contains("Physical per Pool")),
+                "A count list shorter than the pool list is reported");
+
+            Check(Math.Abs(shortArea.Lines[1].EquipmentArea - 8.0) < 1e-6,
+                $"The pool the list misses still takes its count from the results ({shortArea.Lines[1].EquipmentArea})");
+
+            // ---- a facility that cannot be sized from routed pools ----
+            FacilitySizingContext securityContext = new FacilitySizingContext
+            {
+                OperationalData = new FacilityOperationalData
+                {
+                    ProcessorCount = 4,
+                    PeakQueue = 10,
+                    AnalysisMethod = AnalysisMethod.Simulation
+                },
+                PassengerSummary = new PassengerSummaryData { TotalPassengers = 100 },
+                Standards = new SecurityStandards
+                {
+                    Width = 1.5,
+                    Depth = 2.0,
+                    Pitch = 1.8,
+                    QueueAreaPerPassenger = 1.2,
+                    SupportPercent = 10.0,
+                    CirculationPercent = 15.0,
+                    IsGenderSegregated = false
+                },
+                AreaStandards = standards,
+                UseRoutedPoolAreas = true,
+                PoolNames = new List<string> { "Counter" },
+                PhysicalPerPool = new List<int> { 10 },
+                GlobalPeakQueue = 10
+            };
+
+            FacilitySizingResult securityResult = new SecuritySizer().SizeFacility(securityContext);
+
+            Check(securityResult.Warnings.Any(w => w.Contains("not available for this facility type")),
+                "Routed areas are refused by a facility that cannot use them");
+
+            Check(Math.Abs(securityResult.ProcessingArea - 4.0 * 1.8 * (2.0 + 10.0)) < 1e-6,
+                $"The facility's own rule - pitch x depth plus the divest allowance - is kept " +
+                $"({securityResult.ProcessingArea})");
+
+            // ---- end to end: a real check-in solve, then the areas ----
+            ServiceTimeMap map = new ServiceTimeMap
+            {
+                Default = new ServiceProfile { MeanServiceTime = 3.0, StandardDeviation = 0.5 }
+            };
+
+            ProfileChannelMap routing = new ProfileChannelMap { DefaultChannel = "Counter" };
+            routing.Entries.Add(new ProfileChannelEntry { ProfileName = "Solo" });
+            routing.Entries[0].Shares.Add(new ChannelShare { Channel = "Counter", Share = 0.6 });
+            routing.Entries[0].Shares.Add(new ChannelShare { Channel = "Kiosk", Share = 0.4 });
+
+            List<PassengerGroup> groups = BuildGroupsWithProfiles(
+                1200, 1, new[] { 100.0 }, 0, 100.0, 100.0,
+                new List<PassengerProfile> { MakeProfile("Solo", 100.0, 60.0, 150.0, 0.0, 0.0) },
+                new List<PassengerProfile>());
+
+            PassengerGenerationResult gen = GenerateWithProfiles(groups, 33, routing);
+
+            CheckInResults solved = new CheckInSolver().Solve(new CheckInInputs
+            {
+                Passengers = gen.Passengers.Select(p => p.Clone()).ToList(),
+                ServiceProfile = map.Default,
+                ServiceTimeProvider = map,
+                Channels = new List<string> { "Counter", "Kiosk" },
+                PhysicalResources = new List<int> { 20, 10 },
+                OptimizeResources = false,
+                TargetWait95 = new List<double> { 10.0, 10.0 },
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            QueueResults qr = solved.QueueResults;
+
+            Check(qr.ProcessorPools.Count == 2,
+                $"The solved run carries two pools ({qr.ProcessorPools.Count})");
+
+            FacilitySizingContext solvedContext = new FacilitySizingContext
+            {
+                OperationalData = new FacilityOperationalData
+                {
+                    ProcessorCount = qr.PhysicalProcessorCount,
+                    ActiveProcessorCount = qr.Resources.Count,
+                    PeakQueue = qr.PeakQueueLength,
+                    Wait95 = qr.Wait95,
+                    AnalysisMethod = AnalysisMethod.Simulation
+                },
+                PassengerSummary = new PassengerSummaryData
+                {
+                    TotalPassengers = qr.ProcessedPassengers.Count
+                },
+                Standards = new CheckInStandards
+                {
+                    Width = 1.5,
+                    Depth = 2.0,
+                    Pitch = 1.8,
+                    QueueAreaPerPassenger = 1.2,
+                    SupportPercent = 10.0,
+                    CirculationPercent = 15.0
+                },
+                AreaStandards = standards,
+                UseRoutedPoolAreas = true,
+                ProcessorPools = qr.ProcessorPools,
+                PeakQueueByChannel = qr.ByChannel.ToDictionary(
+                    k => k.Key, v => v.Value.PeakQueueLength),
+                GlobalPeakQueue = qr.PeakQueueLength
+            };
+
+            FacilitySizingResult solvedResult = new CheckInSizer().SizeFacility(solvedContext);
+
+            Check(solvedResult.PoolAreas.Count == 3,
+                $"One line per pool plus the net line ({solvedResult.PoolAreas.Count})");
+
+            Check(Math.Abs(solvedResult.ProcessingArea - (20 * 15.0 + 10 * 2.0)) < 1e-6,
+                $"The solved run's pools are sized from their own standards ({solvedResult.ProcessingArea})");
+
+            int counterPeak = qr.ByChannel["Counter"].PeakQueueLength;
+            int kioskPeak = qr.ByChannel["Kiosk"].PeakQueueLength;
+
+            Check(Math.Abs(solvedResult.QueueArea - (counterPeak * 1.2 + kioskPeak * 1.2)) < 1e-6,
+                $"Each pool's waiting area uses its own channel peak ({solvedResult.QueueArea})");
+
+            Check(solvedResult.Warnings.Count == 0,
+                $"A correctly wired run reports no warnings ({string.Join(" | ", solvedResult.Warnings)})");
+        }
+
+        // -------------------------------------------------------------
+        // 14e. Gate stands and gate lounges
+        // -------------------------------------------------------------
+        private static void RunGateSizing()
+        {
+            Console.WriteLine("== Gate stands and lounges ==");
+
+            List<GateCodeInput> codes = new List<GateCodeInput>
+            {
+                new GateCodeInput
+                {
+                    Code = "C",
+                    DomesticAtms = 4,
+                    InternationalAtms = 3,
+                    OccupancyMinutes = 45.0,
+                    Seats = 180,
+                    SeatedPct = 0.70,
+                    StandingPct = 0.10,
+                    BoardingQueuePct = 0.15
+                },
+                new GateCodeInput
+                {
+                    Code = "E",
+                    DomesticAtms = 2,
+                    InternationalAtms = 3,
+                    OccupancyMinutes = 75.0,
+                    Seats = 300,
+                    SeatedPct = 0.60,
+                    StandingPct = 0.15,
+                    BoardingQueuePct = 0.20
+                }
+            };
+
+            GateStandards standards = new GateStandards
+            {
+                BufferMinutes = 10.0,
+                SparesPct = 0.0,
+                LoadFactor = 0.85,
+                ContactPctDomestic = 0.8,
+                ContactPctSwing = 0.8,
+                ContactPctInternational = 0.8,
+                RemoteStandsPerBusGate = 2.0,
+                MaxStandsRatio = 1.35,
+                SeatedSpacePerPax = 1.7,
+                StandingSpacePerPax = 1.2,
+                BoardingQueueSpacePerPax = 1.2,
+                PodiumsPerLounge = 1,
+                PodiumAreaEach = 0.0,
+                BusLoungeCode = "C"
+            };
+
+            standards.SwingStands["C"] = 1;
+
+            GateSizingResult gates = GateCalculator.Calculate(codes, standards);
+
+            // Domestic: C 4 x 55/60 = 3.67 -> 4 stands; E 2 x 85/60 = 2.83 -> 3.
+            // International: C 3 x 55/60 = 2.75 -> 3; E 3 x 85/60 = 4.25 -> 5.
+            // One stand swings for C.
+            Check(gates.ActiveTotal == 14,
+                $"Active stands = 14 (domestic 6 + swing 1 + international 7) ({gates.ActiveTotal})");
+
+            Check(gates.ContactTotal == 13,
+                $"Contact stands = 13 ({gates.ContactTotal})");
+
+            Check(gates.BusTotal == 1,
+                $"Bus gates = 1 ({gates.BusTotal})");
+
+            Check(gates.RemoteActive == 2,
+                $"Remote stands = 1 bus gate x 2 = 2 ({gates.RemoteActive})");
+
+            Check(gates.MaxStands == 19,
+                $"Max stands = 14 x 1.35 = 19 ({gates.MaxStands})");
+
+            Check(gates.NetRemote == 6,
+                $"Net remote stands = 19 - 13 = 6 ({gates.NetRemote})");
+
+            GateBucketStands international = gates.Buckets
+                .First(b => b.Bucket == "International");
+
+            Check(international.SplitExtra == 1,
+                $"The per-code split is one stand over the international sector total ({international.SplitExtra})");
+
+            // A code C lounge: 180 seats x 0.85 = 153 passengers.
+            //   seated 107.1 x 1.7 = 182.07; standing 15.3 x 1.2 = 18.36
+            //   hold 200.43; queue 22.95 x 1.2 = 27.54; area 227.97
+            GateLounge codeC = gates.Lounges.First(l => l.Code == "C" && l.Bucket == "Domestic");
+
+            Check(Math.Abs(codeC.AreaEach - 227.97) < 1e-6,
+                $"A code C lounge is 227.97 m2 ({codeC.AreaEach})");
+
+            Check(codeC.Count == 3,
+                $"Three domestic code C contact gates need three lounges ({codeC.Count})");
+
+            Check(gates.LoungeCount == 14,
+                $"One lounge per contact gate and per bus gate ({gates.LoungeCount})");
+
+            double loungeSum = gates.Lounges.Sum(l => l.Area);
+
+            Check(Math.Abs(gates.NetArea - loungeSum) < 1e-6,
+                $"The net lounge area is the sum of the lounges ({gates.NetArea})");
+
+            Check(Math.Abs(gates.NetArea - 4166.19) < 1e-6,
+                $"Net lounge area = 4166.19 m2 ({gates.NetArea})");
+
+            // A bus gate's lounge is sized as the bus lounge code, not as the
+            // aircraft it happens to serve.
+            GateLounge busLounge = gates.Lounges.FirstOrDefault(l =>
+                l.Bucket == "International" && l.Code == "C" && l.Count == 1);
+
+            Check(busLounge != null,
+                "The international bus gate has a code C lounge");
+
+            // Swing is capped at the smaller sector.
+            standards.SwingStands["E"] = 9;
+
+            GateSizingResult capped = GateCalculator.Calculate(codes, standards);
+
+            Check(capped.Warnings.Any(w => w.Contains("capped")),
+                "Swing beyond the smaller sector is reported");
+
+            // A swing that is impossible is capped, not honoured.
+            Check(capped.ActiveTotal == 11,
+                $"More swing means fewer stands in total: 15 less the 4 swung = 11 ({capped.ActiveTotal})");
+
+            standards.SwingStands.Remove("E");
+
+            // The gross build-up is the same one every facility uses.
+            GrossArea gross = AreaGrossUp.Calculate(gates.NetArea, 15.0, 10.0, 5.0);
+
+            Check(Math.Abs(gross.Total - gates.NetArea * 1.15 * 1.10 * 1.05) < 1e-6,
+                $"The lounge area grosses up like any other ({gross.Total})");
+
+            Check(gates.NetArea > 0 && gross.Total > gates.NetArea,
+                "The gross lounge area is larger than the net");
+
+            // Nothing to size is reported rather than silently zero.
+            GateSizingResult empty = GateCalculator.Calculate(new List<GateCodeInput>(), standards);
+
+            Check(empty.Warnings.Count > 0 && empty.ActiveTotal == 0,
+                "No aircraft types reports a warning and sizes nothing");
+        }
+
+        // -------------------------------------------------------------
+        // 14f. Flight schedule import
+        // -------------------------------------------------------------
+        private static void RunFlightScheduleImport()
+        {
+            Console.WriteLine("== Flight schedule import ==");
+
+            RunFlightScheduleTimeFormats();
+            RunFlightScheduleFixture();
+            RunFlightScheduleEdgeCases();
+            RunFlightScheduleRotationIdLink();
+            RunRealScheduleIntegration();
+        }
+
+        private static void RunFlightScheduleTimeFormats()
+        {
+            var fraction = ScheduleTimeDecoder.Decode(TimeCell("0.5"), string.Empty);
+            Check(fraction.IsValid && fraction.Minutes == 720,
+                "Schedule time: an Excel fraction decodes to 12:00");
+
+            var decimalHours = ScheduleTimeDecoder.Decode(TimeCell("9.5"), string.Empty);
+            Check(decimalHours.IsValid && decimalHours.Minutes == 570,
+                "Schedule time: decimal hours decode to 09:30");
+
+            var compact = ScheduleTimeDecoder.Decode(TimeCell("0930"), string.Empty);
+            Check(compact.IsValid && compact.Minutes == 570,
+                "Schedule time: four-digit HHmm decodes to 09:30");
+
+            var compactThree = ScheduleTimeDecoder.Decode(TimeCell("930"), string.Empty);
+            Check(compactThree.IsValid && compactThree.Minutes == 570,
+                "Schedule time: three-digit Hmm decodes to 09:30");
+
+            var afterMidnight = ScheduleTimeDecoder.Decode(TimeCell("24:10"), string.Empty);
+            Check(afterMidnight.IsValid &&
+                  afterMidnight.DayOffset == 1 &&
+                  afterMidnight.Minutes == 10,
+                "Schedule time: 24:10 rolls to the next day");
+
+            var blank = ScheduleTimeDecoder.Decode(TimeCell(string.Empty), string.Empty);
+            Check(!blank.IsValid,
+                "Schedule time: a blank cell is invalid, not midnight");
+
+            var invalid = ScheduleTimeDecoder.Decode(TimeCell("2360"), string.Empty);
+            Check(!invalid.IsValid,
+                "Schedule time: an invalid HHmm value is rejected");
+
+            var notATime = ScheduleTimeDecoder.Decode(TimeCell("not a time"), string.Empty);
+            Check(!notATime.IsValid,
+                "Schedule time: unreadable text is rejected");
+
+            var serial = new DateTime(2026, 10, 19, 14, 30, 0)
+                .ToOADate()
+                .ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+
+            var serialTime = ScheduleTimeDecoder.Decode(
+                TimeCell(serial),
+                "2026-10-19");
+
+            Check(serialTime.IsValid &&
+                  serialTime.Minutes == 870 &&
+                  serialTime.DayOffset == 0 &&
+                  serialTime.Date == "2026-10-19",
+                "Schedule time: an Excel date serial decodes with its date");
+        }
+
+        private static XlsxCell TimeCell(string value)
+        {
+            return new XlsxCell("J", value, value, false, true, false);
+        }
+
+        private static void RunFlightScheduleFixture()
+        {
+            var builder = new ScheduleFixtureBuilder("26.5mppa Schedule", headerRow: 7);
+
+            builder.AddRow(8, new Dictionary<string, FixtureCell>
+            {
+                ["B"] = FixtureCell.TextCell("6E"),
+                ["C"] = FixtureCell.TextCell("6E"),
+                ["D"] = FixtureCell.NumberCell(180),
+                ["E"] = FixtureCell.TextCell("320"),
+                ["F"] = FixtureCell.TextCell("C"),
+                ["G"] = FixtureCell.TextCell("COK"),
+                ["H"] = FixtureCell.TextCell("COK"),
+                ["I"] = FixtureCell.TextCell("D"),
+                ["J"] = FixtureCell.NumberCell(610.0 / 1440.0),
+                ["K"] = FixtureCell.NumberCell(0.87),
+                ["L"] = FixtureCell.NumberCell(157),
+                ["M"] = FixtureCell.TextCell("HYD"),
+                ["N"] = FixtureCell.TextCell("HYD"),
+                ["O"] = FixtureCell.TextCell("D"),
+                ["P"] = FixtureCell.NumberCell(730.0 / 1440.0),
+                ["Q"] = FixtureCell.NumberCell(0.74),
+                ["R"] = FixtureCell.NumberCell(134),
+                ["S"] = FixtureCell.TextCell("J"),
+                ["T"] = FixtureCell.TextCell("J"),
+                ["U"] = FixtureCell.FormulaCell("IFERROR(INDEX(#REF!),\"\")", null, true),
+                ["V"] = FixtureCell.FormulaCell("IFERROR(INDEX(#REF!),\"\")")
+            });
+
+            builder.AddRow(9, new Dictionary<string, FixtureCell>
+            {
+                ["B"] = FixtureCell.TextCell("AI"),
+                ["C"] = FixtureCell.TextCell("AI"),
+                ["D"] = FixtureCell.NumberCell(250),
+                ["E"] = FixtureCell.TextCell("B77W"),
+                ["F"] = FixtureCell.TextCell("E"),
+                ["G"] = FixtureCell.TextCell("SIN"),
+                ["I"] = FixtureCell.TextCell("I"),
+                ["J"] = FixtureCell.TextCell("23:50"),
+                ["K"] = FixtureCell.NumberCell(0.90),
+                ["L"] = FixtureCell.NumberCell(220),
+                ["N"] = FixtureCell.TextCell("SIN"),
+                ["O"] = FixtureCell.TextCell("I"),
+                ["P"] = FixtureCell.TextCell("06:10"),
+                ["Q"] = FixtureCell.NumberCell(0.85),
+                ["R"] = FixtureCell.NumberCell(200),
+                ["S"] = FixtureCell.TextCell("J"),
+                ["T"] = FixtureCell.TextCell("J"),
+                ["U"] = FixtureCell.TextCell("T1"),
+                ["V"] = FixtureCell.TextCell("T1")
+            });
+
+            builder.AddRow(10, new Dictionary<string, FixtureCell>
+            {
+                ["B"] = FixtureCell.TextCell("FD"),
+                ["C"] = FixtureCell.TextCell("FD"),
+                ["D"] = FixtureCell.NumberCell(0),
+                ["E"] = FixtureCell.TextCell("77X"),
+                ["F"] = FixtureCell.TextCell("E"),
+                ["G"] = FixtureCell.TextCell("SIN"),
+                ["H"] = FixtureCell.TextCell("SIN"),
+                ["I"] = FixtureCell.TextCell("I"),
+                ["J"] = FixtureCell.NumberCell(360.0 / 1440.0),
+                ["K"] = FixtureCell.NumberCell(0.80),
+                ["L"] = FixtureCell.NumberCell(0),
+                ["M"] = FixtureCell.TextCell("LEJ"),
+                ["N"] = FixtureCell.TextCell("LEJ"),
+                ["O"] = FixtureCell.TextCell("I"),
+                ["P"] = FixtureCell.NumberCell(400.0 / 1440.0),
+                ["Q"] = FixtureCell.NumberCell(0.70),
+                ["R"] = FixtureCell.NumberCell(0),
+                ["S"] = FixtureCell.TextCell("F"),
+                ["T"] = FixtureCell.TextCell("F"),
+                ["U"] = FixtureCell.FormulaCell("IF(S8=\"F\",\"Cargo\",\"\")", "Cargo"),
+                ["V"] = FixtureCell.FormulaCell("IF(T8=\"F\",\"Cargo\",\"\")", "Cargo")
+            });
+
+            var result = FlightScheduleParser.Parse(
+                builder.Build(),
+                new ScheduleImportOptions
+                {
+                    SourceFile = "fixture.xlsx",
+                    ScheduleName = "Fixture",
+                    SheetName = string.Empty,
+                    BaseDate = "2026-10-19",
+                    LinkedRows = true
+                });
+
+            Check(result.SheetName == "26.5mppa Schedule",
+                $"The actual worksheet is reported ({result.SheetName})");
+
+            Check(result.HeaderRow == 7,
+                $"The header row is detected ({result.HeaderRow})");
+
+            Check(result.SourceRowCount == 3,
+                $"Three source turns were read ({result.SourceRowCount})");
+
+            Check(result.TotalLegCount == 6 && result.ArrivalCount == 3 && result.DepartureCount == 3,
+                $"Each turn produced two legs ({result.ArrivalCount} / {result.DepartureCount})");
+
+            Check(result.RotationCount == 3 && result.Rotations().All(r => r.IsComplete),
+                $"Three complete rotations were reconstructed ({result.RotationCount})");
+
+            Check(result.Columns.TryGetValue("ArrivalPax", out var arrivalPaxColumn) && arrivalPaxColumn == "L",
+                "The arrival Pax header binds to physical column L");
+
+            Check(result.Columns.TryGetValue("DeparturePax", out var departurePaxColumn) && departurePaxColumn == "R",
+                "The departure Pax header binds to physical column R");
+
+            Check(result.Columns.TryGetValue("AircraftType", out var aircraftColumn) && aircraftColumn == "E" &&
+                  result.Columns.TryGetValue("IcaoCode", out var icaoColumn) && icaoColumn == "F",
+                "Aircraft type and ICAO code are separate columns");
+
+            var columnMap = result.ColumnMapLines();
+            Check(columnMap.Contains("ArrivalPax = L") &&
+                  columnMap.Contains("DeparturePax = R") &&
+                  columnMap.IndexOf("ArrivalPax = L") < columnMap.IndexOf("DeparturePax = R"),
+                "The column map exposes the resolved bindings in sheet order");
+
+            var arrival8 = result.Legs.Single(l =>
+                l.SourceRow == 8 && l.Direction == LegDirection.Arrival);
+
+            Check(arrival8.Airline == "6E" &&
+                  arrival8.Station == "COK" &&
+                  arrival8.AircraftTypeRaw == "320" &&
+                  arrival8.IcaoCodeRaw == "C",
+                "Arrival identity fields are mapped from the correct columns");
+
+            Check(arrival8.HasTime &&
+                  arrival8.MinutesFromMidnight == 610 &&
+                  arrival8.DayOffset == 0,
+                $"Arrival time is 10:10 ({arrival8.MinutesFromMidnight})");
+
+            Check(arrival8.SectorRaw == LegSector.Domestic &&
+                  arrival8.ServiceType == LegServiceType.Passenger &&
+                  arrival8.PaxRaw == 157 &&
+                  Math.Abs((arrival8.LoadFactor ?? 0) - 0.87) < 1e-9,
+                "Arrival sector, service, passengers and load factor are mapped");
+
+            Check(arrival8.TerminalUnresolved &&
+                  arrival8.Issues.Any(i => i.Field == "Terminal" && i.Severity == "Warning"),
+                "An empty cached terminal formula is flagged as unresolved");
+
+            var departure9 = result.Legs.Single(l =>
+                l.SourceRow == 9 && l.Direction == LegDirection.Departure);
+
+            Check(departure9.DayOffset == 1 &&
+                  departure9.MinutesFromMidnight == 370,
+                $"An overnight departure rolls to the next day ({departure9.DayOffset}d {departure9.MinutesFromMidnight}m)");
+
+            var rotation9 = result.Rotations().Single(r => r.Arrival?.SourceRow == 9);
+            Check(rotation9.TurnMinutes == 380,
+                $"The overnight turn is 380 minutes ({rotation9.TurnMinutes})");
+
+            var arrival10 = result.Legs.Single(l =>
+                l.SourceRow == 10 && l.Direction == LegDirection.Arrival);
+
+            Check(arrival10.ServiceType == LegServiceType.Freight &&
+                  arrival10.Terminal == "Cargo",
+                "Freight legs are retained and a cached cargo terminal is preserved");
+
+            var summary = result.CreateSummary();
+
+            Check(summary.SourceRowCount == 3 &&
+                  summary.TotalLegs == 6 &&
+                  summary.ArrivalPax == 377 &&
+                  summary.DeparturePax == 334 &&
+                  summary.TotalPax == 711,
+                $"Summary totals are correct ({summary.ArrivalPax} / {summary.DeparturePax})");
+
+            Check(summary.FreightLegs == 2 &&
+                  summary.PassengerLegs == 4 &&
+                  summary.UnresolvedTerminals == 2 &&
+                  summary.FallbackTerminalLegs == 0 &&
+                  summary.ErrorCount == 0 &&
+                  summary.WarningCount == 2,
+                $"Summary service and quality counts are correct " +
+                $"({summary.FreightLegs} freight, {summary.WarningCount} warnings)");
+
+            Check(result.Legs.All(l => l.Date == "2026-10-19"),
+                "The Base Date is applied to time-only legs");
+
+            var fallbackResult = FlightScheduleParser.Parse(
+                builder.Build(),
+                new ScheduleImportOptions
+                {
+                    SourceFile = "fixture.xlsx",
+                    ScheduleName = "Fixture",
+                    BaseDate = "2026-10-19",
+                    LinkedRows = true,
+                    FallbackTerminal = "T1"
+                });
+
+            var fallbackArrival8 = fallbackResult.Legs.Single(l =>
+                l.SourceRow == 8 && l.Direction == LegDirection.Arrival);
+            var fallbackDeparture8 = fallbackResult.Legs.Single(l =>
+                l.SourceRow == 8 && l.Direction == LegDirection.Departure);
+
+            Check(fallbackArrival8.Terminal == "T1" &&
+                  fallbackArrival8.TerminalSource == TerminalSource.Fallback &&
+                  fallbackArrival8.TerminalIsFallback &&
+                  !fallbackArrival8.TerminalUnresolved &&
+                  !fallbackArrival8.Issues.Any(i => i.Field == "Terminal"),
+                "An unresolved passenger terminal uses the configured fallback");
+
+            Check(fallbackDeparture8.Terminal == "T1" &&
+                  fallbackDeparture8.TerminalSource == TerminalSource.Fallback &&
+                  !fallbackDeparture8.TerminalUnresolved,
+                "The fallback applies independently to both directions");
+
+            var fallbackSummary = fallbackResult.CreateSummary();
+
+            Check(fallbackSummary.FallbackTerminalLegs == 2 &&
+                  fallbackSummary.UnresolvedTerminals == 0 &&
+                  fallbackSummary.WarningCount == 1 &&
+                  fallbackResult.GlobalIssues.Count(i =>
+                      i.Field == "Terminal" &&
+                      i.Severity == "Warning" &&
+                      i.Message.IndexOf("fallback terminal 'T1'", StringComparison.OrdinalIgnoreCase) >= 0) == 1,
+                "A fallback assumption is reported once at workbook level, not per leg");
+
+            var cargoArrival = fallbackResult.Legs.Single(l =>
+                l.SourceRow == 10 && l.Direction == LegDirection.Arrival);
+
+            Check(cargoArrival.Terminal == "Cargo" &&
+                  cargoArrival.TerminalSource == TerminalSource.Workbook &&
+                  cargoArrival.TerminalIsFallback == false,
+                "A cached Cargo terminal remains a workbook value");
+
+            var literalArrival9 = fallbackResult.Legs.Single(l =>
+                l.SourceRow == 9 && l.Direction == LegDirection.Arrival);
+
+            Check(literalArrival9.Terminal == "T1" &&
+                  literalArrival9.TerminalSource == TerminalSource.Workbook &&
+                  !literalArrival9.TerminalIsFallback,
+                "A literal workbook terminal is not marked as fallback");
+
+            var unlinked = FlightScheduleParser.Parse(
+                builder.Build(),
+                new ScheduleImportOptions
+                {
+                    SourceFile = "fixture.xlsx",
+                    ScheduleName = "Fixture",
+                    BaseDate = "2026-10-19",
+                    LinkedRows = false
+                });
+
+            Check(unlinked.RotationCount == unlinked.TotalLegCount,
+                $"Unlinked rows produce one rotation per leg ({unlinked.RotationCount})");
+        }
+
+        private static void RunFlightScheduleEdgeCases()
+        {
+            var builder = new ScheduleFixtureBuilder("Odd Header Sheet", headerRow: 4);
+
+            // Arrival only. The departure side is deliberately absent.
+            builder.AddRow(5, new Dictionary<string, FixtureCell>
+            {
+                ["B"] = FixtureCell.TextCell("ZZ"),
+                ["D"] = FixtureCell.NumberCell(100),
+                ["E"] = FixtureCell.TextCell("320"),
+                ["F"] = FixtureCell.TextCell("C"),
+                ["G"] = FixtureCell.TextCell("DEL"),
+                ["I"] = FixtureCell.TextCell("D"),
+                ["J"] = FixtureCell.TextCell("15:00"),
+                ["L"] = FixtureCell.NumberCell(50),
+                ["S"] = FixtureCell.TextCell("J")
+            });
+
+            // Arrival time is blank, although the row carries arrival data.
+            builder.AddRow(6, new Dictionary<string, FixtureCell>
+            {
+                ["B"] = FixtureCell.TextCell("QQ"),
+                ["C"] = FixtureCell.TextCell("QQ"),
+                ["D"] = FixtureCell.NumberCell(150),
+                ["E"] = FixtureCell.TextCell("320"),
+                ["F"] = FixtureCell.TextCell("C"),
+                ["G"] = FixtureCell.TextCell("BOM"),
+                ["I"] = FixtureCell.TextCell("I"),
+                ["L"] = FixtureCell.NumberCell(80),
+                ["M"] = FixtureCell.TextCell("BLR"),
+                ["N"] = FixtureCell.TextCell("BLR"),
+                ["O"] = FixtureCell.TextCell("I"),
+                ["P"] = FixtureCell.TextCell("16:00"),
+                ["Q"] = FixtureCell.NumberCell(0.80),
+                ["R"] = FixtureCell.NumberCell(70),
+                ["S"] = FixtureCell.TextCell("J"),
+                ["T"] = FixtureCell.TextCell("J")
+            });
+
+            // Invalid arrival time and an uncached departure-time formula.
+            builder.AddRow(7, new Dictionary<string, FixtureCell>
+            {
+                ["B"] = FixtureCell.TextCell("XX"),
+                ["C"] = FixtureCell.TextCell("XX"),
+                ["G"] = FixtureCell.TextCell("AAA"),
+                ["I"] = FixtureCell.TextCell("X"),
+                ["J"] = FixtureCell.TextCell("not a time"),
+                ["L"] = FixtureCell.NumberCell(10),
+                ["M"] = FixtureCell.TextCell("BBB"),
+                ["N"] = FixtureCell.TextCell("BBB"),
+                ["O"] = FixtureCell.TextCell("X"),
+                ["P"] = FixtureCell.FormulaCell("A1+1"),
+                ["R"] = FixtureCell.NumberCell(5),
+                ["S"] = FixtureCell.TextCell("J"),
+                ["T"] = FixtureCell.TextCell("J")
+            });
+
+            // Valid times, but terminal and airline formulas have no usable
+            // cached result.
+            builder.AddRow(8, new Dictionary<string, FixtureCell>
+            {
+                ["B"] = FixtureCell.FormulaCell("VLOOKUP(A1,B:C,2,FALSE)"),
+                ["C"] = FixtureCell.TextCell("YY"),
+                ["G"] = FixtureCell.TextCell("CCC"),
+                ["I"] = FixtureCell.TextCell("D"),
+                ["J"] = FixtureCell.TextCell("08:00"),
+                ["L"] = FixtureCell.NumberCell(20),
+                ["N"] = FixtureCell.TextCell("DDD"),
+                ["O"] = FixtureCell.TextCell("D"),
+                ["P"] = FixtureCell.TextCell("09:00"),
+                ["R"] = FixtureCell.NumberCell(18),
+                ["S"] = FixtureCell.TextCell("J"),
+                ["T"] = FixtureCell.TextCell("J"),
+                ["U"] = FixtureCell.FormulaCell("A1", null, true),
+                ["V"] = FixtureCell.FormulaCell("A1")
+            });
+
+            var result = FlightScheduleParser.Parse(
+                builder.Build(),
+                new ScheduleImportOptions
+                {
+                    SourceFile = "edge.xlsx",
+                    ScheduleName = "Edge",
+                    BaseDate = "2026-10-19",
+                    LinkedRows = true
+                });
+
+            Check(result.HeaderRow == 4,
+                $"A header below the title rows is detected ({result.HeaderRow})");
+
+            Check(result.SourceRowCount == 4,
+                $"Four populated source rows were read ({result.SourceRowCount})");
+
+            Check(result.TotalLegCount == 7,
+                $"A missing side is not manufactured into a leg ({result.TotalLegCount})");
+
+            var loneArrival = result.Legs.Single(l => l.SourceRow == 5);
+            Check(loneArrival.Direction == LegDirection.Arrival &&
+                  result.Rotations().Count(r => r.IsLoneArrival) == 1,
+                "The arrival-only row is reported as a lone arrival");
+
+            var missingTime = result.Legs.Single(l =>
+                l.SourceRow == 6 && l.Direction == LegDirection.Arrival);
+
+            Check(!missingTime.HasTime &&
+                  missingTime.Issues.Any(i => i.Field == "Time" && i.Severity == "Error"),
+                "A blank time is an error, not midnight");
+
+            var invalidTime = result.Legs.Single(l =>
+                l.SourceRow == 7 && l.Direction == LegDirection.Arrival);
+
+            Check(!invalidTime.HasTime &&
+                  invalidTime.Issues.Any(i => i.Field == "Time" && i.Severity == "Error"),
+                "An unreadable time is an error, not midnight");
+
+            var uncachedTime = result.Legs.Single(l =>
+                l.SourceRow == 7 && l.Direction == LegDirection.Departure);
+
+            Check(!uncachedTime.HasTime &&
+                  uncachedTime.Issues.Any(i => i.Field == "Time" && i.Severity == "Error"),
+                "An uncached time formula is an error, not midnight");
+
+            Check(result.CreateSummary().LegsWithoutTime == 3,
+                "Every unusable time is counted without guessing a clock time");
+
+            var terminalLeg = result.Legs.Single(l =>
+                l.SourceRow == 8 && l.Direction == LegDirection.Arrival);
+
+            Check(terminalLeg.TerminalUnresolved &&
+                  terminalLeg.Issues.Any(i => i.Field == "Terminal"),
+                "Both empty and missing cached terminal formula results are flagged");
+
+            Check(terminalLeg.Issues.Any(i =>
+                    i.Field == "Airline" &&
+                    i.Message.IndexOf("cached", StringComparison.OrdinalIgnoreCase) >= 0),
+                "An uncached text formula is reported instead of becoming a silent blank");
+
+            var fallbackEdge = FlightScheduleParser.Parse(
+                builder.Build(),
+                new ScheduleImportOptions
+                {
+                    SourceFile = "edge.xlsx",
+                    ScheduleName = "Edge",
+                    BaseDate = "2026-10-19",
+                    LinkedRows = true,
+                    FallbackTerminal = "T1"
+                });
+
+            var fallbackLoneArrival = fallbackEdge.Legs.Single(l => l.SourceRow == 5);
+
+            Check(fallbackLoneArrival.Terminal == "T1" &&
+                  fallbackLoneArrival.TerminalSource == TerminalSource.Fallback,
+                "A passenger leg with no terminal cell at all receives the fallback");
+
+            var fallbackTerminalLeg = fallbackEdge.Legs.Single(l =>
+                l.SourceRow == 8 && l.Direction == LegDirection.Arrival);
+
+            Check(fallbackTerminalLeg.Terminal == "T1" &&
+                  fallbackTerminalLeg.TerminalSource == TerminalSource.Fallback &&
+                  !fallbackTerminalLeg.TerminalUnresolved &&
+                  !fallbackTerminalLeg.Issues.Any(i => i.Field == "Terminal"),
+                "An uncached terminal formula is resolved by the fallback without a per-leg warning");
+
+            var unlinked = FlightScheduleParser.Parse(
+                builder.Build(),
+                new ScheduleImportOptions
+                {
+                    SourceFile = "edge.xlsx",
+                    BaseDate = "2026-10-19",
+                    LinkedRows = false
+                });
+
+            Check(unlinked.RotationCount == unlinked.TotalLegCount,
+                "Unlinked mode creates one rotation per leg");
+
+            var overrideBuilder = new ScheduleFixtureBuilder("Overrides", headerRow: 4);
+
+            overrideBuilder.AddRow(5, new Dictionary<string, FixtureCell>
+            {
+                ["B"] = FixtureCell.TextCell("OV"),
+                ["C"] = FixtureCell.TextCell("OV"),
+                ["G"] = FixtureCell.TextCell("AAA"),
+                ["I"] = FixtureCell.TextCell("D"),
+                ["J"] = FixtureCell.TextCell("10:00"),
+                ["L"] = FixtureCell.NumberCell(40),
+                ["N"] = FixtureCell.TextCell("BBB"),
+                ["O"] = FixtureCell.TextCell("D"),
+                ["P"] = FixtureCell.TextCell("11:00"),
+                ["R"] = FixtureCell.NumberCell(30),
+                ["S"] = FixtureCell.TextCell("J"),
+                ["T"] = FixtureCell.TextCell("J")
+            });
+
+            overrideBuilder.AddCell(5, "X", FixtureCell.NumberCell(99));
+
+            var overridden = FlightScheduleParser.Parse(
+                overrideBuilder.Build(),
+                new ScheduleImportOptions
+                {
+                    SourceFile = "overrides.xlsx",
+                    BaseDate = "2026-10-19",
+                    ColumnOverrides = new Dictionary<string, string>
+                    {
+                        ["ArrivalPax"] = "X"
+                    }
+                });
+
+            var overriddenArrival = overridden.Legs.Single(l =>
+                l.SourceRow == 5 && l.Direction == LegDirection.Arrival);
+
+            Check(overridden.Columns["ArrivalPax"] == "X" &&
+                  overriddenArrival.PaxRaw == 99,
+                "A column override can bind a physical column without a heading");
+
+            Check(overridden.Legs.Where(l => l.Direction == LegDirection.Arrival)
+                      .All(l => l.PaxRaw == 99),
+                "The override is applied only to the requested field");
+        }
+
+        private static void RunFlightScheduleRotationIdLink()
+        {
+            var builder = new ScheduleFixtureBuilder("Rotation Links", headerRow: 4);
+
+            builder.AddRow(5, new Dictionary<string, FixtureCell>
+            {
+                ["B"] = FixtureCell.TextCell("RL"),
+                ["D"] = FixtureCell.NumberCell(180),
+                ["E"] = FixtureCell.TextCell("320"),
+                ["F"] = FixtureCell.TextCell("C"),
+                ["G"] = FixtureCell.TextCell("AAA"),
+                ["I"] = FixtureCell.TextCell("D"),
+                ["J"] = FixtureCell.TextCell("23:30"),
+                ["L"] = FixtureCell.NumberCell(60),
+                ["S"] = FixtureCell.TextCell("J"),
+                ["X"] = FixtureCell.TextCell("T1")
+            });
+
+            builder.AddRow(6, new Dictionary<string, FixtureCell>
+            {
+                ["C"] = FixtureCell.TextCell("RL"),
+                ["D"] = FixtureCell.NumberCell(180),
+                ["E"] = FixtureCell.TextCell("320"),
+                ["F"] = FixtureCell.TextCell("C"),
+                ["N"] = FixtureCell.TextCell("BBB"),
+                ["O"] = FixtureCell.TextCell("D"),
+                ["P"] = FixtureCell.TextCell("06:15"),
+                ["Q"] = FixtureCell.NumberCell(0.80),
+                ["R"] = FixtureCell.NumberCell(55),
+                ["T"] = FixtureCell.TextCell("J"),
+                ["X"] = FixtureCell.TextCell("T1")
+            });
+
+            var result = FlightScheduleParser.Parse(
+                builder.Build(),
+                new ScheduleImportOptions
+                {
+                    SourceFile = "rotation-links.xlsx",
+                    BaseDate = "2026-10-19",
+                    LinkedRows = true,
+                    ColumnOverrides = new Dictionary<string, string>
+                    {
+                        ["RotationId"] = "X"
+                    }
+                });
+
+            var rotation = result.Rotations().Single();
+
+            Check(result.SourceRowCount == 2 &&
+                  result.TotalLegCount == 2 &&
+                  result.RotationCount == 1 &&
+                  rotation.IsComplete,
+                "A shared rotation ID links split arrival and departure rows");
+
+            Check(result.Legs.All(l => l.RotationId == "T1") &&
+                  result.Columns["RotationId"] == "X",
+                "The rotation ID is preserved and its physical column is reported");
+
+            Check(rotation.TurnMinutes == 405,
+                $"A cross-row overnight turn uses the next day ({rotation.TurnMinutes})");
+        }
+
+        private static void RunRealScheduleIntegration()
+        {
+            const string schedulePath = @"N:\ZZ_TRANSFER\261019_Archive\25mppa Schedule.xlsx";
+
+            if (!File.Exists(schedulePath))
+            {
+                Console.WriteLine(
+                    $"  SKIP: optional real-schedule integration test; not found at {schedulePath}");
+                return;
+            }
+
+            var result = FlightScheduleParser.Parse(
+                File.ReadAllBytes(schedulePath),
+                new ScheduleImportOptions
+                {
+                    SourceFile = schedulePath,
+                    ScheduleName = "25mppa Schedule",
+                    SheetName = string.Empty,
+                    BaseDate = string.Empty,
+                    LinkedRows = true
+                });
+
+            Check(result.SheetName == "26mppa Schedule",
+                $"Real schedule: actual worksheet is reported ({result.SheetName})");
+
+            Check(result.SourceRowCount == 292 &&
+                  result.TotalLegCount == 582 &&
+                  result.ArrivalCount == 291 &&
+                  result.DepartureCount == 291 &&
+                  result.RotationCount == 292,
+                $"Real schedule: {result.SourceRowCount} rows / {result.TotalLegCount} legs / {result.RotationCount} rotations");
+
+            var summary = result.CreateSummary();
+
+            Console.WriteLine(
+                $"  Real schedule summary: {summary.SourceRowCount} rows, " +
+                $"{summary.TotalLegs} legs ({summary.CompleteRotationCount} complete, " +
+                $"{summary.LoneArrivalCount} lone arrivals, {summary.LoneDepartureCount} lone departures), " +
+                $"{summary.ArrivalPax} arrival pax, {summary.DeparturePax} departure pax, " +
+                $"{summary.PassengerLegs} passenger, {summary.FreightLegs} freight, " +
+                $"{summary.UnresolvedTerminals} unresolved terminals, {summary.WarningCount} warnings");
+
+            Check(summary.ArrivalPax == 41653 &&
+                  summary.DeparturePax == 40917 &&
+                  summary.TotalPax == 82570,
+                $"Real schedule: passenger totals are correct ({summary.ArrivalPax} / {summary.DeparturePax})");
+
+            Check(summary.FreightLegs > 0 &&
+                  summary.PassengerLegs > 0 &&
+                  summary.ArrivalDomestic > 0 &&
+                  summary.ArrivalInternational > 0,
+                "Real schedule: passenger, freight, domestic and international legs are present");
+
+            Check(result.Legs.All(l => !string.IsNullOrWhiteSpace(l.IcaoCodeRaw)) &&
+                  result.Legs.All(l => !string.IsNullOrWhiteSpace(l.AircraftTypeRaw)),
+                "Real schedule: aircraft type and ICAO code are populated separately");
+
+            Check(summary.UnresolvedTerminals > 0 &&
+                  summary.FallbackTerminalLegs == 0,
+                $"Real schedule: uncached terminal formulas are flagged when no fallback is set " +
+                $"({summary.UnresolvedTerminals} legs)");
+
+            var fallbackResult = FlightScheduleParser.Parse(
+                File.ReadAllBytes(schedulePath),
+                new ScheduleImportOptions
+                {
+                    SourceFile = schedulePath,
+                    ScheduleName = "25mppa Schedule",
+                    SheetName = string.Empty,
+                    BaseDate = string.Empty,
+                    LinkedRows = true,
+                    FallbackTerminal = "T1"
+                });
+
+            var fallbackSummary = fallbackResult.CreateSummary();
+
+            Console.WriteLine(
+                $"  Real schedule fallback: {fallbackSummary.FallbackTerminalLegs} fallback terminals, " +
+                $"{fallbackSummary.CargoTerminalLegs} cargo terminals, " +
+                $"{fallbackSummary.UnresolvedTerminals} unresolved, {fallbackSummary.WarningCount} warnings");
+
+            Check(fallbackSummary.FallbackTerminalLegs == 562 &&
+                  fallbackSummary.UnresolvedTerminals == 0 &&
+                  fallbackSummary.CargoTerminalLegs == 20,
+                $"Real schedule: the T1 fallback resolves every passenger terminal " +
+                $"({fallbackSummary.FallbackTerminalLegs} fallback, {fallbackSummary.CargoTerminalLegs} cargo)");
+
+            Check(fallbackResult.Legs
+                    .Where(l => l.ServiceType == LegServiceType.Passenger)
+                    .All(l => l.Terminal == "T1" && l.TerminalSource == TerminalSource.Fallback),
+                "Real schedule: every passenger leg carries the explicit fallback terminal");
+
+            Check(fallbackResult.Legs
+                    .Where(l => l.ServiceType == LegServiceType.Freight)
+                    .All(l => l.Terminal == "Cargo" && !l.TerminalIsFallback),
+                "Real schedule: every freight leg keeps Cargo rather than the passenger fallback");
+
+            Check(fallbackSummary.WarningCount == 1 &&
+                  fallbackSummary.ErrorCount == 0 &&
+                  fallbackResult.GlobalIssues.Count(i =>
+                      i.Field == "Terminal" &&
+                      i.Message.IndexOf("fallback terminal 'T1'", StringComparison.OrdinalIgnoreCase) >= 0) == 1,
+                $"Real schedule: the fallback is reported once, not as 562 warnings " +
+                $"({fallbackSummary.WarningCount} warning)");
+
+            var errors = result.GlobalIssues
+                .Where(i => i.Severity == "Error")
+                .Select(i => $"Workbook · {i.Field}: {i.Message}")
+                .Concat(result.Legs.SelectMany(l => l.Issues
+                    .Where(i => i.Severity == "Error")
+                    .Select(i => $"Row {l.SourceRow} {l.Direction} · {i.Field}: {i.Message}")))
+                .ToList();
+
+            foreach (var error in errors)
+                Console.WriteLine($"  Real schedule error: {error}");
+
+            Check(errors.Count == 0,
+                $"Real schedule: no blocking parse errors ({errors.Count})");
         }
 
         // -------------------------------------------------------------

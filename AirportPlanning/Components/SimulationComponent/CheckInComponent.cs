@@ -9,7 +9,6 @@ using Grasshopper.Kernel;
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace AirportPlanning.Components.SimulationComponent
 {
@@ -42,32 +41,42 @@ namespace AirportPlanning.Components.SimulationComponent
 
             pManager.AddNumberParameter("Random Seed", "S", "Random number seed.", GH_ParamAccess.item, 1);
 
-            pManager.AddTextParameter("Channels", "CH", "Optional channels. Empty keeps one shared pool; otherwise each channel gets its own dedicated pool sized independently.", GH_ParamAccess.list);
+            pManager.AddTextParameter("Channels", "CH", "Optional physical-channel allowlist. If empty and Channel Routing is wired, channels are taken directly from CHR and virtual routes such as Web are skipped automatically. BagDrop is treated as a regular physical channel alongside Counter.", GH_ParamAccess.list);
             pManager[7].Optional = true;
 
-            pManager.AddGenericParameter("Service Profiles", "SP-MAP", "Optional per-passenger service-time map (Service Time Map). Supersedes Service Profile when wired. Keys may be a profile name, a channel name, or 'profile|channel'.", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Service Profiles", "SP-MAP", "Optional per-passenger service-time map (Service Time Map). Supersedes Service Profile when wired. Keys may use 'Channel|DHPType|ProfileName' (same as a Pool Plan identity), a profile name, a channel name, or 'profile|channel'.", GH_ParamAccess.item);
             pManager[8].Optional = true;
 
             pManager.AddIntervalParameter("Resource Domain", "RD", "Inclusive bounds for the optimizer's physical-counter search, broadcast to every channel. Default 1 to 1200.", GH_ParamAccess.item, new Interval(1, ChannelResourcePlanResolver.DefaultMaxResources));
             pManager[9].Optional = true;
+
+            pManager.AddGenericParameter("Channel Routing", "CHR", "Optional Channel Routing map. When Channels is unwired, its route names define the Check-In pools; passengers are matched using their CHR-assigned Channel.", GH_ParamAccess.item);
+            pManager[10].Optional = true;
+
+            pManager.AddGenericParameter("Pool Plans", "PP", "Optional keyed pool plans (Pool Plans component). When wired, they define each pool's nominal resources, target wait and resource domain.", GH_ParamAccess.list);
+            pManager[11].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
             pManager.AddGenericParameter("Passengers", "P", "Processed passenger population after check-in.", GH_ParamAccess.list);
-            pManager.AddGenericParameter("Check-In Passengers", "CP", "Passengers that required check-in.", GH_ParamAccess.list);
+            pManager.AddGenericParameter("Check-In Passengers", "CP", "Passengers served by the configured physical Check-In processor pools.", GH_ParamAccess.list);
             pManager.AddGenericParameter("Queue Results", "QR", "Complete check-in simulation results.", GH_ParamAccess.item);
-            pManager.AddIntegerParameter("Counters Used", "C", "Total physical counters across every pool.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Counters Used", "C", "Total physical processor resources across all configured Check-In pools.", GH_ParamAccess.item);
             pManager.AddIntegerParameter("Peak Queue Length", "PQ", "Maximum queue length observed during the simulation.", GH_ParamAccess.item);
             pManager.AddNumberParameter("Average Wait", "AW", "Average passenger waiting time (minutes).", GH_ParamAccess.item);
             pManager.AddNumberParameter("Maximum Wait", "MW", "Maximum passenger waiting time (minutes).", GH_ParamAccess.item);
             pManager.AddNumberParameter("95th Percentile Wait", "W95", "Whole-run 95th percentile passenger waiting time in minutes (warm-up excluded). This is the value the Target Wait applies to.", GH_ParamAccess.item);
-            pManager.AddNumberParameter("Counter Utilization", "U", "Utilization of each check-in counter.", GH_ParamAccess.list);
-            pManager.AddTextParameter("Pool Names", "PN", "Pool names in output order: each dedicated channel, or 'Shared' for a single pool.", GH_ParamAccess.list);
-            pManager.AddIntegerParameter("Physical per Pool", "CPP", "Physical counters per pool, in output order.", GH_ParamAccess.list);
-            pManager.AddIntegerParameter("Active per Pool", "CAP", "Staffed counters per pool, in output order.", GH_ParamAccess.list);
+            pManager.AddNumberParameter("Counter Utilization", "U", "Utilization of each processor resource across configured pools.", GH_ParamAccess.list);
+            pManager.AddTextParameter("Pool Names", "PN", "Pool names in output order: each channel, or Channel|DHPType|ProfileName for subdivided pools.", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Physical per Pool", "CPP", "Physical processor resources per pool, in output order.", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Active per Pool", "CAP", "Staffed processor resources per pool, in output order.", GH_ParamAccess.list);
             pManager.AddNumberParameter("Wait 95 per Pool", "WPP", "Whole-run 95th percentile wait per pool, in output order.", GH_ParamAccess.list);
             pManager.AddGenericParameter("Search Outcomes", "SO", "Optimizer search outcomes per pool, including every (capacity, Wait95) point evaluated. Feed an Optimizer Chart.", GH_ParamAccess.list);
+            pManager.AddTextParameter("Channel Names", "CN", "Unique configured service channels, in order.", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Physical by Channel", "PCH", "Total physical processor resources per service channel. Counter includes the sum of its sector/class sub-pools.", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Active by Channel", "ACH", "Total staffed processor resources per service channel.", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Nominal per Pool", "NPP", "Nominal (PNR) physical processor resources per pool, before optimization.", GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -80,7 +89,9 @@ namespace AirportPlanning.Components.SimulationComponent
             double staffingPercentage = 100.0;
             double seedDbl = 1.0;
             List<string> channels = new List<string>();
+            object rawChannelRouting = null;
             object rawServiceProfiles = null;
+            List<object> rawPoolPlans = new List<object>();
             Interval domain = Interval.Unset;
 
             if (!DA.GetDataList(0, inPassengers)) return;
@@ -93,9 +104,14 @@ namespace AirportPlanning.Components.SimulationComponent
             DA.GetDataList(7, channels);
             DA.GetData(8, ref rawServiceProfiles);
             DA.GetData(9, ref domain);
+            DA.GetData(10, ref rawChannelRouting);
+            DA.GetDataList(11, rawPoolPlans);
 
             IServiceTimeProvider serviceTimeProvider =
                 ComponentDataHelpers.Unwrap<IServiceTimeProvider>(rawServiceProfiles);
+            ProfileChannelMap channelRouting =
+                ComponentDataHelpers.Unwrap<ProfileChannelMap>(rawChannelRouting);
+            List<PoolPlan> poolPlans = UnwrapPoolPlans(rawPoolPlans);
 
             CheckInInputs input = new CheckInInputs
             {
@@ -103,7 +119,9 @@ namespace AirportPlanning.Components.SimulationComponent
                 ServiceProfile = serviceProfile,
                 ServiceTimeProvider = serviceTimeProvider,
                 Channels = channels,
+                ChannelRouting = channelRouting,
                 PhysicalResources = ToIntList(countersDbl, "Physical Counters"),
+                PoolPlans = poolPlans,
                 OptimizeResources = optimize,
                 TargetWait95 = targetWaits,
                 Seed = (int)Math.Round(seedDbl),
@@ -118,9 +136,11 @@ namespace AirportPlanning.Components.SimulationComponent
 
             QueueResults results = finalResult.QueueResults;
 
-            List<string> poolNames = FacilityComponentInput.GetPoolNames(channels);
-            List<double> waitPerPool = FacilityComponentInput.GetWaitPerPool(
-                finalResult.Wait95PerChannel, results, channels);
+            // Pool names already carry the Channel|PoolKey identity from the solver,
+            // so dedicated sub-pools show as "Counter|DomesticDeparture|Economy" etc.
+            List<string> poolNames = finalResult.PoolNames;
+            List<double> waitPerPool = FacilityComponentInput.GetWaitForPools(
+                finalResult.Wait95PerChannel, results, poolNames);
 
             DA.SetDataList(0, results.Passengers);
             DA.SetDataList(1, results.ProcessedPassengers);
@@ -136,6 +156,10 @@ namespace AirportPlanning.Components.SimulationComponent
             DA.SetDataList(11, finalResult.ActivePerChannel);
             DA.SetDataList(12, waitPerPool);
             DA.SetDataList(13, finalResult.SearchOutcomes ?? new List<ResourceSearchOutcome>());
+            DA.SetDataList(14, finalResult.ChannelNames);
+            DA.SetDataList(15, finalResult.PhysicalPerChannelTotal);
+            DA.SetDataList(16, finalResult.ActivePerChannelTotal);
+            DA.SetDataList(17, finalResult.NominalPerChannel);
         }
 
         private static List<int> ToIntList(List<double> values, string label)
@@ -153,6 +177,23 @@ namespace AirportPlanning.Components.SimulationComponent
             }
 
             return result;
+        }
+
+        private static List<PoolPlan> UnwrapPoolPlans(List<object> raw)
+        {
+            List<PoolPlan> plans = new List<PoolPlan>();
+
+            if (raw == null)
+                return plans;
+
+            foreach (object item in raw)
+            {
+                PoolPlan plan = ComponentDataHelpers.Unwrap<PoolPlan>(item);
+                if (plan != null)
+                    plans.Add(plan);
+            }
+
+            return plans;
         }
 
         protected override System.Drawing.Bitmap Icon { get { return null; } }

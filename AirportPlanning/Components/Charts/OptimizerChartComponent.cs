@@ -15,17 +15,19 @@ namespace AirportPlanning.Components.Charts
     /// Takes the <c>Search Outcomes</c> output of any facility solver, so it
     /// works unchanged for check-in, bag drop, security and immigration, and
     /// draws one line per pool when the facility was solved per channel.
+    /// Pools are labelled with their full Pool Plan identity, so two sub-pools
+    /// of the same channel stay distinguishable.
     /// </summary>
     public class OptimizerChartComponent : GH_Component
     {
         public OptimizerChartComponent()
           : base("Optimizer Chart", "OptChart",
-            "Plots the capacity search behind processor allocation: Wait95 against server count, with the target wait and the selected capacity marked.",
+            "Plots the capacity search behind processor allocation: Wait95 against server count, with the target wait and the selected capacity marked. Labelled by full pool identity.",
             "Airport Planning", "Charts")
         {
         }
 
-        protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
+        protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
             pManager.AddGenericParameter(
                 "Search Outcomes", "SO",
@@ -44,12 +46,22 @@ namespace AirportPlanning.Components.Charts
                 GH_ParamAccess.item, false);
         }
 
-        protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
+        protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
             pManager.AddGenericParameter(
                 "Chart", "C",
                 "Rendered chart bitmap.",
                 GH_ParamAccess.item);
+
+            pManager.AddTextParameter(
+                "Summary", "S",
+                "Per-pool search result: identity, selected capacity, Wait95, target and success.",
+                GH_ParamAccess.list);
+
+            pManager.AddTextParameter(
+                "Chart Data", "D",
+                "CSV rows (pool,poolKey,capacity,wait95,target,selected) for every evaluated point.",
+                GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -96,6 +108,8 @@ namespace AirportPlanning.Components.Charts
             }
 
             DA.SetData(0, chart);
+            DA.SetDataList(1, BuildSummary(usable));
+            DA.SetDataList(2, BuildData(usable));
         }
 
         private static PlotModel BuildModel(
@@ -108,7 +122,7 @@ namespace AirportPlanning.Components.Charts
                 return ChartRenderer.CreateMultiPoolOptimizerModel(
                     outcomes,
                     string.IsNullOrWhiteSpace(title)
-                        ? "Optimizer Search by Channel"
+                        ? "Optimizer Search by Pool"
                         : title);
             }
 
@@ -121,7 +135,81 @@ namespace AirportPlanning.Components.Charts
                 target,
                 string.IsNullOrWhiteSpace(title)
                     ? "Optimizer Search: Wait95 vs Server Count"
-                    : title);
+                    : title,
+                only.Plan);
+        }
+
+        private static string PoolName(ResourceSearchOutcome outcome)
+        {
+            if (outcome?.Plan == null)
+                return "Shared";
+
+            return outcome.Plan.IsSharedPool ? "Shared" : outcome.Plan.PoolIdentity;
+        }
+
+        private static string PoolKey(ResourceSearchOutcome outcome)
+        {
+            return outcome?.Plan != null && !string.IsNullOrWhiteSpace(outcome.Plan.PoolKey)
+                ? outcome.Plan.PoolKey
+                : "";
+        }
+
+        private static List<string> BuildSummary(List<ResourceSearchOutcome> outcomes)
+        {
+            List<string> summary = new List<string>
+            {
+                $"{outcomes.Count} pool(s) searched · {outcomes.Sum(o => Math.Max(0, o.Iterations))} candidate(s) evaluated"
+            };
+
+            foreach (ResourceSearchOutcome outcome in outcomes)
+            {
+                string range = outcome.Plan?.Range != null
+                    ? outcome.Plan.Range.Normalized().ToString()
+                    : "n/a";
+
+                string target = outcome.Plan != null && outcome.Plan.TargetWait95 > 0.0
+                    ? ChartText.Number(outcome.Plan.TargetWait95)
+                    : "none";
+
+                summary.Add(
+                    $"{PoolName(outcome)}: selected {outcome.OptimalPhysicalResources} physical/" +
+                    $"{outcome.OptimalActiveResources} active; W95 {ChartText.Number(outcome.Wait95)}; " +
+                    $"target {target}; domain {range}; iterations {outcome.Iterations}; " +
+                    $"{(outcome.Success ? "target met" : "target missed")}");
+            }
+
+            return summary;
+        }
+
+        private static List<string> BuildData(List<ResourceSearchOutcome> outcomes)
+        {
+            List<string> rows = new List<string>
+            {
+                "pool,poolKey,capacity,wait95,target,selected"
+            };
+
+            foreach (ResourceSearchOutcome outcome in outcomes)
+            {
+                if (outcome?.SearchTrace == null)
+                    continue;
+
+                double target = outcome.Plan != null ? outcome.Plan.TargetWait95 : 0.0;
+
+                foreach (SearchTracePoint point in outcome.SearchTrace
+                    .Where(p => p != null)
+                    .OrderBy(p => p.Capacity))
+                {
+                    rows.Add(ChartText.Row(
+                        PoolName(outcome),
+                        PoolKey(outcome),
+                        point.Capacity.ToString(),
+                        ChartText.Number(point.Wait95),
+                        ChartText.Number(target),
+                        point.Capacity == outcome.OptimalPhysicalResources ? "1" : "0"));
+                }
+            }
+
+            return rows;
         }
 
         protected override Bitmap Icon { get { return null; } }

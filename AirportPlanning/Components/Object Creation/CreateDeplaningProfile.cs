@@ -48,6 +48,17 @@ namespace AirportPlanning.Components.Object_Creation
                 "W60", "W60",
                 "Share of the landed peak hour in its busiest 60 minutes (%). Always 100%.",
                 GH_ParamAccess.item, 100.0);
+
+            pManager.AddBooleanParameter(
+                "Use Airport Size Preset", "AUTO",
+                "Prefill the authored deplaning profile from target annual mppa: " +
+                "Small <= 10, Medium <= 25, Large above 25. The shares remain editable afterwards.",
+                GH_ParamAccess.item, false);
+
+            pManager.AddNumberParameter(
+                "Target Annual MPPA", "MPPA",
+                "Target annual passenger throughput in millions, used only when Airport Size Preset is on.",
+                GH_ParamAccess.item, 25.0);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -61,6 +72,12 @@ namespace AirportPlanning.Components.Object_Creation
                 "Validation", "V",
                 "Validation messages. Empty when the shape is valid.",
                 GH_ParamAccess.list);
+
+            pManager.AddTextParameter(
+                "Source", "SRC",
+                "Whether the preset came from target airport size or was entered manually. " +
+                "The report labels the size presets as authored assumptions.",
+                GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -70,24 +87,49 @@ namespace AirportPlanning.Components.Object_Creation
             double w15 = 25.0;
             double w30 = 50.0;
             double w60 = 100.0;
+            bool useAirportSize = false;
+            double targetMppa = 25.0;
 
             if (!DA.GetData(0, ref preset)) return;
             DA.GetData(1, ref name);
             DA.GetData(2, ref w15);
             DA.GetData(3, ref w30);
             DA.GetData(4, ref w60);
+            DA.GetData(5, ref useAirportSize);
+            DA.GetData(6, ref targetMppa);
 
-            DeplaningProfile profile = DeplaningProfile.FromPreset(preset);
+            string source;
+            DeplaningProfile profile;
 
-            if (profile == null)
+            if (useAirportSize)
             {
-                string label = string.IsNullOrWhiteSpace(name) ? "Custom" : name.Trim();
+                profile = DeplaningProfile.FromAirportSize(targetMppa);
+                source = $"Airport size preset: {profile.Name} (target {targetMppa:0.##} mppa)";
 
-                profile = new DeplaningProfile(
-                    label,
-                    w15 / 100.0,
-                    w30 / 100.0,
-                    w60 / 100.0);
+                if (targetMppa <= 0.0)
+                {
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Warning,
+                        "No target annual mppa supplied; using the Medium default.");
+                }
+            }
+            else
+            {
+                profile = DeplaningProfile.FromPreset(preset);
+                source = "Manual or fixed preset";
+
+                if (profile == null)
+                {
+                    string label = string.IsNullOrWhiteSpace(name) ? "Custom" : name.Trim();
+
+                    profile = new DeplaningProfile(
+                        label,
+                        w15 / 100.0,
+                        w30 / 100.0,
+                        w60 / 100.0);
+
+                    source = "Manual custom values";
+                }
             }
 
             List<string> errors = profile.GetValidationErrors();
@@ -97,6 +139,7 @@ namespace AirportPlanning.Components.Object_Creation
 
             DA.SetData(0, profile);
             DA.SetDataList(1, errors);
+            DA.SetData(2, source);
         }
 
         protected override System.Drawing.Bitmap Icon { get { return null; } }

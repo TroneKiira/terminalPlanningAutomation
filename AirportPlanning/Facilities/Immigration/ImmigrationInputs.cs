@@ -40,6 +40,13 @@ namespace AirportPlanning.Facilities.Immigration
         public ResourceSearchRange ResourceDomain { get; set; } =
             new ResourceSearchRange(1, ChannelResourcePlanResolver.DefaultMaxResources);
 
+        /// <summary>
+        /// Keyed pool plans (PNR, PTW, PDomain per pool). When supplied, these
+        /// take precedence over the legacy PhysicalResources/TargetWait95 lists
+        /// and are matched to resolved pools by Channel identity.
+        /// </summary>
+        public List<PoolPlan> PoolPlans { get; set; } = new List<PoolPlan>();
+
         public bool OptimizeResources { get; set; }
 
         public int Seed { get; set; }

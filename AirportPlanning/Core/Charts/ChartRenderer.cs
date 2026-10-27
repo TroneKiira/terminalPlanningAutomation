@@ -1,4 +1,5 @@
 using AirportPlanning.Core.Distributions;
+using AirportPlanning.Core.Generation;
 using AirportPlanning.Core.Inputs;
 using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Queueing;
@@ -120,7 +121,8 @@ namespace AirportPlanning.Core.Charts
         public static PlotModel CreateOptimizerSearchModel(
             List<SearchTracePoint> trace,
             double targetWait95,
-            string title = "Optimizer Search: Wait95 vs Server Count")
+            string title = "Optimizer Search: Wait95 vs Server Count",
+            ChannelResourcePlan plan = null)
         {
             PlotModel model = NewPlot(title, "Physical servers", "Wait95 (minutes)");
 
@@ -128,6 +130,9 @@ namespace AirportPlanning.Core.Charts
 
             if (samples.Count == 0)
                 return model;
+
+            if (plan != null)
+                model.Subtitle = DescribePlan(plan);
 
             int minCapacity = samples.Min(p => p.Capacity);
             int maxCapacity = samples.Max(p => p.Capacity);
@@ -214,6 +219,14 @@ namespace AirportPlanning.Core.Charts
             if (pools.Count == 0)
                 return model;
 
+            int targeted = pools.Count(o => o.Plan != null && o.Plan.TargetWait95 > 0.0);
+            int met = pools.Count(o => o.Plan != null && o.Plan.TargetWait95 > 0.0 && o.Success);
+            int evaluated = pools.Sum(o => Math.Max(0, o.Iterations));
+
+            model.Subtitle = targeted > 0
+                ? $"{pools.Count} pool(s) · {met}/{targeted} met target · {evaluated} candidate(s) evaluated"
+                : $"{pools.Count} pool(s) · {evaluated} candidate(s) evaluated · no target set";
+
             int index = 0;
 
             foreach (ResourceSearchOutcome outcome in pools)
@@ -226,7 +239,7 @@ namespace AirportPlanning.Core.Charts
                 OxyColor color = Palette[index % Palette.Length];
 
                 string name = outcome.Plan != null && !outcome.Plan.IsSharedPool
-                    ? outcome.Plan.Channel
+                    ? outcome.Plan.PoolIdentity
                     : "Shared";
 
                 LineSeries curve = new LineSeries
@@ -341,6 +354,13 @@ namespace AirportPlanning.Core.Charts
 
             double bandTop = peakValue > 0 ? peakValue : 1.0;
 
+            model.Subtitle = string.Format(
+                "{0} simulation(s) · {1} passengers · peak {2} pax/min at minute {3}",
+                sources.Count,
+                totals.Values.Sum(),
+                peakValue,
+                peakMinute);
+
             AddSpanBand(model, warmUpMinutes, OxyColor.FromAColor(38, Palette[7]), "Warm-up", bandTop);
             AddSpanBand(model, designMinutes, OxyColor.FromAColor(38, Palette[1]), "Design hour", bandTop);
 
@@ -447,12 +467,16 @@ namespace AirportPlanning.Core.Charts
                 buckets[minute] = running + 1;
             }
 
+            model.Subtitle = string.Format(
+                "{0} passengers · {1} type(s) · warm-up excluded",
+                passengers.Count(p => p != null && !p.IsWarmUp),
+                byType.Count);
+
             int index = 0;
 
             foreach (KeyValuePair<string, Dictionary<int, int>> entry in byType)
             {
                 List<int> minutes = entry.Value.Keys.OrderBy(m => m).ToList();
-
                 if (minutes.Count == 0)
                     continue;
 
@@ -506,12 +530,14 @@ namespace AirportPlanning.Core.Charts
             QueueResults results,
             string title = "Queuing Model: Cumulative Arrivals vs Departures")
         {
-            PlotModel model = NewPlot(title, "Minute of analysis window", "Cumulative passengers");
+            PlotModel model = NewPlot(title, "Simulation minute", "Cumulative passengers");
 
             List<QueueCumulativePoint> flow = GetFlow(results);
 
             if (flow.Count == 0)
                 return model;
+
+            model.Subtitle = BuildQueueSubtitle(results);
 
             int activeCount = GetActiveServerCount(results);
 
@@ -597,12 +623,46 @@ namespace AirportPlanning.Core.Charts
             QueueResults results,
             string title = "Queuing Model: Queue Length Over Time")
         {
-            PlotModel model = NewPlot(title, "Minute of analysis window", "Passengers waiting");
+            PlotModel model = NewPlot(title, "Simulation minute", "Passengers waiting");
 
             List<QueueTimelinePoint> timeline = GetTimeline(results);
+            List<QueueCumulativePoint> flow = GetFlow(results);
 
             if (timeline.Count == 0)
+            {
+                // A run where nobody waited is not missing data. Draw the zero
+                // queue across the arrival window so the chart states the result
+                // instead of rendering an empty frame.
+                if (flow.Count == 0)
+                    return model;
+
+                model.Subtitle = BuildQueueSubtitle(results) + " · no passenger waited";
+
+                LineSeries empty = new LineSeries
+                {
+                    Title = "Passengers waiting (none)",
+                    Color = Palette[0],
+                    StrokeThickness = 2.5,
+                    MarkerType = MarkerType.None,
+                    CanTrackerInterpolatePoints = false,
+                    TrackerFormatString = "minute {2:0}\nno passenger waiting"
+                };
+
+                double emptyStart = flow[0].Time;
+                double emptyEnd = flow[flow.Count - 1].Time;
+
+                empty.Points.Add(new DataPoint(emptyStart, 0.0));
+
+                if (emptyEnd > emptyStart)
+                    empty.Points.Add(new DataPoint(emptyEnd, 0.0));
+
+                model.Series.Add(empty);
+                AddLegend(model);
+
                 return model;
+            }
+
+            model.Subtitle = BuildQueueSubtitle(results);
 
             ShadeDesignStep(model, results);
 
@@ -620,8 +680,6 @@ namespace AirportPlanning.Core.Charts
             // begin above zero. Anchoring it to the start of the reported window
             // shows the queue building from empty, which is the honest reading.
             double windowStart = timeline[0].Time;
-
-            List<QueueCumulativePoint> flow = GetFlow(results);
 
             if (flow.Count > 0)
                 windowStart = Math.Min(windowStart, flow[0].Time);
@@ -657,6 +715,236 @@ namespace AirportPlanning.Core.Charts
             AddLegend(model);
 
             return model;
+        }
+
+        /// <summary>
+        /// Queue history for dedicated pools, one series per pool. Use this when
+        /// a facility splits its queue by channel or sector/profile: the merged
+        /// facility chart shows one queue, while this shows each independent
+        /// queue that produced it.
+        ///
+        /// <paramref name="cumulative"/> switches between waiting passengers per
+        /// pool and the cumulative arrival/departure pair per pool. Pool
+        /// identities match the solver's Pool Names output exactly.
+        /// </summary>
+        public static PlotModel CreatePoolQueueModel(
+            IEnumerable<QueuePoolResult> pools,
+            bool cumulative = false,
+            string title = "Queues by Pool")
+        {
+            PlotModel model = NewPlot(
+                title,
+                "Simulation minute",
+                cumulative ? "Cumulative passengers" : "Passengers waiting");
+
+            List<QueuePoolResult> sources = Normalize(pools);
+
+            if (sources.Count == 0)
+                return model;
+
+            model.Subtitle = string.Format(
+                "{0} pool(s) · {1} passengers · warm-up excluded",
+                sources.Count,
+                sources.Sum(p => p.PassengerCount));
+
+            // If every plotted pool stopped receiving passengers by the clock
+            // origin, say so. Otherwise a flat line after minute 0 looks like
+            // missing queue data when it is simply an empty arrival stream.
+            double lastArrival = sources
+                .Where(p => !double.IsNaN(p.LastArrivalTime))
+                .Select(p => p.LastArrivalTime)
+                .DefaultIfEmpty(double.NaN)
+                .Max();
+
+            if (!double.IsNaN(lastArrival) && lastArrival <= 0.0)
+                model.Subtitle += " · no arrivals after minute 0";
+
+            int index = 0;
+
+            foreach (QueuePoolResult pool in sources)
+            {
+                OxyColor color = Palette[index % Palette.Length];
+
+                if (cumulative)
+                {
+                    List<QueueCumulativePoint> flow = pool.CumulativeFlow != null
+                        ? pool.CumulativeFlow
+                            .Where(p => p != null && !double.IsNaN(p.Time))
+                            .OrderBy(p => p.Time)
+                            .ToList()
+                        : new List<QueueCumulativePoint>();
+
+                    if (flow.Count == 0)
+                    {
+                        index++;
+                        continue;
+                    }
+
+                    LineSeries arrivals = new LineSeries
+                    {
+                        Title = $"{pool.Name} arrivals",
+                        Color = color,
+                        StrokeThickness = 2,
+                        MarkerType = MarkerType.None,
+                        CanTrackerInterpolatePoints = false,
+                        TrackerFormatString =
+                            $"{pool.Name}\nminute {{2:0}}\narrived {{Y:0}}"
+                    };
+
+                    LineSeries departures = new LineSeries
+                    {
+                        Title = $"{pool.Name} departures",
+                        Color = color,
+                        StrokeThickness = 1.5,
+                        LineStyle = LineStyle.Dash,
+                        MarkerType = MarkerType.None,
+                        CanTrackerInterpolatePoints = false,
+                        TrackerFormatString =
+                            $"{pool.Name}\nminute {{2:0}}\nserved {{Y:0}}"
+                    };
+
+                    foreach (QueueCumulativePoint point in flow)
+                    {
+                        arrivals.Points.Add(new DataPoint(point.Time, point.CumulativeArrivals));
+                        departures.Points.Add(new DataPoint(point.Time, point.CumulativeDepartures));
+                    }
+
+                    model.Series.Add(arrivals);
+                    model.Series.Add(departures);
+                }
+                else
+                {
+                    List<QueueTimelinePoint> timeline = pool.QueueTimeline != null
+                        ? pool.QueueTimeline
+                            .Where(p => p != null && !double.IsNaN(p.Time))
+                            .OrderBy(p => p.Time)
+                            .ToList()
+                        : new List<QueueTimelinePoint>();
+
+                    List<QueueCumulativePoint> flow = pool.CumulativeFlow != null
+                        ? pool.CumulativeFlow
+                            .Where(p => p != null && !double.IsNaN(p.Time))
+                            .OrderBy(p => p.Time)
+                            .ToList()
+                        : new List<QueueCumulativePoint>();
+
+                    if (timeline.Count == 0 && flow.Count == 0)
+                    {
+                        index++;
+                        continue;
+                    }
+
+                    bool waited = timeline.Count > 0;
+
+                    LineSeries queue = new LineSeries
+                    {
+                        Title = waited ? pool.Name : pool.Name + " (no waiting)",
+                        Color = color,
+                        StrokeThickness = 2,
+                        MarkerType = MarkerType.None,
+                        CanTrackerInterpolatePoints = false,
+                        TrackerFormatString = waited
+                            ? $"{pool.Name}\nminute {{2:0}}\nwaiting {{Y:0}}"
+                            : $"{pool.Name}\nminute {{2:0}}\nno passenger waiting"
+                    };
+
+                    if (waited)
+                    {
+                        AddStaircase(queue, timeline);
+                    }
+                    else
+                    {
+                        // A served pool with no waiting is a real, reportable
+                        // result: draw its zero queue across the arrival window
+                        // rather than treating the empty timeline as no data.
+                        double start = flow[0].Time;
+                        double end = flow[flow.Count - 1].Time;
+
+                        queue.Points.Add(new DataPoint(start, 0.0));
+
+                        if (end > start)
+                            queue.Points.Add(new DataPoint(end, 0.0));
+                    }
+
+                    model.Series.Add(queue);
+                }
+
+                index++;
+            }
+
+            if (model.Series.Count == 0)
+            {
+                model.Subtitle += " · no queue events recorded";
+                return model;
+            }
+
+            if (!cumulative &&
+                !sources.Any(p => p.QueueTimeline != null && p.QueueTimeline.Count > 0))
+            {
+                model.Subtitle += " · no waiting recorded";
+            }
+
+            AddLegend(model);
+
+            return model;
+        }
+
+        /// <summary>
+        /// Appends a waiting-queue staircase: the queue holds its value between
+        /// events, so each event is repeated horizontally before moving.
+        /// </summary>
+        private static void AddStaircase(
+            LineSeries series,
+            List<QueueTimelinePoint> timeline)
+        {
+            if (timeline == null || timeline.Count == 0)
+                return;
+
+            series.Points.Add(new DataPoint(timeline[0].Time, 0.0));
+
+            for (int i = 0; i < timeline.Count; i++)
+            {
+                series.Points.Add(new DataPoint(timeline[i].Time, timeline[i].Queue));
+
+                if (i + 1 < timeline.Count)
+                    series.Points.Add(new DataPoint(timeline[i + 1].Time, timeline[i].Queue));
+            }
+        }
+
+        private static string BuildQueueSubtitle(QueueResults results)
+        {
+            if (results == null)
+                return string.Empty;
+
+            int count = results.ProcessedPassengers != null
+                ? results.ProcessedPassengers.Count(p => p != null && !p.IsWarmUp)
+                : 0;
+
+            string window = results.SimulationDuration > 0.0
+                ? $"{results.SimulationDuration:0.#} min window"
+                : "no reported window";
+
+            string design = results.DesignStepIndex >= 0
+                ? $"design step {results.DesignStepIndex}"
+                : "no design step";
+
+            return $"{count} passengers · {window} · warm-up excluded · {design}";
+        }
+
+        private static string DescribePlan(ChannelResourcePlan plan)
+        {
+            if (plan == null)
+                return string.Empty;
+
+            string identity = plan.IsSharedPool ? "Shared" : plan.PoolIdentity;
+            string target = plan.TargetWait95 > 0.0
+                ? $"{plan.TargetWait95:0.##} min"
+                : "none";
+            string domain = plan.Range != null
+                ? plan.Range.Normalized().ToString()
+                : "1-1";
+
+            return $"{identity} · PNR {plan.PhysicalResources} · target {target} · domain {domain}";
         }
 
         private static List<QueueTimelinePoint> GetTimeline(QueueResults results)
@@ -874,6 +1162,8 @@ namespace AirportPlanning.Core.Charts
             if (sources.Count == 0)
                 return model;
 
+            model.Subtitle = $"{sources.Count} show-up profile(s) · cumulative share of each hour";
+
             int index = 0;
 
             foreach (ShowUpProfile curve in sources)
@@ -932,12 +1222,484 @@ namespace AirportPlanning.Core.Charts
             return model;
         }
 
+        /// <summary>
+        /// Rolling 60-minute schedule demand: domestic and international
+        /// departures/arrivals plus the combined curve. This is the Grasshopper
+        /// counterpart of the TypeScript peak-profile chart.
+        /// </summary>
+        public static PlotModel CreateSchedulePeakProfileModel(
+            List<ScheduleRollingSeries> series,
+            string title = "Schedule Peak Profile")
+        {
+            PlotModel model = NewPlot(
+                title, "Time of day", "Passengers per rolling 60 min");
+
+            if (series == null || series.Count == 0)
+                return model;
+
+            List<ScheduleRollingSeries> points = series
+                .Where(s => s != null)
+                .OrderBy(s => s.Minute)
+                .ToList();
+
+            if (points.Count == 0)
+                return model;
+
+            LinearAxis xAxis = (LinearAxis)model.Axes[0];
+            xAxis.Minimum = points[0].Minute;
+            xAxis.Maximum = points[points.Count - 1].Minute;
+            xAxis.MajorStep = 120.0;
+            xAxis.LabelFormatter = value => FormatClockMinute(value);
+
+            model.Subtitle = string.Format(
+                "{0} sample(s) · {1} to {2} · rolling 60 min",
+                points.Count,
+                FormatClockMinute(points[0].Minute),
+                FormatClockMinute(points[points.Count - 1].Minute));
+
+            AddRollingLine(model, points, "Domestic departures",
+                Palette[0], s => s.DomesticDeparture);
+
+            AddRollingLine(model, points, "Domestic arrivals",
+                Palette[1], s => s.DomesticArrival);
+
+            AddRollingLine(model, points, "International departures",
+                Palette[2], s => s.InternationalDeparture);
+
+            AddRollingLine(model, points, "International arrivals",
+                Palette[3], s => s.InternationalArrival);
+
+            AddRollingLine(model, points, "Combined",
+                Palette[6], s => s.Combined, 2.5);
+
+            AddLegend(model);
+
+            return model;
+        }
+
+        private static void AddRollingLine(
+            PlotModel model,
+            List<ScheduleRollingSeries> points,
+            string title,
+            OxyColor color,
+            Func<ScheduleRollingSeries, int> value,
+            double thickness = 1.75)
+        {
+            LineSeries series = new LineSeries
+            {
+                Title = title,
+                Color = color,
+                StrokeThickness = thickness,
+                CanTrackerInterpolatePoints = false,
+                TrackerFormatString = "{0}\n{2:0} min of day\n{Y:0} pax/hr"
+            };
+
+            foreach (ScheduleRollingSeries point in points)
+                series.Points.Add(new DataPoint(point.Minute, value(point)));
+
+            model.Series.Add(series);
+        }
+
+        private static string FormatClockMinute(double minute)
+        {
+            int value = (int)Math.Round(minute);
+            int day = (int)Math.Floor(value / 1440.0);
+            int m = value - day * 1440;
+
+            int hh = m / 60;
+            int mm = m % 60;
+            string clock = $"{hh:00}:{mm:00}";
+
+            return day == 0 ? clock : (day > 0 ? $"{clock}+{day}" : $"{clock}-{Math.Abs(day)}");
+        }
+
         private static List<ShowUpProfile> Normalize(IEnumerable<ShowUpProfile> profiles)
         {
             if (profiles == null)
                 return new List<ShowUpProfile>();
 
             return profiles.Where(p => p != null).ToList();
+        }
+
+        /// <summary>
+        /// Processor allocation over a solved run: one panel per server pool
+        /// with processor IDs on the X-axis and simulation time on the Y-axis,
+        /// plus a time-aligned queue panel on the left.
+        ///
+        /// Each block is one passenger's service interval on the processor the
+        /// simulation assigned. Empty stretches are idle time. Dedicated pools
+        /// get their own axis, so pool-local processor IDs never collide.
+        /// </summary>
+        public static PlotModel CreateProcessorAllocationModel(
+            QueueResults results,
+            string title = "Processor Allocation",
+            bool usePoolQueues = true)
+        {
+            PlotModel model = new PlotModel
+            {
+                Title = title,
+                Background = OxyColors.White,
+                PlotAreaBackground = OxyColor.FromAColor(20, OxyColors.Black),
+                PlotMargins = new OxyThickness(70, 30, 20, 48),
+                Padding = new OxyThickness(8)
+            };
+
+            List<ProcessorTimelinePool> pools = results == null
+                ? new List<ProcessorTimelinePool>()
+                : ProcessorTimeline.Build(results)
+                    .Where(p => p != null && p.ProcessorCount > 0)
+                    .ToList();
+
+            List<QueueTimelinePoint> queue = NormalizeQueue(results);
+
+            List<QueuePoolResult> poolQueues = usePoolQueues &&
+                                               results != null &&
+                                               results.PoolResults != null
+                ? results.PoolResults
+                    .Where(q => q != null && q.QueueTimeline != null && q.QueueTimeline.Count > 0)
+                    .ToList()
+                : new List<QueuePoolResult>();
+
+            // Per-pool queues replace the single facility panel when the solver
+            // recorded them: a dedicated channel/sector queue is then paired
+            // with its own processor band instead of being folded into the total.
+            bool hasPoolQueues = poolQueues.Count > 0;
+            bool hasFacilityQueue = !hasPoolQueues && queue.Count > 0;
+
+            model.Axes.Add(new LinearAxis
+            {
+                Position = AxisPosition.Left,
+                Key = "Time",
+                Title = "Time (minutes)",
+                MinimumPadding = 0.02,
+                MaximumPadding = 0.02,
+                MajorGridlineStyle = LineStyle.Dot,
+                MinorGridlineStyle = LineStyle.None,
+                AxislineStyle = LineStyle.Solid
+            });
+
+            double queueWidth = hasFacilityQueue ? 0.20 : 0.0;
+            double queueGap = hasFacilityQueue ? 0.06 : 0.0;
+            double processorLeft = queueWidth + queueGap;
+            double processorWidth = 1.0 - processorLeft;
+
+            int poolCount = pools.Count;
+
+            double poolGap = poolCount > 1 ? 0.035 : 0.0;
+            double poolWidth = poolCount > 0
+                ? (processorWidth - poolGap * (poolCount - 1)) / poolCount
+                : processorWidth;
+
+            if (hasFacilityQueue)
+            {
+                model.Axes.Add(new LinearAxis
+                {
+                    Position = AxisPosition.Bottom,
+                    Key = "Queue",
+                    Title = "Queue (pax)",
+                    Minimum = 0,
+                    MaximumPadding = 0.05,
+                    StartPosition = 0.0,
+                    EndPosition = queueWidth,
+                    MajorGridlineStyle = LineStyle.Dot,
+                    MinorGridlineStyle = LineStyle.None,
+                    AxislineStyle = LineStyle.Solid
+                });
+
+                model.Series.Add(CreateQueueSeries(queue));
+            }
+
+            HashSet<string> labelledProfiles =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            Dictionary<string, OxyColor> profileColors =
+                new Dictionary<string, OxyColor>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < poolCount; i++)
+            {
+                ProcessorTimelinePool pool = pools[i];
+
+                double start = processorLeft + i * (poolWidth + poolGap);
+                double end = start + poolWidth;
+                string axisKey = "Processor_" + i;
+
+                QueuePoolResult poolQueue = hasPoolQueues
+                    ? FindQueuePool(poolQueues, pool.Name)
+                    : null;
+
+                double processorStart = start;
+
+                if (poolQueue != null && poolQueue.QueueTimeline.Count > 0)
+                {
+                    double queueBand = poolWidth * 0.30;
+                    string queueKey = "PoolQueue_" + i;
+
+                    AddPoolQueueAxis(model, queueKey, start, start + queueBand);
+                    model.Series.Add(CreatePoolQueueSeries(
+                        poolQueue,
+                        queueKey,
+                        Palette[i % Palette.Length]));
+
+                    processorStart = start + queueBand + Math.Min(0.02, poolWidth * 0.05);
+                }
+
+                AddProcessorAxis(
+                    model,
+                    axisKey,
+                    string.IsNullOrWhiteSpace(pool.Name) ? "Processor" : pool.Name,
+                    processorStart,
+                    end,
+                    pool.ProcessorCount);
+
+                AddProcessorSeries(
+                    model,
+                    pool,
+                    axisKey,
+                    labelledProfiles,
+                    profileColors);
+            }
+
+            if (poolCount == 0)
+            {
+                // Keep the frame readable even when nothing was processed.
+                AddProcessorAxis(
+                    model,
+                    "Processor_0",
+                    "Processor",
+                    hasFacilityQueue ? processorLeft : 0.0,
+                    1.0,
+                    1);
+            }
+
+            int totalProcessors = pools.Sum(p => p.ProcessorCount);
+
+            model.Subtitle = totalProcessors > 0
+                ? (hasPoolQueues
+                    ? $"{totalProcessors} staffed processor(s) across {poolCount} pool(s); queue per pool"
+                    : $"{totalProcessors} staffed processor(s) across {poolCount} pool(s); queue on the left")
+                : "No staffed processors";
+
+            if (model.Series.Any(s => s.RenderInLegend))
+                AddLegend(model);
+
+            return model;
+        }
+
+        private static void AddProcessorAxis(
+            PlotModel model,
+            string key,
+            string title,
+            double start,
+            double end,
+            int processorCount)
+        {
+            int count = Math.Max(1, processorCount);
+            int labelStep = NiceStep(count);
+
+            model.Axes.Add(new LinearAxis
+            {
+                Position = AxisPosition.Bottom,
+                Key = key,
+                Title = title,
+                StartPosition = Math.Max(0.0, Math.Min(1.0, start)),
+                EndPosition = Math.Max(0.0, Math.Min(1.0, end)),
+                Minimum = -0.6,
+                Maximum = Math.Max(0.6, count - 0.4),
+                MajorStep = labelStep,
+                MajorGridlineStyle = LineStyle.Dot,
+                MinorGridlineStyle = LineStyle.None,
+                AxislineStyle = LineStyle.Solid
+            });
+        }
+
+        /// <summary>
+        /// Rounds a label interval to a readable 1 / 2 / 5 x 10^n step so a
+        /// dense processor axis does not print every ID.
+        /// </summary>
+        private static int NiceStep(int processorCount)
+        {
+            double raw = Math.Max(1.0, processorCount / 10.0);
+            double magnitude = Math.Pow(10.0, Math.Floor(Math.Log10(raw)));
+            double normalized = raw / magnitude;
+
+            double nice = normalized <= 1.0 ? 1.0
+                : normalized <= 2.0 ? 2.0
+                : normalized <= 5.0 ? 5.0
+                : 10.0;
+
+            return Math.Max(1, (int)Math.Round(nice * magnitude));
+        }
+
+        private static void AddProcessorSeries(
+            PlotModel model,
+            ProcessorTimelinePool pool,
+            string axisKey,
+            HashSet<string> labelledProfiles,
+            Dictionary<string, OxyColor> profileColors)
+        {
+            if (pool.Blocks == null || pool.Blocks.Count == 0)
+                return;
+
+            foreach (IGrouping<string, ProcessorServiceBlock> group in pool.Blocks
+                .GroupBy(b => b.ProfileName ?? "(unassigned)")
+                .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                if (!profileColors.TryGetValue(group.Key, out OxyColor color))
+                {
+                    color = Palette[profileColors.Count % Palette.Length];
+                    profileColors.Add(group.Key, color);
+                }
+
+                bool inLegend = labelledProfiles.Add(group.Key);
+
+                RectangleBarSeries series = new RectangleBarSeries
+                {
+                    Title = inLegend ? group.Key : null,
+                    RenderInLegend = inLegend,
+                    XAxisKey = axisKey,
+                    YAxisKey = "Time",
+                    FillColor = color,
+                    StrokeThickness = 0,
+                    TrackerFormatString =
+                        $"{group.Key}\nprocessor: {{2:0}}\nservice: {{3:0.#}}-{{4:0.#}} min"
+                };
+
+                foreach (ProcessorServiceBlock block in group)
+                {
+                    series.Items.Add(new RectangleBarItem(
+                        block.ProcessorId - 0.42,
+                        block.StartTime,
+                        block.ProcessorId + 0.42,
+                        block.EndTime)
+                    {
+                        Color = color
+                    });
+                }
+
+                model.Series.Add(series);
+            }
+        }
+
+        /// <summary>
+        /// Bottom axis for one pool's queue band, placed to the left of that
+        /// pool's processor axis so occupancy and waiting read together.
+        /// </summary>
+        private static void AddPoolQueueAxis(
+            PlotModel model,
+            string key,
+            double start,
+            double end)
+        {
+            model.Axes.Add(new LinearAxis
+            {
+                Position = AxisPosition.Bottom,
+                Key = key,
+                Title = "Queue",
+                StartPosition = Math.Max(0.0, Math.Min(1.0, start)),
+                EndPosition = Math.Max(0.0, Math.Min(1.0, end)),
+                Minimum = 0,
+                MaximumPadding = 0.05,
+                MajorGridlineStyle = LineStyle.Dot,
+                MinorGridlineStyle = LineStyle.None,
+                AxislineStyle = LineStyle.Solid,
+                FontSize = 9,
+                TitleFontSize = 9
+            });
+        }
+
+        /// <summary>
+        /// Transposed staircase for one pool: queue length on X, time on Y,
+        /// matching the facility queue panel's orientation.
+        /// </summary>
+        private static LineSeries CreatePoolQueueSeries(
+            QueuePoolResult pool,
+            string axisKey,
+            OxyColor color)
+        {
+            LineSeries series = new LineSeries
+            {
+                Title = pool.Name + " queue",
+                Color = color,
+                StrokeThickness = 2,
+                XAxisKey = axisKey,
+                YAxisKey = "Time",
+                CanTrackerInterpolatePoints = false,
+                TrackerFormatString =
+                    $"{pool.Name}\nqueue: {{2:0}} pax\ntime: {{Y:0.#}} min"
+            };
+
+            List<QueueTimelinePoint> timeline = pool.QueueTimeline
+                .Where(p => p != null && !double.IsNaN(p.Time))
+                .OrderBy(p => p.Time)
+                .ToList();
+
+            if (timeline.Count == 0)
+                return series;
+
+            series.Points.Add(new DataPoint(0, timeline[0].Time));
+
+            for (int i = 0; i < timeline.Count; i++)
+            {
+                series.Points.Add(new DataPoint(timeline[i].Queue, timeline[i].Time));
+
+                if (i + 1 < timeline.Count)
+                    series.Points.Add(new DataPoint(timeline[i].Queue, timeline[i + 1].Time));
+            }
+
+            return series;
+        }
+
+        private static QueuePoolResult FindQueuePool(
+            List<QueuePoolResult> pools,
+            string name)
+        {
+            if (pools == null)
+                return null;
+
+            return pools.FirstOrDefault(p =>
+                string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static LineSeries CreateQueueSeries(List<QueueTimelinePoint> queue)
+        {
+            LineSeries series = new LineSeries
+            {
+                Title = "Queue",
+                Color = Palette[0],
+                StrokeThickness = 2,
+                XAxisKey = "Queue",
+                YAxisKey = "Time",
+                CanTrackerInterpolatePoints = false,
+                TrackerFormatString = "queue: {2:0} pax\ntime: {Y:0.#} min"
+            };
+
+            if (queue.Count == 0)
+                return series;
+
+            // Transposed staircase: time is the independent axis, so each
+            // interval holds its queue length between two events.
+            series.Points.Add(new DataPoint(0, queue[0].Time));
+
+            for (int i = 0; i < queue.Count; i++)
+            {
+                series.Points.Add(new DataPoint(queue[i].Queue, queue[i].Time));
+
+                if (i + 1 < queue.Count)
+                    series.Points.Add(new DataPoint(queue[i].Queue, queue[i + 1].Time));
+            }
+
+            return series;
+        }
+
+        private static List<QueueTimelinePoint> NormalizeQueue(QueueResults results)
+        {
+            if (results == null || results.QueueTimeline == null)
+                return new List<QueueTimelinePoint>();
+
+            return results.QueueTimeline
+                .Where(p => p != null && !double.IsNaN(p.Time) && !double.IsInfinity(p.Time))
+                .OrderBy(p => p.Time)
+                .ToList();
         }
 
         private static PlotModel NewPlot(string title, string xTitle, string yTitle)
@@ -1007,6 +1769,14 @@ namespace AirportPlanning.Core.Charts
                 return new List<ArrivalSimulationResult>();
 
             return simulations.Where(s => s != null).ToList();
+        }
+
+        private static List<QueuePoolResult> Normalize(IEnumerable<QueuePoolResult> pools)
+        {
+            if (pools == null)
+                return new List<QueuePoolResult>();
+
+            return pools.Where(p => p != null).ToList();
         }
     }
 }

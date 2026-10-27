@@ -60,6 +60,24 @@ namespace AirportPlanning.Facilities
 
             public List<QueueResults> PoolResults { get; set; } = new List<QueueResults>();
 
+            /// <summary>
+            /// Pool names in <see cref="PoolResults"/> order: the dedicated
+            /// channel name, or "Shared" for a single facility-wide queue.
+            /// </summary>
+            public List<string> PoolNames { get; set; } = new List<string>();
+
+            /// <summary>
+            /// True for each pool that serves every passenger in one queue.
+            /// </summary>
+            public List<bool> PoolIsShared { get; set; } = new List<bool>();
+
+            /// <summary>
+            /// Target Wait95 per pool, in <see cref="PoolResults"/> order. Kept so
+            /// the merged result can report whether each pool met its own target
+            /// without re-reading the optimizer outcomes (optimization may be off).
+            /// </summary>
+            public List<double> TargetPerPool { get; set; } = new List<double>();
+
             public List<ResourceSearchOutcome> SearchOutcomes { get; set; } = new List<ResourceSearchOutcome>();
 
             /// <summary>
@@ -131,9 +149,11 @@ namespace AirportPlanning.Facilities
         /// <summary>
         /// Builds the passenger filter for one pool. A shared pool keeps the
         /// component's channel filter (or the legacy predicate when no channel is
-        /// wired); a dedicated pool keeps only its own channel. A required
-        /// predicate (e.g. departures-only) is always applied on top, so wiring
-        /// a channel can never let excluded passengers through.
+        /// wired); a dedicated pool keeps only its own channel. When the plan has
+        /// a <see cref="ChannelResourcePlan.PoolKey"/>, the pool is further split
+        /// by DHPType + ProfileName (the key format is "DHPType|ProfileName").
+        /// A required predicate (e.g. departures-only) is always applied on top,
+        /// so wiring a channel can never let excluded passengers through.
         /// </summary>
         protected static Func<Passenger, bool> BuildPlanFilter(
             ChannelResourcePlan plan,
@@ -148,15 +168,85 @@ namespace AirportPlanning.Facilities
             else
             {
                 string channel = plan.Channel;
+                string poolKey = plan.PoolKey;
 
-                baseFilter = p => p != null &&
-                            string.Equals(p.Channel, channel, StringComparison.OrdinalIgnoreCase);
+                if (!string.IsNullOrWhiteSpace(poolKey))
+                {
+                    (DHPType? dhpType, string profileName) = ParsePoolKey(poolKey);
+
+                    baseFilter = p => p != null &&
+                        string.Equals(p.Channel, channel, StringComparison.OrdinalIgnoreCase) &&
+                        MatchesPoolKey(p, dhpType, profileName);
+                }
+                else
+                {
+                    baseFilter = p => p != null && string.Equals(p.Channel, channel, StringComparison.OrdinalIgnoreCase);
+                }
             }
 
             if (requiredPredicate == null)
                 return baseFilter;
 
             return p => p != null && requiredPredicate(p) && baseFilter(p);
+        }
+
+        /// <summary>
+        /// Parses a pool key of the form "DHPType|ProfileName" into its
+        /// components. A missing or unparseable DHPType yields null (no DHP
+        /// constraint); a missing profile name yields an empty string (no
+        /// profile constraint).
+        /// </summary>
+        private static (DHPType? DhpType, string ProfileName) ParsePoolKey(string poolKey)
+        {
+            if (string.IsNullOrWhiteSpace(poolKey))
+                return (null, string.Empty);
+
+            string trimmed = poolKey.Trim();
+            int separator = trimmed.IndexOf('|');
+
+            if (separator < 0)
+            {
+                // No separator: treat the whole key as a profile name, no DHP constraint.
+                return (null, trimmed);
+            }
+
+            string dhpPart = trimmed.Substring(0, separator).Trim();
+            string profilePart = trimmed.Substring(separator + 1).Trim();
+
+            DHPType? dhpType = null;
+
+            if (!string.IsNullOrEmpty(dhpPart) &&
+                Enum.TryParse(dhpPart, true, out DHPType parsed))
+            {
+                dhpType = parsed;
+            }
+
+            return (dhpType, profilePart);
+        }
+
+        /// <summary>
+        /// True when the passenger matches the pool key's DHP type and/or
+        /// profile name. A null DHP type or empty profile name imposes no
+        /// constraint on that dimension.
+        /// </summary>
+        private static bool MatchesPoolKey(
+            Passenger passenger,
+            DHPType? dhpType,
+            string profileName)
+        {
+            if (passenger == null)
+                return false;
+
+            if (dhpType.HasValue && passenger.DHPType != dhpType.Value)
+                return false;
+
+            if (!string.IsNullOrEmpty(profileName) &&
+                !string.Equals(passenger.ProfileName, profileName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -262,8 +352,12 @@ namespace AirportPlanning.Facilities
                 solve.TotalPhysical += physical;
                 solve.TotalActive += active;
 
+                solve.PoolNames.Add(plan.IsSharedPool ? "Shared" : plan.PoolIdentity);
+                solve.PoolIsShared.Add(plan.IsSharedPool);
+                solve.TargetPerPool.Add(plan.TargetWait95);
+
                 if (!plan.IsSharedPool)
-                    solve.Wait95PerChannel[plan.Channel] = 0.0;
+                    solve.Wait95PerChannel[plan.PoolIdentity] = 0.0;
 
                 if (pools[i].Count == 0)
                 {
@@ -278,7 +372,7 @@ namespace AirportPlanning.Facilities
                 solve.AllResources.AddRange(poolResults.Resources);
 
                 if (!plan.IsSharedPool)
-                    solve.Wait95PerChannel[plan.Channel] = poolResults.Wait95;
+                    solve.Wait95PerChannel[plan.PoolIdentity] = poolResults.Wait95;
             }
 
             solve.Results = MergePoolResults(solve);
@@ -293,6 +387,9 @@ namespace AirportPlanning.Facilities
         /// </summary>
         protected QueueResults MergePoolResults(FacilitySolveResult solve)
         {
+            List<ProcessorPoolInfo> processorPools = BuildProcessorPools(solve);
+            List<QueuePoolResult> queuePools = BuildQueuePoolResults(solve, processorPools);
+
             if (solve.PoolResults.Count == 1)
             {
                 QueueResults only = solve.PoolResults[0];
@@ -300,6 +397,8 @@ namespace AirportPlanning.Facilities
                 only.ProcessedPassengers = solve.Processed;
                 only.Resources = solve.AllResources;
                 only.ResourcesUsed = solve.AllResources.Count;
+                only.ProcessorPools = processorPools;
+                only.PoolResults = queuePools;
 
                 return only;
             }
@@ -318,8 +417,171 @@ namespace AirportPlanning.Facilities
             merged.ProcessedPassengers = combined;
             merged.Resources = solve.AllResources;
             merged.ResourcesUsed = solve.AllResources.Count;
+            merged.ProcessorPools = processorPools;
+            merged.PoolResults = queuePools;
 
             return merged;
+        }
+
+        /// <summary>
+        /// Copies each simulated pool's own queue history into the merged
+        /// result. The merged timeline is the facility aggregate; these
+        /// snapshots are the independent channel/sector queues behind it.
+        /// </summary>
+        private static List<QueuePoolResult> BuildQueuePoolResults(
+            FacilitySolveResult solve,
+            List<ProcessorPoolInfo> processorPools)
+        {
+            List<QueuePoolResult> pools = new List<QueuePoolResult>();
+
+            for (int i = 0; i < solve.PoolResults.Count; i++)
+            {
+                QueueResults pool = solve.PoolResults[i];
+
+                string name = i < solve.PoolNames.Count &&
+                              !string.IsNullOrWhiteSpace(solve.PoolNames[i])
+                    ? solve.PoolNames[i]
+                    : (solve.PoolResults.Count == 1 ? "Shared" : $"Pool {i + 1}");
+
+                ProcessorPoolInfo info = i < processorPools.Count
+                    ? processorPools[i]
+                    : null;
+
+                SplitPoolIdentity(name, out string channel, out string poolKey);
+
+                List<Passenger> served = pool?.ProcessedPassengers != null
+                    ? pool.ProcessedPassengers
+                        .Where(p => p != null && !p.IsWarmUp)
+                        .ToList()
+                    : new List<Passenger>();
+
+                List<QueueTimelinePoint> queueEvents = pool?.QueueTimeline != null
+                    ? pool.QueueTimeline
+                        .Where(p => p != null)
+                        .OrderBy(p => p.Time)
+                        .ToList()
+                    : new List<QueueTimelinePoint>();
+
+                List<QueueCumulativePoint> cumulativeFlow = pool?.CumulativeFlow != null
+                    ? new List<QueueCumulativePoint>(pool.CumulativeFlow)
+                    : new List<QueueCumulativePoint>();
+
+                pools.Add(new QueuePoolResult
+                {
+                    Name = name,
+                    Channel = channel,
+                    PoolKey = poolKey,
+                    IsShared = i < solve.PoolIsShared.Count
+                        ? solve.PoolIsShared[i]
+                        : string.Equals(name, "Shared", StringComparison.OrdinalIgnoreCase),
+                    PhysicalResources = info != null ? info.PhysicalResourceCount : 0,
+                    ActiveResources = info != null ? info.ResourceCount : 0,
+                    TargetWait95 = i < solve.TargetPerPool.Count
+                        ? solve.TargetPerPool[i]
+                        : 0.0,
+                    PassengerCount = served.Count,
+                    WaitingPassengerCount = served.Count(p => p.WaitTime > 1e-9),
+                    FirstArrivalTime = served.Count > 0
+                        ? served.Min(p => p.ArrivalTime)
+                        : double.NaN,
+                    LastArrivalTime = served.Count > 0
+                        ? served.Max(p => p.ArrivalTime)
+                        : double.NaN,
+                    FirstQueueEventTime = queueEvents.Count > 0
+                        ? queueEvents[0].Time
+                        : double.NaN,
+                    LastQueueEventTime = queueEvents.Count > 0
+                        ? queueEvents[queueEvents.Count - 1].Time
+                        : double.NaN,
+                    AverageWait = pool != null ? pool.AverageWait : 0.0,
+                    MaxWait = pool != null ? pool.MaxWait : 0.0,
+                    Wait95 = pool != null ? pool.Wait95 : 0.0,
+                    PeakQueueLength = pool != null ? pool.PeakQueueLength : 0,
+                    PeakQueueTime = pool != null ? pool.PeakQueueTime : 0.0,
+                    SimulationDuration = pool != null ? pool.SimulationDuration : 0.0,
+                    QueueTimeline = queueEvents,
+                    CumulativeFlow = cumulativeFlow
+                });
+            }
+
+            return pools;
+        }
+
+        /// <summary>
+        /// Splits "Channel|DHPType|ProfileName" into its channel and pool-key
+        /// halves. A bare channel yields an empty key; "Shared" yields neither.
+        /// </summary>
+        private static void SplitPoolIdentity(
+            string identity,
+            out string channel,
+            out string poolKey)
+        {
+            channel = string.Empty;
+            poolKey = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(identity) ||
+                string.Equals(identity, "Shared", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            int separator = identity.IndexOf('|');
+
+            if (separator < 0)
+            {
+                channel = identity.Trim();
+                return;
+            }
+
+            channel = identity.Substring(0, separator).Trim();
+            poolKey = identity.Substring(separator + 1).Trim();
+        }
+
+        /// <summary>
+        /// Describes the resource pools merged into the facility result. The
+        /// resource offset is cumulative so a dedicated pool's processor IDs
+        /// can be traced back to the merged resource list.
+        /// </summary>
+        private static List<ProcessorPoolInfo> BuildProcessorPools(FacilitySolveResult solve)
+        {
+            List<ProcessorPoolInfo> pools = new List<ProcessorPoolInfo>();
+
+            int offset = 0;
+
+            for (int i = 0; i < solve.PoolResults.Count; i++)
+            {
+                QueueResults pool = solve.PoolResults[i];
+
+                int count = pool != null && pool.Resources != null
+                    ? pool.Resources.Count
+                    : 0;
+
+                string name = i < solve.PoolNames.Count &&
+                              !string.IsNullOrWhiteSpace(solve.PoolNames[i])
+                    ? solve.PoolNames[i]
+                    : (solve.PoolResults.Count == 1 ? "Shared" : $"Pool {i + 1}");
+
+                bool isShared = i < solve.PoolIsShared.Count
+                    ? solve.PoolIsShared[i]
+                    : solve.PoolResults.Count == 1;
+
+                int physical = i < solve.PhysicalPerChannel.Count
+                    ? solve.PhysicalPerChannel[i]
+                    : count;
+
+                pools.Add(new ProcessorPoolInfo
+                {
+                    Name = name,
+                    ResourceCount = count,
+                    PhysicalResourceCount = physical,
+                    FirstResourceIndex = offset,
+                    IsShared = isShared
+                });
+
+                offset += count;
+            }
+
+            return pools;
         }
 
         /// <summary>
@@ -648,6 +910,8 @@ namespace AirportPlanning.Facilities
 
                     builder.Append(';');
                     builder.Append(plan.Channel ?? "*");
+                    builder.Append('|');
+                    builder.Append(plan.PoolKey ?? "*");
                     builder.Append(':');
                     builder.Append(plan.PhysicalResources);
                     builder.Append(':');
@@ -767,8 +1031,8 @@ namespace AirportPlanning.Facilities
                 if (outcome == null || outcome.Success)
                     continue;
 
-                string pool = outcome.Plan != null && !string.IsNullOrWhiteSpace(outcome.Plan.Channel)
-                    ? outcome.Plan.Channel
+                string pool = outcome.Plan != null && !string.IsNullOrWhiteSpace(outcome.Plan.PoolIdentity)
+                    ? outcome.Plan.PoolIdentity
                     : "Shared";
 
                 double target = outcome.Plan != null ? outcome.Plan.TargetWait95 : 0.0;

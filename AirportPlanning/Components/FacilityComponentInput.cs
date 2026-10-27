@@ -88,6 +88,37 @@ namespace AirportPlanning.Components
         }
 
         /// <summary>
+        /// Wait95 per resolved pool, aligned with the solver's PoolNames output.
+        /// This is the plan-aware variant used when pools may be subdivided by
+        /// "Channel|PoolKey" and no longer match the channel list one-to-one.
+        /// </summary>
+        public static List<double> GetWaitForPools(
+            Dictionary<string, double> waitPerChannel,
+            QueueResults results,
+            IList<string> poolNames)
+        {
+            List<double> waits = new List<double>();
+
+            if (poolNames == null || poolNames.Count == 0)
+            {
+                waits.Add(results != null ? results.Wait95 : 0.0);
+                return waits;
+            }
+
+            foreach (string name in poolNames)
+            {
+                if (waitPerChannel != null && waitPerChannel.TryGetValue(name, out double value))
+                    waits.Add(value);
+                else if (string.Equals(name, "Shared", StringComparison.OrdinalIgnoreCase))
+                    waits.Add(results != null ? results.Wait95 : 0.0);
+                else
+                    waits.Add(0.0);
+            }
+
+            return waits;
+        }
+
+        /// <summary>
         /// Mirrors the optimizer pool resolver's channel normalization: trim,
         /// drop blanks, drop case-insensitive duplicates, keep first-seen order.
         /// </summary>

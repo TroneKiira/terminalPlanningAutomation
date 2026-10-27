@@ -16,10 +16,45 @@ namespace AirportPlanning.Facilities.CheckIn
         public ServiceProfile ServiceProfile { get; set; }
 
         /// <summary>
-        /// Channels this facility serves. Empty means the legacy predicate
-        /// (RequiresCheckIn) applies; non-empty filters on the passenger channel.
+        /// Routed channels that have physical Check-In resources. Passenger
+        /// assignment to these channels comes from Channel Routing and is
+        /// already stored on Passenger.Channel. Empty means the legacy shared
+        /// pool behavior.
         /// </summary>
         public List<string> Channels { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Optional CHR output. When Channels is empty, its configured route
+        /// channels define the physical pools so names do not need to be
+        /// re-entered. Virtual routes (Web) are skipped automatically, while
+        /// BagDrop is treated as a physical Check-In channel.
+        /// </summary>
+        public ProfileChannelMap ChannelRouting { get; set; }
+
+        /// <summary>
+        /// Routed channel treated as staffed check-in counters. This channel is
+        /// automatically subdivided by each passenger's DHPType and ProfileName.
+        /// </summary>
+        public string CounterChannel { get; set; } = DefaultChannelAssigner.CounterChannel;
+
+        /// <summary>Optional nominal physical resource counts aligned with the expanded pools.</summary>
+        public List<int> PoolPhysicalResources { get; set; } = new List<int>();
+
+        /// <summary>Optional Wait95 targets aligned with the expanded pools.</summary>
+        public List<double> PoolTargetWait95 { get; set; } = new List<double>();
+
+        /// <summary>Optional minimum resource counts aligned with the expanded pools.</summary>
+        public List<int> PoolMinimumResources { get; set; } = new List<int>();
+
+        /// <summary>Optional maximum resource counts aligned with the expanded pools.</summary>
+        public List<int> PoolMaximumResources { get; set; } = new List<int>();
+
+        /// <summary>
+        /// Keyed pool plans (PNR, PTW, PDomain per pool). When supplied, these
+        /// take precedence over the legacy parallel Pool* lists and are matched
+        /// to resolved pools by Channel|PoolKey identity.
+        /// </summary>
+        public List<PoolPlan> PoolPlans { get; set; } = new List<PoolPlan>();
 
         /// <summary>Optional per-passenger service-time mapping.</summary>
         public IServiceTimeProvider ServiceTimeProvider { get; set; }

@@ -35,6 +35,46 @@ namespace AirportPlanning.Core.Inputs
 
         public List<ProfileChannelEntry> Entries { get; set; } = new List<ProfileChannelEntry>();
 
+        /// <summary>
+        /// Returns the unique configured route channels in first-seen order,
+        /// followed by the default channel if it was not explicitly listed.
+        /// This lets downstream facilities consume the routing table without
+        /// asking the user to re-enter its channel names.
+        /// </summary>
+        public List<string> GetChannels()
+        {
+            List<string> channels = new List<string>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (Entries != null)
+            {
+                foreach (ProfileChannelEntry entry in Entries)
+                {
+                    if (entry?.Shares == null)
+                        continue;
+
+                    foreach (ChannelShare share in entry.Shares)
+                    {
+                        if (share == null || share.Share <= 0.0 || string.IsNullOrWhiteSpace(share.Channel))
+                            continue;
+
+                        string channel = share.Channel.Trim();
+                        if (seen.Add(channel))
+                            channels.Add(channel);
+                    }
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(DefaultChannel))
+            {
+                string defaultChannel = DefaultChannel.Trim();
+                if (seen.Add(defaultChannel))
+                    channels.Add(defaultChannel);
+            }
+
+            return channels;
+        }
+
         public string AssignChannel(Passenger passenger, Random rnd)
         {
             string profileName = passenger != null ? passenger.ProfileName : null;

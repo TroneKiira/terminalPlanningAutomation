@@ -53,6 +53,12 @@
     <PackageReference Include="OxyPlot.WindowsForms" Version="2.1.2" />
   </ItemGroup>
 
+  <!-- XLSX reading uses ZipArchive. It is part of the .NET Framework, but the
+       net48 target needs an explicit reference to the framework assembly. -->
+  <ItemGroup Condition="$(TargetFramework.StartsWith('net4'))">
+    <Reference Include="System.IO.Compression" />
+  </ItemGroup>
+
   <!-- Reference WinForms for .NET 7.0 on macOS -->
   <ItemGroup Condition="!($(TargetFramework.Contains('-windows')) or $(TargetFramework.StartsWith('net4')))">
     <!-- Rhino 8.11 and later you can use this -->

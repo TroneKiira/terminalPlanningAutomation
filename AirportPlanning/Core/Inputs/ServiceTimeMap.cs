@@ -9,9 +9,8 @@ using AirportPlanning.Core.Models;
 namespace AirportPlanning.Core.Inputs
 {
     /// <summary>
-    /// One keyed service-time entry. The key is supplied by the planner; it may
-    /// be a passenger-profile name ("Domestic Economy"), a channel name
-    /// ("Kiosk"), or a composite "profile|channel".
+    /// One keyed service-time entry. Keys may identify a profile, channel,
+    /// profile+channel, or DHP type+profile (optionally also channel).
     /// </summary>
     public class ServiceTimeEntry
     {
@@ -24,9 +23,13 @@ namespace AirportPlanning.Core.Inputs
     /// Maps a passenger to a service-time profile using keys built in
     /// Grasshopper. Resolution precedence, most specific first:
     ///
-    ///   "profileName|channel"  ->  "profileName"  ->  "channel"  ->  Default
+    ///   "channel|DHPType|profileName" -> "DHPType|profileName|channel" ->
+    ///   "channel|profileName" -> "DHPType|profileName" ->
+    ///   "profileName|channel" -> "profileName" -> "channel" -> Default
     ///
-    /// Nothing about the key vocabulary is hardcoded in C#.
+    /// The first form is the same identity the Pool Plans component uses, so
+    /// the same key string works in both places. Nothing about the key
+    /// vocabulary is hardcoded in C#.
     /// </summary>
     public class ServiceTimeMap : IServiceTimeProvider
     {
@@ -42,10 +45,25 @@ namespace AirportPlanning.Core.Inputs
 
             string profileName = passenger.ProfileName ?? string.Empty;
             string channel = passenger.Channel ?? string.Empty;
+            string dhpType = passenger.DHPType.ToString();
 
             ServiceProfile profile = null;
 
-            if (profileName.Length > 0 && channel.Length > 0)
+            // Pool Plans identity order first ("Channel|DHPType|ProfileName"),
+            // so the same key string works in both components.
+            if (channel.Length > 0 && profileName.Length > 0)
+                profile = Find(channel + "|" + dhpType + "|" + profileName);
+
+            if (profile == null && profileName.Length > 0 && channel.Length > 0)
+                profile = Find(dhpType + "|" + profileName + "|" + channel);
+
+            if (profile == null && channel.Length > 0 && profileName.Length > 0)
+                profile = Find(channel + "|" + profileName);
+
+            if (profile == null && profileName.Length > 0)
+                profile = Find(dhpType + "|" + profileName);
+
+            if (profile == null && profileName.Length > 0 && channel.Length > 0)
                 profile = Find(profileName + "|" + channel);
 
             if (profile == null && profileName.Length > 0)

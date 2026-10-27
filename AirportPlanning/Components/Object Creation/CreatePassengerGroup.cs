@@ -10,7 +10,8 @@ namespace AirportPlanning.Components.Object_Creation
     {
         public CreatePassengerGroup()
           : base("Create Passenger Group", "CPG",
-            "Merges a Design Hour Profile (DHP) with a list of passenger behaviour profiles to create a Passenger Group.",
+            "Builds a Passenger Group from behaviour profiles. A DHP is optional in schedule mode; " +
+            "set Type instead when the schedule supplies the demand.",
             "Airport Planning", "Object Creation")
         {
         }
@@ -19,13 +20,22 @@ namespace AirportPlanning.Components.Object_Creation
         {
             pManager.AddGenericParameter(
                 "DHP", "D",
-                "Design Hour Profile for this passenger type.",
+                "Design Hour Profile for this passenger type. Optional in schedule mode; " +
+                "when omitted, set Type explicitly instead.",
                 GH_ParamAccess.item);
+            pManager[0].Optional = true;
 
             pManager.AddGenericParameter(
                 "Profiles", "P",
                 "Passenger behaviour profiles for this type. Percentages must sum to 100%.",
                 GH_ParamAccess.list);
+
+            pManager.AddIntegerParameter(
+                "Type", "T",
+                "Optional explicit type for schedule mode: 0 = Domestic Departure, " +
+                "1 = Domestic Arrival, 2 = International Departure, 3 = International Arrival. " +
+                "-1 takes the type from the DHP.",
+                GH_ParamAccess.item, -1);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -40,13 +50,24 @@ namespace AirportPlanning.Components.Object_Creation
         {
             DHP dhp = null;
             List<PassengerProfile> profiles = new List<PassengerProfile>();
+            int type = -1;
 
-            if (!DA.GetData(0, ref dhp)) return;
+            DA.GetData(0, ref dhp);
             if (!DA.GetDataList(1, profiles)) return;
+            DA.GetData(2, ref type);
+
+            if (dhp == null && type < 0)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Error,
+                    "Connect either a DHP or set Type explicitly (0-3).");
+                return;
+            }
 
             PassengerGroup group = new PassengerGroup
             {
                 DHP = dhp,
+                Type = type >= 0 ? (DHPType)Math.Max(0, Math.Min(3, type)) : (DHPType?)null,
                 Profiles = profiles ?? new List<PassengerProfile>()
             };
 

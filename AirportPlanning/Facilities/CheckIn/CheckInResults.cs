@@ -12,6 +12,18 @@ namespace AirportPlanning.Facilities.CheckIn
         /// <summary>Aggregate staffed counters actually simulated.</summary>
         public int ActiveCounters { get; set; }
 
+        /// <summary>Pool names in output order: each dedicated channel (or
+        /// "Channel|PoolKey" when subdivided), or "Shared" for a single pool.</summary>
+        public List<string> PoolNames { get; set; } = new List<string>();
+
+        /// <summary>Nominal physical resources per pool, in output order.</summary>
+        public List<int> NominalPerChannel { get; set; } = new List<int>();
+
+        /// <summary>Unique channel names and aggregate physical/staffed counts, excluding pool subkeys.</summary>
+        public List<string> ChannelNames { get; set; } = new List<string>();
+        public List<int> PhysicalPerChannelTotal { get; set; } = new List<int>();
+        public List<int> ActivePerChannelTotal { get; set; } = new List<int>();
+
         public QueueResults QueueResults { get; set; }
 
         /// <summary>Physical counters per dedicated channel pool (empty for a shared pool).</summary>

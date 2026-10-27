@@ -4,6 +4,7 @@ using AirportPlanning.Core.Queueing;
 using AirportPlanning.Core.Inputs;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AirportPlanning.Facilities.Security
 {
@@ -17,17 +18,14 @@ namespace AirportPlanning.Facilities.Security
 
         public SecurityResults Solve(SecurityInputs input)
         {
+            Warnings.Clear();
+
             SecurityResults finalResult = new SecurityResults();
 
             IServiceTimeProvider serviceTimeProvider =
                 ResolveServiceTimeProvider(input.ServiceTimeProvider, input.ServiceProfile);
 
-            List<ChannelResourcePlan> plans = ChannelResourcePlanResolver.Resolve(
-                input.Channels,
-                input.PhysicalResources,
-                input.TargetWait95,
-                input.ResourceDomain,
-                Warnings.Add);
+            List<ChannelResourcePlan> plans = ResolvePlans(input);
 
             if (serviceTimeProvider == null)
             {
@@ -83,8 +81,15 @@ namespace AirportPlanning.Facilities.Security
             finalResult.PhysicalPerChannel = solve.PhysicalPerChannel;
             finalResult.ActivePerChannel = solve.ActivePerChannel;
             finalResult.Wait95PerChannel = solve.Wait95PerChannel;
+            finalResult.PoolNames = solve.PoolNames;
+            finalResult.NominalPerChannel = plans
+                .Select(p => p.PhysicalResources)
+                .ToList();
             finalResult.PoolResults = solve.PoolResults;
             finalResult.SearchOutcomes = solve.SearchOutcomes;
+
+            PoolPlanResolver.WarnOnEmptyPools(plans, solve.PoolResults, Warnings.Add);
+            PoolPlanResolver.WarnOnUncoveredChannels(plans, input.Channels, Warnings.Add);
 
             results.BaselineProcessorCount = _cachedBaselinePhysical;
             results.PhysicalProcessorCount = solve.TotalPhysical;
@@ -93,6 +98,39 @@ namespace AirportPlanning.Facilities.Security
             AdvancePassengers(solve.Processed);
 
             return finalResult;
+        }
+
+        /// <summary>
+        /// Resolves channel resource plans from keyed PoolPlans when supplied,
+        /// otherwise falls back to the legacy PhysicalResources/TargetWait95
+        /// lists with a shared ResourceDomain.
+        /// </summary>
+        private List<ChannelResourcePlan> ResolvePlans(SecurityInputs input)
+        {
+            ResourceSearchRange fallbackDomain =
+                input.ResourceDomain ?? new ResourceSearchRange(
+                    1, ChannelResourcePlanResolver.DefaultMaxResources);
+
+            if (input.PoolPlans != null && input.PoolPlans.Count > 0)
+            {
+                return PoolPlanResolver.Resolve(
+                    input.PoolPlans, fallbackDomain, Warnings.Add)
+                    ?? ResolveLegacyPlans(input, fallbackDomain);
+            }
+
+            return ResolveLegacyPlans(input, fallbackDomain);
+        }
+
+        private List<ChannelResourcePlan> ResolveLegacyPlans(
+            SecurityInputs input,
+            ResourceSearchRange fallbackDomain)
+        {
+            return ChannelResourcePlanResolver.Resolve(
+                input.Channels,
+                input.PhysicalResources,
+                input.TargetWait95,
+                fallbackDomain,
+                Warnings.Add);
         }
     }
 }

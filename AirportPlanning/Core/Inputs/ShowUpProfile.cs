@@ -237,6 +237,59 @@ namespace AirportPlanning.Core.Inputs
             return BlockMinutes - ((index + 1) * (BlockMinutes / ChunkCount));
         }
 
+        /// <summary>
+        /// Draws a normalized position through the curve, from 0 (the start of
+        /// the interval) to 1 (its end). The band shares say how much of the
+        /// population lies in each slice; within a slice the position is
+        /// uniform. Schedule generation uses this to stretch the same curve
+        /// over each profile's actual STD-relative interval.
+        /// </summary>
+        public double SampleNormalizedElapsed(Random random)
+        {
+            if (random == null)
+                throw new ArgumentNullException(nameof(random));
+
+            if (Bands == null || Bands.Count == 0)
+                return random.NextDouble();
+
+            int count = Bands.Count;
+            double total = 0.0;
+
+            for (int i = 0; i < count; i++)
+            {
+                double value = Bands[i];
+
+                if (!double.IsNaN(value) && value > 0.0)
+                    total += value;
+            }
+
+            if (total <= 0.0)
+                return random.NextDouble();
+
+            double draw = random.NextDouble() * total;
+            double cumulative = 0.0;
+
+            for (int i = 0; i < count; i++)
+            {
+                double value = Bands[i];
+
+                if (double.IsNaN(value) || value <= 0.0)
+                    continue;
+
+                cumulative += value;
+
+                if (draw <= cumulative || i == count - 1)
+                {
+                    double within = value <= 0.0 ? 0.0 : (draw - (cumulative - value)) / value;
+                    within = within < 0.0 ? 0.0 : (within > 1.0 ? 1.0 : within);
+
+                    return (i + within) / count;
+                }
+            }
+
+            return 1.0;
+        }
+
         /// <summary>Recomputes W15/W30/W60 from the bands.</summary>
         public void RefreshWindowShares()
         {

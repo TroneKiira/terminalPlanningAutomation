@@ -23,6 +23,14 @@ namespace AirportPlanning.Core.Models
         /// </summary>
         public List<QueueResource> Resources { get; set; }
 
+        /// <summary>
+        /// Server pools behind this result, in resource-list order. Each pool's
+        /// processor IDs restart at zero, so this is what keeps dedicated
+        /// channel pools apart when the results are merged.
+        /// </summary>
+        public List<ProcessorPoolInfo> ProcessorPools { get; set; } =
+            new List<ProcessorPoolInfo>();
+
         public int ResourcesUsed { get; set; }
 
         public double SimulationDuration { get; set; }
@@ -96,6 +104,17 @@ namespace AirportPlanning.Core.Models
         public List<QueueCumulativePoint> CumulativeFlow { get; set; } =
             new List<QueueCumulativePoint>();
 
+        /// <summary>
+        /// Per-pool queue history behind this facility result, in solver pool
+        /// order. Each entry keeps the pool's own timeline, cumulative flow and
+        /// metrics, so charts can separate independent channel/sector queues
+        /// that the facility-level aggregate otherwise folds together.
+        ///
+        /// Empty when the producer did not record pool detail.
+        /// </summary>
+        public List<QueuePoolResult> PoolResults { get; set; } =
+            new List<QueuePoolResult>();
+
         public QueueResults()
         {
             Passengers =
@@ -106,6 +125,9 @@ namespace AirportPlanning.Core.Models
 
             Resources =
                 new List<QueueResource>();
+
+            ProcessorPools =
+                new List<ProcessorPoolInfo>();
 
             CounterUtilization =
                 new List<double>();

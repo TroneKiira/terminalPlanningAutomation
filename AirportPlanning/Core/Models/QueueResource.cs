@@ -12,8 +12,15 @@ namespace AirportPlanning.Core.Models
 
         /// <summary>
         /// Earliest time this resource becomes available.
+        ///
+        /// A fresh resource is available before any simulated time, not at
+        /// time 0. Minute 0 is just a point on the simulation clock - midnight
+        /// for schedule-based runs - not a facility opening time. Pinning this
+        /// to 0 would make every passenger who arrives before midnight wait for
+        /// midnight, producing a fake queue that collapses at 0 instead of the
+        /// real queue building and draining across the boundary.
         /// </summary>
-        public double NextAvailableTime { get; set; }
+        public double NextAvailableTime { get; set; } = double.NegativeInfinity;
 
         /// <summary>
         /// Total time this resource spent serving passengers.
@@ -26,7 +33,7 @@ namespace AirportPlanning.Core.Models
         /// </summary>
         public void Reset()
         {
-            NextAvailableTime = 0.0;
+            NextAvailableTime = double.NegativeInfinity;
             BusyTime = 0.0;
         }
 

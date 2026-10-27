@@ -1,4 +1,4 @@
-﻿using AirportPlanning.Facility_Sizing.Base;
+using AirportPlanning.Facility_Sizing.Base;
 using AirportPlanning.Facility_Sizing.Models;
 using AirportPlanning.Facility_Sizing.Standards;
 using System;
@@ -6,12 +6,21 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using static Rhino.UI.Controls.RenderContentMenu;
 
 namespace AirportPlanning.Facility_Sizing.Sizers
 {
     public class CheckInSizer : FacilitySizerBase
     {
+        /// <summary>
+        /// A check-in hall is the counters, kiosks and bag-drop units it has,
+        /// plus the queue in front of them, so it can be sized from routed
+        /// pool standards.
+        /// </summary>
+        protected override bool SupportsRoutedPoolAreas
+        {
+            get { return true; }
+        }
+
         protected override void CalculateProcessingArea()
         {
             var procZone = GetZone(ZoneType.Processing);

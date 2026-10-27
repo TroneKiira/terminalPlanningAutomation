@@ -93,6 +93,15 @@ namespace AirportPlanning.Components.Object_Creation
                 "Maximum minutes before scheduled departure that this profile arrives at the terminal (windowed generation).",
                 GH_ParamAccess.item,
                 150.0);
+
+            pManager.AddGenericParameter(
+                "Show-Up Profile",
+                "SUP",
+                "Optional departure show-up curve for this profile in schedule-driven generation. " +
+                "The curve is stretched from STD - Max Advance to STD - Min Advance. " +
+                "Leave unwired to use the generator's fallback curve.",
+                GH_ParamAccess.item);
+            pManager[11].Optional = true;
         }
 
         /// <summary>
@@ -124,6 +133,7 @@ namespace AirportPlanning.Components.Object_Creation
             ArrivalProfile arrivalProfile = null;
             double minAdvance = 60.0;
             double maxAdvance = 150.0;
+            ShowUpProfile departureShowUp = null;
 
             if (!DA.GetData(0, ref name))
                 return;
@@ -154,6 +164,7 @@ namespace AirportPlanning.Components.Object_Creation
 
             DA.GetData(9, ref minAdvance);
             DA.GetData(10, ref maxAdvance);
+            DA.GetData(11, ref departureShowUp);
 
             PassengerProfile profile =
                 new PassengerProfile
@@ -166,6 +177,7 @@ namespace AirportPlanning.Components.Object_Creation
                     ServiceTimeMultiplier = serviceTimeMultiplier,
                     MaleProbability = maleProb,
                     ArrivalProfile = arrivalProfile,
+                    DepartureShowUp = departureShowUp,
                     MinAdvanceMinutes = minAdvance,
                     MaxAdvanceMinutes = maxAdvance
                 };

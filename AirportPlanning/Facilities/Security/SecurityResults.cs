@@ -28,6 +28,12 @@ namespace AirportPlanning.Facilities.Security
 
         public QueueResults QueueResults { get; set; }
 
+        /// <summary>Pool names in output order, including plan-derived subpools.</summary>
+        public List<string> PoolNames { get; set; } = new List<string>();
+
+        /// <summary>Nominal physical resources per pool, in output order.</summary>
+        public List<int> NominalPerChannel { get; set; } = new List<int>();
+
         /// <summary>Physical lanes per dedicated channel pool (empty for a shared pool).</summary>
         public List<int> PhysicalPerChannel { get; set; } = new List<int>();
 

@@ -11,7 +11,17 @@ namespace AirportPlanning.Facility_Sizing.Models
         Queue,
         Processing,
         Support,
-        Circulation
+
+        /// <summary>Named areas added as a lump, outside the unit counts.</summary>
+        Fixed,
+
+        Circulation,
+
+        /// <summary>Mechanical, electrical and plumbing allowance.</summary>
+        Mechanical,
+
+        /// <summary>Structure allowance.</summary>
+        Structure
     }
 
     public enum PreferredAxis

@@ -106,10 +106,51 @@ namespace AirportPlanning.Core.Models
         public Inputs.DHPType DHPType { get; set; }
 
         /// <summary>
-        /// Scheduled flight departure time in simulation minutes. Assigned from
-        /// the passenger profile's advance range during windowed generation.
+        /// Scheduled flight departure time in simulation minutes. In schedule
+        /// mode this is the flight leg's actual STD, not a sampled time.
         /// </summary>
         public double ScheduledDepartureTime { get; set; }
+
+        /// <summary>
+        /// Scheduled flight arrival time in simulation minutes for arrival-leg
+        /// passengers. Zero for departure passengers and unscheduled runs.
+        /// </summary>
+        public double ScheduledArrivalTime { get; set; }
+
+        /// <summary>Stable flight-leg identity from the schedule import.</summary>
+        public string FlightLegId { get; set; } = string.Empty;
+
+        /// <summary>Shared identity of the arrival/departure turnaround.</summary>
+        public string FlightLinkId { get; set; } = string.Empty;
+
+        public string Airline { get; set; } = string.Empty;
+
+        public string FlightNumber { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Check-in counter opening time for this passenger's flight, in
+        /// absolute schedule minutes. NaN when no window was applied.
+        /// </summary>
+        public double CheckInOpenTime { get; set; } = double.NaN;
+
+        /// <summary>
+        /// Last-admission time for this passenger's flight, in absolute
+        /// schedule minutes. NaN when no window was applied.
+        /// </summary>
+        public double CheckInLastAdmissionTime { get; set; } = double.NaN;
+
+        /// <summary>
+        /// True when the projected check-in arrival is after last admission.
+        /// The passenger's time is retained and flagged; it is not silently
+        /// pulled forward.
+        /// </summary>
+        public bool IsLateForCheckIn { get; set; }
+
+        /// <summary>
+        /// True when the projected check-in arrival is before the counters open.
+        /// The passenger may wait for service to begin.
+        /// </summary>
+        public bool ArrivedBeforeCheckInOpen { get; set; }
 
         /// <summary>
         /// Deterministic fingerprint of the show-up profile that shaped this
@@ -218,6 +259,15 @@ namespace AirportPlanning.Core.Models
                 WaveId = this.WaveId,
                 DHPType = this.DHPType,
                 ScheduledDepartureTime = this.ScheduledDepartureTime,
+                ScheduledArrivalTime = this.ScheduledArrivalTime,
+                FlightLegId = this.FlightLegId,
+                FlightLinkId = this.FlightLinkId,
+                Airline = this.Airline,
+                FlightNumber = this.FlightNumber,
+                CheckInOpenTime = this.CheckInOpenTime,
+                CheckInLastAdmissionTime = this.CheckInLastAdmissionTime,
+                IsLateForCheckIn = this.IsLateForCheckIn,
+                ArrivedBeforeCheckInOpen = this.ArrivedBeforeCheckInOpen,
                 ShowUpSignature = this.ShowUpSignature,
                 History = new Dictionary<FacilityType, FacilityRecord>()
             };

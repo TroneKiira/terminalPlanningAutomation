@@ -44,11 +44,14 @@ namespace AirportPlanning.Components.SimulationComponent
             pManager.AddTextParameter("Channels", "CH", "Optional channels. Empty keeps one shared pool; otherwise each channel gets its own dedicated pool sized independently.", GH_ParamAccess.list);
             pManager[7].Optional = true;
 
-            pManager.AddGenericParameter("Service Profiles", "SP-MAP", "Optional per-passenger service-time map (Service Time Map). Supersedes Service Profile when wired. Keys may be a profile name, a channel name, or 'profile|channel'.", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Service Profiles", "SP-MAP", "Optional per-passenger service-time map (Service Time Map). Supersedes Service Profile when wired. Keys may use 'Channel|DHPType|ProfileName' (same as a Pool Plan identity), a profile name, a channel name, or 'profile|channel'.", GH_ParamAccess.item);
             pManager[8].Optional = true;
 
             pManager.AddIntervalParameter("Resource Domain", "RD", "Inclusive bounds for the optimizer's physical-booth search, broadcast to every channel. Default 1 to 1200.", GH_ParamAccess.item, new Interval(1, ChannelResourcePlanResolver.DefaultMaxResources));
             pManager[9].Optional = true;
+
+            pManager.AddGenericParameter("Pool Plans", "PP", "Optional keyed pool plans (Pool Plans component). When wired, they define each pool's nominal resources, target wait and resource domain.", GH_ParamAccess.list);
+            pManager[10].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -61,6 +64,7 @@ namespace AirportPlanning.Components.SimulationComponent
             pManager.AddIntegerParameter("Active per Pool", "BAP", "Staffed booths per pool, in output order.", GH_ParamAccess.list);
             pManager.AddNumberParameter("Wait 95 per Pool", "WPP", "Whole-run 95th percentile wait per pool, in output order.", GH_ParamAccess.list);
             pManager.AddGenericParameter("Search Outcomes", "SO", "Optimizer search outcomes per pool, including every (capacity, Wait95) point evaluated. Feed an Optimizer Chart.", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("Nominal per Pool", "NPP", "Nominal (PNR) physical booths per pool, before optimization.", GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -74,6 +78,7 @@ namespace AirportPlanning.Components.SimulationComponent
             double seedDbl = 1.0;
             List<string> channels = new List<string>();
             object rawServiceProfiles = null;
+            List<object> rawPoolPlans = new List<object>();
             Interval domain = Interval.Unset;
 
             if (!DA.GetDataList(0, inPassengers)) return;
@@ -86,9 +91,11 @@ namespace AirportPlanning.Components.SimulationComponent
             DA.GetDataList(7, channels);
             DA.GetData(8, ref rawServiceProfiles);
             DA.GetData(9, ref domain);
+            DA.GetDataList(10, rawPoolPlans);
 
             IServiceTimeProvider serviceTimeProvider =
                 ComponentDataHelpers.Unwrap<IServiceTimeProvider>(rawServiceProfiles);
+            List<PoolPlan> poolPlans = UnwrapPoolPlans(rawPoolPlans);
 
             ImmigrationInputs input = new ImmigrationInputs
             {
@@ -99,6 +106,7 @@ namespace AirportPlanning.Components.SimulationComponent
                 PhysicalResources = ToIntList(boothsDbl),
                 OptimizeResources = optimize,
                 TargetWait95 = targetWaits,
+                PoolPlans = poolPlans,
                 Seed = (int)Math.Round(seedDbl),
                 StaffingPercentage = staffingPercentage,
                 ResourceDomain = FacilityComponentInput.ToResourceDomain(domain)
@@ -114,11 +122,30 @@ namespace AirportPlanning.Components.SimulationComponent
             DA.SetDataList(0, results.Passengers);
             DA.SetData(1, results);
             DA.SetData(2, finalResult.PhysicalCounters);
-            DA.SetDataList(3, FacilityComponentInput.GetPoolNames(channels));
+            DA.SetDataList(3, finalResult.PoolNames);
             DA.SetDataList(4, finalResult.PhysicalPerChannel);
             DA.SetDataList(5, finalResult.ActivePerChannel);
-            DA.SetDataList(6, FacilityComponentInput.GetWaitPerPool(finalResult.Wait95PerChannel, results, channels));
+            DA.SetDataList(6, FacilityComponentInput.GetWaitForPools(
+                finalResult.Wait95PerChannel, results, finalResult.PoolNames));
             DA.SetDataList(7, finalResult.SearchOutcomes ?? new List<ResourceSearchOutcome>());
+            DA.SetDataList(8, finalResult.NominalPerChannel);
+        }
+
+        private static List<PoolPlan> UnwrapPoolPlans(List<object> raw)
+        {
+            List<PoolPlan> plans = new List<PoolPlan>();
+
+            if (raw == null)
+                return plans;
+
+            foreach (object item in raw)
+            {
+                PoolPlan plan = ComponentDataHelpers.Unwrap<PoolPlan>(item);
+                if (plan != null)
+                    plans.Add(plan);
+            }
+
+            return plans;
         }
 
         private static List<int> ToIntList(List<double> values)

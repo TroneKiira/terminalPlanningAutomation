@@ -1,10 +1,19 @@
-﻿using AirportPlanning.Facility_Sizing.Base;
+using AirportPlanning.Facility_Sizing.Base;
 using AirportPlanning.Facility_Sizing.Models;
 
 namespace AirportPlanning.Facility_Sizing.Sizers
 {
     public class BagDropSizer : FacilitySizerBase
     {
+        /// <summary>
+        /// A bag-drop hall is the units it has and the queue in front of
+        /// them, so it can be sized from routed pool standards.
+        /// </summary>
+        protected override bool SupportsRoutedPoolAreas
+        {
+            get { return true; }
+        }
+
         protected override void CalculateProcessingArea()
         {
             var procZone = GetZone(ZoneType.Processing);

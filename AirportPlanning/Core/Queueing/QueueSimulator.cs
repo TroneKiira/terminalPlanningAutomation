@@ -53,6 +53,11 @@ namespace AirportPlanning.Core.Queueing
 
                 QueueResource resource = heap.Pop();
 
+                // Service may start before minute 0: arrivals use the schedule
+                // clock, so early-morning flights correctly produce check-in
+                // arrivals on the previous evening. Resources start available
+                // before any simulated time, so a negative arrival is served at
+                // its own arrival time rather than being held for midnight.
                 passenger.StartServiceTime = Math.Max(passenger.ArrivalTime, resource.NextAvailableTime);
                 passenger.WaitTime = passenger.StartServiceTime - passenger.ArrivalTime;
                 passenger.EndServiceTime = passenger.StartServiceTime + passenger.ServiceTime;

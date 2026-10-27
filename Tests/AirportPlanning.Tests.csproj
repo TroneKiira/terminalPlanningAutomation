@@ -24,7 +24,14 @@
          Core\Charts is presentation code: it pulls in OxyPlot and System.Drawing
          and has no place in the domain test harness. -->
     <Compile Include="..\AirportPlanning\Core\**\*.cs" Exclude="..\AirportPlanning\Core\Charts\**\*.cs" />
+    <Compile Include="..\AirportPlanning\Core\Charts\ChartText.cs" />
     <Compile Include="..\AirportPlanning\Facilities\**\*.cs" />
+
+    <!-- The facility sizing layer is plain domain code: the standards, the
+         area build-up and the per-facility sizing rules. It carries no
+         Grasshopper or Rhino dependency, so the area calculation is testable
+         here rather than only in the canvas. -->
+    <Compile Include="..\AirportPlanning\Facility Sizing\**\*.cs" />
   </ItemGroup>
 
 </Project>

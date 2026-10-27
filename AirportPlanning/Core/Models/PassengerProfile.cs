@@ -51,20 +51,32 @@ namespace AirportPlanning.Core.Models
         /// </summary>
         public double ServiceTimeMultiplier { get; set; }
 
+        /// <summary>
+        /// Legacy Gaussian arrival profile. Only the legacy Passenger Generator
+        /// consumes it; the windowed and schedule-driven generators ignore it.
+        /// </summary>
         public ArrivalProfile ArrivalProfile { get; set; }
+
+        /// <summary>
+        /// Departure show-up curve used by the schedule-driven generator. It is
+        /// stretched over this profile's MinAdvance/MaxAdvance interval. Null
+        /// means the generator's fallback curve is used.
+        /// </summary>
+        public ShowUpProfile DepartureShowUp { get; set; }
 
         public double MaleProbability { get; set; }
 
         /// <summary>
-        /// Minimum time before scheduled departure that this profile arrives at
-        /// the terminal (minutes). Used to assign a per-passenger departure time
-        /// in windowed generation.
+        /// Earliest time before scheduled departure that this profile reaches its
+        /// selected arrival reference (minutes). In schedule mode this is the end
+        /// of the CDF interval (STD - MinAdvance).
         /// </summary>
         public double MinAdvanceMinutes { get; set; } = 60.0;
 
         /// <summary>
-        /// Maximum time before scheduled departure that this profile arrives at
-        /// the terminal (minutes).
+        /// Latest time before scheduled departure that this profile reaches its
+        /// selected arrival reference (minutes). In schedule mode this is the
+        /// start of the CDF interval (STD - MaxAdvance).
         /// </summary>
         public double MaxAdvanceMinutes { get; set; } = 150.0;
 

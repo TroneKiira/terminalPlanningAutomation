@@ -14,8 +14,25 @@ namespace AirportPlanning.Core.Inputs
     /// Presets are neutral (Profile 1/2/3); Profile 1 is the most concentrated,
     /// Profile 3 the flattest and sits on the 0.50 floor at 30 minutes.
     /// </summary>
+    public enum AirportSizeBand
+    {
+        Small,
+        Medium,
+        Large
+    }
+
     public class DeplaningProfile : WindowShareProfile
     {
+        /// <summary>
+        /// Report default boundary: small airports are up to 10 mppa.
+        /// </summary>
+        public const double SmallUpperMppa = 10.0;
+
+        /// <summary>
+        /// Report default boundary: medium airports are above 10 and up to 25 mppa.
+        /// </summary>
+        public const double MediumUpperMppa = 25.0;
+
         public DeplaningProfile()
         {
             Name = "Custom";
@@ -30,6 +47,43 @@ namespace AirportPlanning.Core.Inputs
         public static DeplaningProfile Profile1()
         {
             return new DeplaningProfile("Profile 1", 0.45, 0.70, 1.00);
+        }
+
+        /// <summary>
+        /// Selects the authored default band from a target annual passenger
+        /// throughput in millions. This is a preset for sizing windows, not a
+        /// minute-by-minute arrival curve.
+        /// </summary>
+        public static AirportSizeBand BandForMppa(double targetMppa)
+        {
+            // No usable target: the report starts new projects on Medium.
+            if (double.IsNaN(targetMppa) || double.IsInfinity(targetMppa) || targetMppa <= 0.0)
+                return AirportSizeBand.Medium;
+
+            if (targetMppa <= SmallUpperMppa)
+                return AirportSizeBand.Small;
+
+            if (targetMppa <= MediumUpperMppa)
+                return AirportSizeBand.Medium;
+
+            return AirportSizeBand.Large;
+        }
+
+        /// <summary>
+        /// Authored deplaning sizing default for the selected airport size.
+        /// Values come from MODELS_REPORT.tex and remain editable after prefill.
+        /// </summary>
+        public static DeplaningProfile FromAirportSize(double targetMppa)
+        {
+            switch (BandForMppa(targetMppa))
+            {
+                case AirportSizeBand.Small:
+                    return new DeplaningProfile("Small (Profile 1)", 0.45, 0.70, 1.00);
+                case AirportSizeBand.Large:
+                    return new DeplaningProfile("Large (Profile 3)", 0.35, 0.50, 1.00);
+                default:
+                    return new DeplaningProfile("Medium (Profile 2)", 0.40, 0.60, 1.00);
+            }
         }
 
         /// <summary>Middle shipped curve (40 / 60 / 100).</summary>

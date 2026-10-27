@@ -2,6 +2,7 @@ using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Queueing;
 using AirportPlanning.Core.Inputs;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AirportPlanning.Facilities
 {
@@ -15,17 +16,25 @@ namespace AirportPlanning.Facilities
 
         public BagDropResults Solve(BagDropInputs input)
         {
+            Warnings.Clear();
+
             BagDropResults finalResult = new BagDropResults();
 
-            IServiceTimeProvider serviceTimeProvider =
-                ResolveServiceTimeProvider(input.ServiceTimeProvider, input.ServiceProfile);
+            IServiceTimeProvider serviceTimeProvider = ResolveServiceTimeProvider(input.ServiceTimeProvider, input.ServiceProfile);
 
-            List<ChannelResourcePlan> plans = ChannelResourcePlanResolver.Resolve(
-                input.Channels,
-                input.PhysicalResources,
-                input.TargetWait95,
-                input.ResourceDomain,
-                Warnings.Add);
+            List<ChannelResourcePlan> plans = ResolvePlans(input);
+
+            int alreadyDropped = input.Passengers == null
+                ? 0
+                : input.Passengers.Count(p =>
+                    p != null && p.RequiresBagDrop && HasBagDropHistory(p));
+
+            if (alreadyDropped > 0)
+            {
+                Warnings.Add(
+                    $"{alreadyDropped} passenger(s) already carry a Bag Drop record, for example " +
+                    "from the Check-In BagDrop channel, and are not served again.");
+            }
 
             if (serviceTimeProvider == null)
             {
@@ -62,7 +71,7 @@ namespace AirportPlanning.Facilities
                 cacheHit ? _cachedOutcomes : null,
                 out outcomes,
                 Warnings.Add,
-                IsDeparturePassenger);
+                p => IsDeparturePassenger(p) && !HasBagDropHistory(p));
 
             if (!cacheHit && input.OptimizeResources && outcomes != null)
             {
@@ -81,8 +90,15 @@ namespace AirportPlanning.Facilities
             finalResult.PhysicalPerChannel = solve.PhysicalPerChannel;
             finalResult.ActivePerChannel = solve.ActivePerChannel;
             finalResult.Wait95PerChannel = solve.Wait95PerChannel;
+            finalResult.PoolNames = solve.PoolNames;
+            finalResult.NominalPerChannel = plans
+                .Select(p => p.PhysicalResources)
+                .ToList();
             finalResult.PoolResults = solve.PoolResults;
             finalResult.SearchOutcomes = solve.SearchOutcomes;
+
+            PoolPlanResolver.WarnOnEmptyPools(plans, solve.PoolResults, Warnings.Add);
+            PoolPlanResolver.WarnOnUncoveredChannels(plans, input.Channels, Warnings.Add);
 
             results.BaselineProcessorCount = _cachedBaselinePhysical;
             results.PhysicalProcessorCount = solve.TotalPhysical;
@@ -91,6 +107,45 @@ namespace AirportPlanning.Facilities
             AdvancePassengers(solve.Processed);
 
             return finalResult;
+        }
+
+        private static bool HasBagDropHistory(Passenger passenger)
+        {
+            return passenger?.History != null &&
+                   passenger.History.ContainsKey(FacilityType.BagDrop);
+        }
+
+        /// <summary>
+        /// Resolves channel resource plans from keyed PoolPlans when supplied,
+        /// otherwise falls back to the legacy PhysicalResources/TargetWait95
+        /// lists with a shared ResourceDomain.
+        /// </summary>
+        private List<ChannelResourcePlan> ResolvePlans(BagDropInputs input)
+        {
+            ResourceSearchRange fallbackDomain =
+                input.ResourceDomain ?? new ResourceSearchRange(
+                    1, ChannelResourcePlanResolver.DefaultMaxResources);
+
+            if (input.PoolPlans != null && input.PoolPlans.Count > 0)
+            {
+                return PoolPlanResolver.Resolve(
+                    input.PoolPlans, fallbackDomain, Warnings.Add)
+                    ?? ResolveLegacyPlans(input, fallbackDomain);
+            }
+
+            return ResolveLegacyPlans(input, fallbackDomain);
+        }
+
+        private List<ChannelResourcePlan> ResolveLegacyPlans(
+            BagDropInputs input,
+            ResourceSearchRange fallbackDomain)
+        {
+            return ChannelResourcePlanResolver.Resolve(
+                input.Channels,
+                input.PhysicalResources,
+                input.TargetWait95,
+                fallbackDomain,
+                Warnings.Add);
         }
     }
 }

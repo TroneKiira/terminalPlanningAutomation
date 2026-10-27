@@ -23,7 +23,8 @@ namespace AirportPlanning.Components.Object_Creation
 
         public CreateShowUpProfile()
           : base("Show-Up Profile", "SUP",
-            "Arrival show-up curve for a passenger type across the hour before departure. Leisure, Business and Mix presets, or a custom W15/W30/W60 fit.",
+            "Departure show-up curve. Leisure, Business and Mix presets or a custom W15/W30/W60 fit. " +
+            "In schedule mode the same normalized curve is stretched across each profile's Min/Max advance interval.",
             "Airport Planning", "Object Creation")
         {
         }

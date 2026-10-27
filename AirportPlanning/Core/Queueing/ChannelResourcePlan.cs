@@ -47,6 +47,10 @@ namespace AirportPlanning.Core.Queueing
     /// <summary>
     /// The sizing plan for one server pool. A pool is either a single facility-wide
     /// queue (legacy behaviour) or the dedicated queue of one passenger channel.
+    /// A pool can be further subdivided by a <see cref="PoolKey"/>, which splits
+    /// one channel's passengers into separate queues (e.g. Counter split by
+    /// sector and class: Domestic Economy, Domestic Business, International
+    /// Economy, International Business).
     /// </summary>
     public class ChannelResourcePlan
     {
@@ -55,6 +59,14 @@ namespace AirportPlanning.Core.Queueing
         /// case, where every passenger shares one queue.
         /// </summary>
         public string Channel { get; set; }
+
+        /// <summary>
+        /// Optional sub-key within a channel that splits this channel's
+        /// passengers into separate pools. The expected format is
+        /// "DHPType|ProfileName" (e.g. "DomesticDeparture|Economy"). When null
+        /// or empty, the whole channel forms one pool.
+        /// </summary>
+        public string PoolKey { get; set; }
 
         /// <summary>
         /// Physical resources to simulate when optimization is switched off.
@@ -82,6 +94,21 @@ namespace AirportPlanning.Core.Queueing
         }
 
         /// <summary>
+        /// Composite identity used for cache keys, pool names and per-pool
+        /// wait lookups. When a PoolKey is set the identity is
+        /// "Channel|PoolKey"; otherwise it is just the channel name.
+        /// </summary>
+        public string PoolIdentity
+        {
+            get
+            {
+                if (!string.IsNullOrWhiteSpace(PoolKey))
+                    return $"{Channel}|{PoolKey}";
+                return Channel ?? string.Empty;
+            }
+        }
+
+        /// <summary>
         /// Server count actually simulated, derived from the physical count and
         /// the staffing percentage.
         /// </summary>
@@ -99,9 +126,14 @@ namespace AirportPlanning.Core.Queueing
 
         public override string ToString()
         {
-            return IsSharedPool
-                ? $"shared[{Range}]"
-                : $"{Channel}[{Range}]";
+            if (IsSharedPool)
+                return $"shared[{Range}]";
+
+            string identity = !string.IsNullOrWhiteSpace(PoolKey)
+                ? $"{Channel}|{PoolKey}"
+                : Channel;
+
+            return $"{identity}[{Range}]";
         }
     }
 }
