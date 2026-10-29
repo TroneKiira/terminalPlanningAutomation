@@ -14,6 +14,8 @@ namespace AirportPlanning.Core.Generation
 
         public List<ArrivalSimulationResult> ArrivalSimulations { get; set; }
 
+        public TransferDemandResult TransferDemand { get; set; }
+
         public PassengerGenerationResult()
         {
             Passengers = new List<Passenger>();

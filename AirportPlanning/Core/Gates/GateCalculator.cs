@@ -12,16 +12,14 @@ namespace AirportPlanning.Core.Gates
     /// separately here, because adding a stand to a floor area would be
     /// meaningless.
     ///
-    /// The stand count is the ICAO peak-hour method: a stand is held while
-    /// an aircraft is on it, so the requirement is movements multiplied by
-    /// how long each holds one.
+    /// Stand demand is either the ICAO peak-hour model or aircraft-on-ground
+    /// peaks from a linked design-day schedule. Schedule demand takes priority.
     ///
     /// The lounge is sized on the planeload the aircraft brings: seats
     /// standing, seats sitting, the queue waiting to board, and a podium.
     ///
-    /// Nothing here depends on a flight schedule. A schedule-derived
-    /// aircraft-on-ground count is a different method and would replace the
-    /// movements, not the method.
+    /// Lounge sizing is shared by both demand methods and uses each aircraft
+    /// code's own passenger profile.
     /// </summary>
     public static class GateCalculator
     {
@@ -33,11 +31,13 @@ namespace AirportPlanning.Core.Gates
         /// </summary>
         public static GateSizingResult Calculate(
             List<GateCodeInput> codes,
-            GateStandards standards)
+            GateStandards standards,
+            GateScheduleDemand scheduleDemand = null,
+            List<GateLoungeProfile> loungeProfiles = null)
         {
             GateSizingResult result = new GateSizingResult();
 
-            if (codes == null || codes.Count == 0)
+            if ((codes == null || codes.Count == 0) && scheduleDemand == null)
             {
                 result.Warnings.Add("No aircraft codes were given, so no stands or lounges were sized.");
 
@@ -51,40 +51,62 @@ namespace AirportPlanning.Core.Gates
                 return result;
             }
 
-            List<GateCodeInput> usable = codes
+            List<GateCodeInput> usable = (codes ?? new List<GateCodeInput>())
                 .Where(c => c != null && !string.IsNullOrWhiteSpace(c.Code))
+                .GroupBy(c => c.Code.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
                 .ToList();
 
-            if (usable.Count == 0)
+            Dictionary<string, GateLoungeProfile> profiles = (loungeProfiles ?? new List<GateLoungeProfile>())
+                .Where(p => p != null && !string.IsNullOrWhiteSpace(p.Code))
+                .GroupBy(p => p.Code.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+            if (usable.Count == 0 && scheduleDemand == null)
             {
                 result.Warnings.Add("Every aircraft code was blank, so nothing was sized.");
 
                 return result;
             }
 
-            // ---- stands, per sector ----
-            SectorStands domestic = BuildSector(usable, standards, true);
-            SectorStands international = BuildSector(usable, standards, false);
+            result.ScheduleMode = scheduleDemand != null;
 
-            // ---- swing, capped at the smaller sector ----
+            // A linked schedule replaces peak ATMs, occupancy, manual swing,
+            // and max/active ratio. Lounge profiles and shared standards stay.
+            SectorStands domestic;
+            SectorStands international;
             Dictionary<string, int> swing = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (GateCodeInput code in usable)
+            if (scheduleDemand != null)
             {
-                int stated = standards.SwingFor(code.Code);
-                int cap = Math.Min(domestic.Rounded(code.Code), international.Rounded(code.Code));
+                if (scheduleDemand.Warnings != null)
+                    result.Warnings.AddRange(scheduleDemand.Warnings);
 
-                if (stated > cap)
+                domestic = BuildScheduleSector(scheduleDemand, standards, true, swing);
+                international = BuildScheduleSector(scheduleDemand, standards, false, swing);
+            }
+            else
+            {
+                domestic = BuildSector(usable, standards, true);
+                international = BuildSector(usable, standards, false);
+
+                foreach (GateCodeInput code in usable)
                 {
-                    result.Warnings.Add(string.Format(
-                        CultureInfo.InvariantCulture,
-                        "Swing stated for code {0} ({1}) is more than the smaller sector can give ({2}); it was capped.",
-                        code.Code,
-                        stated,
-                        cap));
-                }
+                    int stated = standards.SwingFor(code.Code);
+                    int cap = Math.Min(domestic.Rounded(code.Code), international.Rounded(code.Code));
 
-                swing[code.Code] = Math.Max(0, Math.Min(stated, cap));
+                    if (stated > cap)
+                    {
+                        result.Warnings.Add(string.Format(
+                            CultureInfo.InvariantCulture,
+                            "Swing stated for code {0} ({1}) is more than the smaller sector can give ({2}); it was capped.",
+                            code.Code,
+                            stated,
+                            cap));
+                    }
+
+                    swing[code.Code] = Math.Max(0, Math.Min(stated, cap));
+                }
             }
 
             GateBucketStands domBucket = BuildBucket(
@@ -102,18 +124,38 @@ namespace AirportPlanning.Core.Gates
 
             result.ActiveTotal = domBucket.Active + swingBucket.Active + intlBucket.Active;
             result.ContactTotal = domBucket.Contact + swingBucket.Contact + intlBucket.Contact;
-            result.BusTotal = domBucket.Bus + swingBucket.Bus + intlBucket.Bus;
+            int nonContact = domBucket.Bus + swingBucket.Bus + intlBucket.Bus;
+            double remotePerBusGate = Math.Max(0.0, standards.RemoteStandsPerBusGate);
 
-            result.RemoteActive = (int)Math.Ceiling(
-                result.BusTotal * Math.Max(0.0, standards.RemoteStandsPerBusGate));
+            if (scheduleDemand != null)
+            {
+                // Schedule mode measures remote stands and derives bus gates.
+                result.RemoteActive = nonContact;
+                result.BusTotal = remotePerBusGate > 0.0
+                    ? (int)Math.Ceiling(nonContact / remotePerBusGate - 1e-9)
+                    : nonContact;
+            }
+            else
+            {
+                result.BusTotal = nonContact;
+                result.RemoteActive = (int)Math.Ceiling(result.BusTotal * remotePerBusGate - 1e-9);
+            }
 
             result.MaxStands = (int)Math.Ceiling(
-                result.ActiveTotal * Math.Max(0.0, standards.MaxStandsRatio));
+                result.ActiveTotal * (scheduleDemand != null ? 1.0 : Math.Max(0.0, standards.MaxStandsRatio)) - 1e-9);
 
             result.NetRemote = Math.Max(0, result.MaxStands - result.ContactTotal);
 
             // ---- lounges ----
-            BuildLounges(result, usable, standards, domBucket, swingBucket, intlBucket);
+            BuildLounges(
+                result,
+                profiles,
+                standards,
+                scheduleDemand != null,
+                result.BusTotal,
+                domBucket,
+                swingBucket,
+                intlBucket);
 
             result.NetArea = result.HoldArea + result.PodiumArea + result.QueueArea;
 
@@ -141,9 +183,12 @@ namespace AirportPlanning.Core.Gates
             foreach (GateCodeInput code in codes)
             {
                 int movements = domestic ? code.DomesticAtms : code.InternationalAtms;
+                double occupancy = domestic
+                    ? code.DomesticOccupancyMinutes
+                    : code.InternationalOccupancyMinutes;
 
                 double standHours = movements > 0
-                    ? (movements * Math.Max(0.0, code.OccupancyMinutes + standards.BufferMinutes)) / 60.0
+                    ? (movements * Math.Max(0.0, occupancy + standards.BufferMinutes)) / 60.0
                     : 0.0;
 
                 double need = standHours * (1.0 + Math.Max(0.0, standards.SparesPct));
@@ -160,6 +205,43 @@ namespace AirportPlanning.Core.Gates
 
             sector.Total = (int)Math.Ceiling(totalNeed - 1e-9);
             sector.SplitTotal = sector.Rows.Sum(r => r.Rounded);
+
+            return sector;
+        }
+
+        private static SectorStands BuildScheduleSector(
+            GateScheduleDemand demand,
+            GateStandards standards,
+            bool domestic,
+            Dictionary<string, int> swingByCode)
+        {
+            SectorStands sector = new SectorStands();
+
+            if (demand.Codes == null)
+                return sector;
+
+            foreach (GateScheduleCodeDemand code in demand.Codes
+                .Where(c => c != null && !string.IsNullOrWhiteSpace(c.Code)))
+            {
+                int combinedPeak = Math.Max(0, code.CombinedPeak);
+                int spare = (int)Math.Ceiling(
+                    combinedPeak * (1.0 + Math.Max(0.0, standards.SparesPct)) - 1e-9) - combinedPeak;
+                int swing = Math.Max(0, code.Swing) + Math.Max(0, spare);
+                int dedicated = domestic ? code.DedicatedDomestic : code.DedicatedInternational;
+                int perSector = Math.Max(0, dedicated) + swing;
+                string codeKey = code.Code.Trim().ToUpperInvariant();
+
+                sector.Rows.Add(new GateCodeStands
+                {
+                    Code = codeKey,
+                    Rounded = perSector,
+                    StandHours = 0.0
+                });
+
+                swingByCode[codeKey] = swing;
+                sector.Total += perSector;
+                sector.SplitTotal += perSector;
+            }
 
             return sector;
         }
@@ -229,10 +311,14 @@ namespace AirportPlanning.Core.Gates
         /// </summary>
         private static void BuildLounges(
             GateSizingResult result,
-            List<GateCodeInput> codes,
+            Dictionary<string, GateLoungeProfile> profiles,
             GateStandards standards,
+            bool scheduleMode,
+            int scheduleBusGates,
             params GateBucketStands[] buckets)
         {
+            HashSet<string> missingProfiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             foreach (GateBucketStands bucket in buckets)
             {
                 foreach (GateCodeStands code in bucket.Codes)
@@ -240,30 +326,75 @@ namespace AirportPlanning.Core.Gates
                     if (code.Rounded <= 0)
                         continue;
 
-                    GateCodeInput input = codes.FirstOrDefault(c => c.Code == code.Code);
+                    GateLoungeProfile input = profiles.TryGetValue(code.Code, out GateLoungeProfile profile)
+                        ? profile
+                        : null;
 
                     if (input == null)
+                    {
+                        if (missingProfiles.Add(code.Code))
+                            result.Warnings.Add($"No per-code lounge profile was supplied for aircraft code {code.Code}; its lounges have no area.");
+
+                        if (code.Contact > 0)
+                            AddUnprofiledLounge(result, code.Code, bucket.Bucket, code.Contact);
+
+                        if (!scheduleMode && code.Bus > 0 &&
+                            !profiles.ContainsKey("C"))
+                        {
+                            if (missingProfiles.Add("C"))
+                                result.Warnings.Add("No Code C lounge profile was supplied; bus-gate lounges have no area.");
+
+                            AddUnprofiledLounge(result, "C", bucket.Bucket, code.Bus);
+                        }
+
                         continue;
+                    }
 
                     if (code.Contact > 0)
                     {
                         AddLounge(result, input, code.Code, bucket.Bucket, code.Contact, standards);
                     }
 
-                    if (code.Bus > 0)
+                    if (!scheduleMode && code.Bus > 0)
                     {
-                        GateCodeInput busInput = codes.FirstOrDefault(c =>
-                            string.Equals(c.Code, standards.BusLoungeCode, StringComparison.OrdinalIgnoreCase)) ?? input;
+                        profiles.TryGetValue("C", out GateLoungeProfile busInput);
 
-                        AddLounge(result, busInput, standards.BusLoungeCode, bucket.Bucket, code.Bus, standards);
+                        if (busInput == null)
+                        {
+                            if (missingProfiles.Add("C"))
+                                result.Warnings.Add("No Code C lounge profile was supplied; bus-gate lounges have no area.");
+
+                            AddUnprofiledLounge(result, "C", bucket.Bucket, code.Bus);
+                        }
+                        else
+                        {
+                            AddLounge(result, busInput, "C", bucket.Bucket, code.Bus, standards);
+                        }
                     }
+                }
+            }
+
+            if (scheduleMode && scheduleBusGates > 0)
+            {
+                profiles.TryGetValue("C", out GateLoungeProfile busProfile);
+
+                if (busProfile == null)
+                {
+                    if (missingProfiles.Add("C"))
+                        result.Warnings.Add("No Code C lounge profile was supplied; bus-gate lounges have no area.");
+
+                    AddUnprofiledLounge(result, "C", "Bus", scheduleBusGates);
+                }
+                else
+                {
+                    AddLounge(result, busProfile, "C", "Bus", scheduleBusGates, standards);
                 }
             }
         }
 
         private static void AddLounge(
             GateSizingResult result,
-            GateCodeInput code,
+            GateLoungeProfile code,
             string loungeCode,
             string bucket,
             int count,
@@ -277,30 +408,47 @@ namespace AirportPlanning.Core.Gates
             result.QueueArea += lounge.QueueArea * lounge.Count;
         }
 
+        private static void AddUnprofiledLounge(
+            GateSizingResult result,
+            string loungeCode,
+            string bucket,
+            int count)
+        {
+            if (count <= 0)
+                return;
+
+            result.Lounges.Add(new GateLounge
+            {
+                Code = loungeCode,
+                Bucket = bucket,
+                Count = count
+            });
+        }
+
         /// <summary>
         /// One lounge: the hold room, the podium and the boarding queue.
         /// </summary>
         private static GateLounge BuildLounge(
-            GateCodeInput code,
+            GateLoungeProfile code,
             string loungeCode,
             string bucket,
             int count,
             GateStandards standards)
         {
-            double passengers = Math.Max(0, code.Seats) * Math.Min(1.0, Math.Max(0.0, standards.LoadFactor));
+            double passengers = Math.Max(0, code.Seats) * Math.Min(1.0, Math.Max(0.0, code.LoadFactor));
 
             double seated = passengers * Math.Min(1.0, Math.Max(0.0, code.SeatedPct));
             double standing = passengers * Math.Min(1.0, Math.Max(0.0, code.StandingPct));
             double queuePax = passengers * Math.Min(1.0, Math.Max(0.0, code.BoardingQueuePct));
 
-            double seatedArea = seated * Math.Max(0.0, standards.SeatedSpacePerPax);
+            double seatedArea = seated * Math.Max(0.0, standards.SeatedSpacePerPax) *
+                (1.0 + Math.Max(0.0, code.NextSeatAllowancePct));
             double standingArea = standing * Math.Max(0.0, standards.StandingSpacePerPax);
 
             double holdArea = (seatedArea + standingArea) *
-                (1.0 + Math.Max(0.0, standards.NextSeatAllowancePct)) *
-                (1.0 - Math.Min(1.0, Math.Max(0.0, standards.OpenLoungeReductionPct)));
+                (1.0 - Math.Min(1.0, Math.Max(0.0, code.OpenLoungeReductionPct)));
 
-            double podiumArea = Math.Max(0, standards.PodiumsPerLounge) * Math.Max(0.0, standards.PodiumAreaEach);
+            double podiumArea = Math.Max(0, code.PodiumsPerLounge) * Math.Max(0.0, standards.PodiumAreaEach);
 
             double queueArea = queuePax * Math.Max(0.0, standards.BoardingQueueSpacePerPax);
 

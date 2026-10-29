@@ -77,6 +77,13 @@ namespace AirportPlanning.Components.SimulationComponent
                 "Optional channel routing map. When wired it assigns a channel to each passenger at generation; otherwise the built-in routing (Counter / BagDrop / Web) is used.",
                 GH_ParamAccess.item);
             pManager[7].Optional = true;
+
+            pManager.AddGenericParameter(
+                "Transfer Demand Profile",
+                "TDP",
+                "Optional transfer assumptions from Transfer Demand Profile. Leave unwired for legacy behavior.",
+                GH_ParamAccess.item);
+            pManager[8].Optional = true;
         }
 
         /// <summary>
@@ -101,6 +108,12 @@ namespace AirportPlanning.Components.SimulationComponent
                 "AS",
                 "Arrival simulations generated for each passenger profile.",
                 GH_ParamAccess.list);
+
+            pManager.AddGenericParameter(
+                "Transfer Demand",
+                "TRD",
+                "Requested and effective transfer totals by market and scenario.",
+                GH_ParamAccess.item);
         }
 
         /// <summary>
@@ -123,6 +136,7 @@ namespace AirportPlanning.Components.SimulationComponent
             int simulationHorizon = 0;
             int seed = 1;
             IChannelAssigner channelAssigner = null;
+            TransferDemandProfile transferDemand = null;
 
             if (!DA.GetData(0, ref demand))
                 return;
@@ -146,6 +160,7 @@ namespace AirportPlanning.Components.SimulationComponent
                 return;
 
             DA.GetData(7, ref channelAssigner);
+            DA.GetData(8, ref transferDemand);
 
             PassengerGenerator generator =
                 new PassengerGenerator();
@@ -159,7 +174,8 @@ namespace AirportPlanning.Components.SimulationComponent
                     departureMinute,
                     simulationHorizon,
                     seed,
-                    channelAssigner);
+                    channelAssigner,
+                    transferDemand);
 
             DA.SetDataList(
                 0,
@@ -172,6 +188,7 @@ namespace AirportPlanning.Components.SimulationComponent
             DA.SetDataList(
                 2,
                 result.ArrivalSimulations);
+            DA.SetData(3, result.TransferDemand);
         }
 
         /// <summary>

@@ -764,7 +764,7 @@ namespace AirportPlanning.Facilities
                 .OrderBy(p => p.Id)
                 .ToList();
 
-            // FNV-1a 64-bit over the per-passenger schedule fields.
+            // FNV-1a 64-bit over the per-passenger schedule and check-in fields.
             const ulong offsetBasis = 14695981039346656037UL;
             const ulong prime = 1099511628211UL;
 
@@ -776,7 +776,52 @@ namespace AirportPlanning.Facilities
                 hash ^= bits;
                 hash *= prime;
 
+                bits = (ulong)BitConverter.DoubleToInt64Bits(passenger.QueueArrivalTime);
+                hash ^= bits;
+                hash *= prime;
+
+                bits = (ulong)BitConverter.DoubleToInt64Bits(passenger.CheckInOpenTime);
+                hash ^= bits;
+                hash *= prime;
+
+                bits = (ulong)BitConverter.DoubleToInt64Bits(passenger.CheckInLastAdmissionTime);
+                hash ^= bits;
+                hash *= prime;
+
+                hash ^= passenger.IsLateForCheckIn ? 1UL : 0UL;
+                hash *= prime;
+
                 hash ^= (uint)passenger.DHPType;
+                hash *= prime;
+
+                hash ^= (uint)passenger.Journey;
+                hash *= prime;
+
+                hash ^= passenger.TransferScenario.HasValue
+                    ? (uint)passenger.TransferScenario.Value + 1U
+                    : 0U;
+                hash *= prime;
+
+                if (passenger.TransferProcessing == null)
+                {
+                    hash ^= 0UL;
+                }
+                else
+                {
+                    TransferScenarioRules rules = passenger.TransferProcessing;
+                    ulong flags = 1UL;
+                    if (rules.RequiresTransferDesk) flags |= 1UL << 7;
+                    if (rules.RequiresSecurityScreening) flags |= 1UL << 1;
+                    if (rules.RequiresImmigration) flags |= 1UL << 2;
+                    if (rules.RequiresEmigration) flags |= 1UL << 3;
+                    if (rules.RequiresBaggageRecheck) flags |= 1UL << 4;
+                    if (rules.RequiresCheckIn) flags |= 1UL << 5;
+                    if (rules.RequiresBagDrop) flags |= 1UL << 6;
+                    if (rules.SecurityRouting == TransferFacilityRouting.Separate) flags |= 1UL << 8;
+                    if (rules.EmigrationRouting == TransferFacilityRouting.Separate) flags |= 1UL << 9;
+                    if (rules.ImmigrationRouting == TransferFacilityRouting.Separate) flags |= 1UL << 10;
+                    hash ^= flags;
+                }
                 hash *= prime;
 
                 hash ^= (uint)(passenger.DemandStepIndex + 2);
@@ -832,6 +877,26 @@ namespace AirportPlanning.Facilities
             }
 
             return builder.ToString();
+        }
+
+        /// <summary>
+        /// True when the resolved plans contain a dedicated pool for the given
+        /// channel. A shared plan does not count: its passengers are selected
+        /// by the facility predicate rather than by channel identity.
+        /// </summary>
+        protected static bool HasConfiguredChannel(
+            IList<ChannelResourcePlan> plans,
+            string channel)
+        {
+            if (plans == null || string.IsNullOrWhiteSpace(channel))
+                return false;
+
+            string trimmed = channel.Trim();
+
+            return plans.Any(plan =>
+                plan != null &&
+                !plan.IsSharedPool &&
+                string.Equals(plan.Channel, trimmed, StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>
@@ -1015,6 +1080,8 @@ namespace AirportPlanning.Facilities
 
                 Passenger clone = source.Clone();
 
+                PreparePoolPassenger(clone, source);
+
                 if (clones != null)
                     clones[source] = clone;
 
@@ -1035,6 +1102,18 @@ namespace AirportPlanning.Facilities
             AssignServiceTimes(pool, serviceTimeProvider, new Random(seed));
 
             return pool;
+        }
+
+        /// <summary>
+        /// Allows a facility to prepare a served passenger clone before it is
+        /// simulated. The upstream passenger remains untouched, and the
+        /// optimizer will reset the clone to its prepared QueueArrivalTime for
+        /// each capacity trial.
+        /// </summary>
+        protected virtual void PreparePoolPassenger(
+            Passenger passenger,
+            Passenger source)
+        {
         }
 
         /// <summary>

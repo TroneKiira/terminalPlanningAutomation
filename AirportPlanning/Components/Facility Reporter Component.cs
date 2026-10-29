@@ -95,7 +95,7 @@ namespace AirportPlanning.Components.Analysis
 
             string facilityName = "";
             string unitName = "";
-            bool isQueue = facilityType <= 3 || facilityType == 7;
+            bool isQueue = facilityType <= 3 || facilityType == 7 || facilityType == 8;
             bool isVerification = facilityType == 4;
             bool isBoarding = facilityType == 5;
             bool isRetail = facilityType == 6;
@@ -110,6 +110,7 @@ namespace AirportPlanning.Components.Analysis
                 case 5: facilityName = "BOARDING"; unitName = "Gates"; break;
                 case 6: facilityName = "RETAIL"; unitName = "Zones"; break;
                 case 7: facilityName = "TERMINAL ENTRY"; unitName = "Entry Positions"; break;
+                case 8: facilityName = "IMMIGRATION"; unitName = "Active Positions"; break;
                 default: facilityName = "FACILITY"; unitName = "Processors"; break;
             }
 

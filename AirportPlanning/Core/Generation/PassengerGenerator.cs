@@ -28,7 +28,8 @@ namespace AirportPlanning.Core.Generation
             int departureMinute,
             int horizon,
             int seed,
-            IChannelAssigner channelAssigner = null)
+            IChannelAssigner channelAssigner = null,
+            TransferDemandProfile transferDemand = null)
         {
             ValidateInputs(
                 demand,
@@ -89,6 +90,10 @@ namespace AirportPlanning.Core.Generation
                 passengers
                 .OrderBy(p => p.ArrivalTime)
                 .ToList();
+
+            result.TransferDemand = TransferPassengerTagger.ApplyAggregate(
+                result.Passengers,
+                transferDemand);
 
             foreach (Passenger passenger in result.Passengers)
             {

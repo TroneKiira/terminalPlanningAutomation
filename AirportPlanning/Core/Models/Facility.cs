@@ -37,6 +37,7 @@ namespace AirportPlanning.Core.Models
         PassengerVerification,
         DepartureLounge, // NEW: Added for retail dwell time
         Boarding,
-        TerminalEntry
+        TerminalEntry,
+        Immigration // Arrivals passport control; also serves I→D transfer flows
     }
 }

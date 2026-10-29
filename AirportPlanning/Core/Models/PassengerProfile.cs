@@ -33,6 +33,12 @@ namespace AirportPlanning.Core.Models
         public PassengerJourney Journey { get; set; }
 
         /// <summary>
+        /// Optional transfer connection type. When assigned, generated
+        /// passengers are tagged as transfers of this flow.
+        /// </summary>
+        public TransferScenario? TransferScenario { get; set; }
+
+        /// <summary>
         /// Probability that a passenger has already checked in online (0-1)
         /// </summary>
         public double OnlineCheckInProbability { get; set; }

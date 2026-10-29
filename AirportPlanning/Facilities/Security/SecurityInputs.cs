@@ -45,6 +45,14 @@ namespace AirportPlanning.Facilities.Security
         /// </summary>
         public List<PoolPlan> PoolPlans { get; set; } = new List<PoolPlan>();
 
+        /// <summary>
+        /// Channel identity that receives transfer flows whose scenario rules
+        /// set SecurityRouting to Separate. Configure a matching channel (and
+        /// pool plan) to give them a dedicated transfer-security pool; without
+        /// one they fall back to the shared pool and a warning is raised.
+        /// </summary>
+        public string TransferChannelName { get; set; } = "Transfer Security";
+
         public bool OptimizeResources { get; set; }
 
         public int Seed { get; set; }

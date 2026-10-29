@@ -36,7 +36,8 @@ namespace AirportPlanning.Core.Generation
             ShowUpProfile fallbackShowUp = null,
             IChannelAssigner channelAssigner = null,
             int designHourIndex = -1,
-            Action<string> warn = null)
+            Action<string> warn = null,
+            TransferDemandProfile transferDemand = null)
         {
             if (schedule == null)
                 throw new ArgumentNullException(nameof(schedule));
@@ -183,6 +184,17 @@ namespace AirportPlanning.Core.Generation
             }
 
             FinishResult(result, schedule, designHourIndex);
+
+            if (transferDemand != null)
+            {
+                result.TransferDemand = TransferPassengerTagger.ApplySchedule(
+                    result.Passengers,
+                    schedule,
+                    transferDemand);
+
+                foreach (string transferWarning in result.TransferDemand.Warnings)
+                    AddWarning(result, warned, warn, transferWarning);
+            }
 
             if (warn != null)
             {

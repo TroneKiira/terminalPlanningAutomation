@@ -102,6 +102,15 @@ namespace AirportPlanning.Components.Object_Creation
                 "Leave unwired to use the generator's fallback curve.",
                 GH_ParamAccess.item);
             pManager[11].Optional = true;
+
+            pManager.AddIntegerParameter(
+                "Transfer Scenario",
+                "TS",
+                "Optional transfer-flow profile: 0 = Domestic→Domestic, 1 = Domestic→International, " +
+                "2 = International→Domestic, 3 = International→International. Leave unset for a non-transfer profile.",
+                GH_ParamAccess.item,
+                -1);
+            pManager[12].Optional = true;
         }
 
         /// <summary>
@@ -134,6 +143,7 @@ namespace AirportPlanning.Components.Object_Creation
             double minAdvance = 60.0;
             double maxAdvance = 150.0;
             ShowUpProfile departureShowUp = null;
+            int transferScenario = -1;
 
             if (!DA.GetData(0, ref name))
                 return;
@@ -165,6 +175,15 @@ namespace AirportPlanning.Components.Object_Creation
             DA.GetData(9, ref minAdvance);
             DA.GetData(10, ref maxAdvance);
             DA.GetData(11, ref departureShowUp);
+            DA.GetData(12, ref transferScenario);
+
+            if (transferScenario < -1 || transferScenario > 3)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Error,
+                    "Transfer Scenario must be -1 (unset) or an integer from 0 to 3.");
+                return;
+            }
 
             PassengerProfile profile =
                 new PassengerProfile
@@ -172,6 +191,9 @@ namespace AirportPlanning.Components.Object_Creation
                     Name = name,
                     Percentage = percentage,
                     Journey = (PassengerJourney)journey,
+                    TransferScenario = transferScenario >= 0
+                        ? (TransferScenario?)transferScenario
+                        : null,
                     OnlineCheckInProbability = onlineCheckInProbability,
                     CheckedBagProbability = checkedBagProbability,
                     ServiceTimeMultiplier = serviceTimeMultiplier,

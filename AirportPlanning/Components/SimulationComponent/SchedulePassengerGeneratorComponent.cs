@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using AirportPlanning.Core.Generation;
 using AirportPlanning.Core.Inputs;
+using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Schedules;
 using AirportPlanning.Core.Walking;
 using Grasshopper.Kernel;
@@ -114,6 +115,12 @@ namespace AirportPlanning.Components.SimulationComponent
                 "Design Hour", "DH",
                 "Zero-based schedule hour to tag as the design step. -1 selects the busiest generated hour.",
                 GH_ParamAccess.item, -1);
+
+            pManager.AddGenericParameter(
+                "Transfer Demand Profile", "TDP",
+                "Optional transfer assumptions. Design Day applies via-route eligibility, connection-time rules and schedule caps.",
+                GH_ParamAccess.item);
+            pManager[16].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -193,6 +200,11 @@ namespace AirportPlanning.Components.SimulationComponent
                 "Issues", "I",
                 "Skipped legs, missing profiles and timing warnings.",
                 GH_ParamAccess.list);
+
+            pManager.AddGenericParameter(
+                "Transfer Demand", "TRD",
+                "Requested and schedule-feasible transfer totals by scenario.",
+                GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -213,6 +225,7 @@ namespace AirportPlanning.Components.SimulationComponent
             ShowUpProfile fallbackShowUp = null;
             IChannelAssigner channelAssigner = null;
             int designHour = -1;
+            TransferDemandProfile transferDemand = null;
 
             if (!DA.GetData(0, ref schedule) || schedule == null)
             {
@@ -248,6 +261,7 @@ namespace AirportPlanning.Components.SimulationComponent
             DA.GetData(13, ref fallbackShowUp);
             DA.GetData(14, ref channelAssigner);
             DA.GetData(15, ref designHour);
+            DA.GetData(16, ref transferDemand);
 
             CheckGroupPort(domesticDeparture, DHPType.DomesticDeparture, "Domestic Departure");
             CheckGroupPort(domesticArrival, DHPType.DomesticArrival, "Domestic Arrival");
@@ -315,7 +329,9 @@ namespace AirportPlanning.Components.SimulationComponent
                     arrivalDelay,
                     fallbackShowUp,
                     channelAssigner,
-                    designHour);
+                    designHour,
+                    null,
+                    transferDemand);
             }
             catch (Exception ex)
             {
@@ -337,6 +353,46 @@ namespace AirportPlanning.Components.SimulationComponent
                     ? $"Entry walk applied: {entryWalkDistance:0.##} m"
                     : "Entry walk: not applied");
             summary.Add($"Inbound delay assumption: STA + {arrivalDelay.MinimumMinutes:0.#}-{arrivalDelay.MaximumMinutes:0.#} min");
+            if (result.TransferDemand != null)
+            {
+                summary.Add(
+                    $"Transfer basis: all-day schedule departures " +
+                    $"(Domestic {result.TransferDemand.DomesticDepartureTotal}, " +
+                    $"International {result.TransferDemand.InternationalDepartureTotal})");
+                summary.Add($"Requested Domestic outbound transfers: {result.TransferDemand.RequestedDomesticTransferPassengers}");
+                summary.Add($"Requested International outbound transfers: {result.TransferDemand.RequestedInternationalTransferPassengers}");
+                summary.Add($"Effective Domestic outbound transfers: {result.TransferDemand.EffectiveDomesticTransferPassengers}");
+                summary.Add($"Effective International outbound transfers: {result.TransferDemand.EffectiveInternationalTransferPassengers}");
+                summary.Add(
+                    $"Tagged outbound transfers: {result.TransferDemand.TaggedTransferPassengers} " +
+                    $"(schedule-effective {result.TransferDemand.EffectiveTransferPassengers})");
+                summary.Add(
+                    $"Transfer departure peak (60 min): Domestic " +
+                    $"{result.TransferDemand.DomesticDepartureTransferPeak} at " +
+                    $"{SchedulePassengerGenerationResult.FormatMinute(result.TransferDemand.DomesticDepartureTransferPeakAt)}, " +
+                    $"International {result.TransferDemand.InternationalDepartureTransferPeak} at " +
+                    $"{SchedulePassengerGenerationResult.FormatMinute(result.TransferDemand.InternationalDepartureTransferPeakAt)}");
+                summary.Add(
+                    $"Transfer arrival peak (60 min): Domestic " +
+                    $"{result.TransferDemand.DomesticArrivalTransferPeak} at " +
+                    $"{SchedulePassengerGenerationResult.FormatMinute(result.TransferDemand.DomesticArrivalTransferPeakAt)}, " +
+                    $"International {result.TransferDemand.InternationalArrivalTransferPeak} at " +
+                    $"{SchedulePassengerGenerationResult.FormatMinute(result.TransferDemand.InternationalArrivalTransferPeakAt)}");
+
+                foreach (TransferScenario scenario in Enum.GetValues(typeof(TransferScenario)))
+                {
+                    TransferScenarioDemand flow = result.TransferDemand.ByScenario[scenario];
+                    summary.Add(
+                        $"{scenario.ToFlowLabel()}: {flow.EffectivePassengers} / " +
+                        $"{flow.RequestedPassengers} requested; {flow.TaggedPassengers} tagged");
+                }
+
+                foreach (string usage in result.TransferDemand.ServiceUsage.CreateSummaryLines())
+                    summary.Add("Daily " + usage);
+
+                foreach (string usage in result.TransferDemand.PeakServiceUsage.CreateSummaryLines())
+                    summary.Add("Peak " + usage);
+            }
 
             DA.SetDataList(0, result.Passengers);
             DA.SetData(1, result);
@@ -353,6 +409,7 @@ namespace AirportPlanning.Components.SimulationComponent
             DA.SetData(12, (double)result.CombinedPeakAt);
             DA.SetDataList(13, summary);
             DA.SetDataList(14, result.GenerationWarnings);
+            DA.SetData(15, result.TransferDemand);
         }
 
         private void CheckGroupPort(

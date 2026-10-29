@@ -30,6 +30,9 @@ namespace AirportPlanning.Tests
 
         public static int Main()
         {
+            RunTransferDemandTests();
+            RunTransferRoutingTests();
+            RunTransferServiceConsistencyTests();
             RunCountsAndWarmUp();
             RunWaveOffRespectsShowUp();
             RunDepartures();
@@ -67,6 +70,8 @@ namespace AirportPlanning.Tests
             RunScheduleGeneratorCheckInAndArrivals();
             RunScheduleCheckInLastAdmission();
             RunScheduleFallbacksAndRules();
+            RunFlightHourDemand();
+            RunCheckInOpeningGate();
 
             RunDHPTypeTagging();
             RunPerTypeDemandCounts();
@@ -86,9 +91,11 @@ namespace AirportPlanning.Tests
             RunInfeasibleTargetWarning();
             RunTerminalEntryQueueAndRouting();
             RunTerminalEntryScheduleTiming();
+            RunTerminalEntryTransfers();
             RunTerminalEntryOptimizer();
             RunTerminalEntryPoolPlans();
             RunTerminalEntrySizing();
+            RunModelDiagnosticsTests();
 
             Console.WriteLine();
             Console.WriteLine(_failures == 0
@@ -1138,7 +1145,7 @@ namespace AirportPlanning.Tests
             List<Passenger> passengers = new List<Passenger>();
             int id = 1;
 
-            void AddPassengers(string channel, DHPType type, string profile, int count, double arrival, bool online = false)
+            void AddPassengers(string channel, DHPType type, string profile, int count, double arrival, bool online = false, bool bag = false)
             {
                 for (int i = 0; i < count; i++)
                 {
@@ -1150,7 +1157,8 @@ namespace AirportPlanning.Tests
                         ProfileName = profile,
                         ArrivalTime = arrival + i * 0.01,
                         QueueArrivalTime = arrival + i * 0.01,
-                        UsesOnlineCheckIn = online
+                        UsesOnlineCheckIn = online,
+                        HasCheckedBag = bag
                     });
                 }
             }
@@ -1160,7 +1168,7 @@ namespace AirportPlanning.Tests
             AddPassengers("Counter", DHPType.InternationalDeparture, "Economy", 6, 0.0);
             AddPassengers("Counter", DHPType.InternationalDeparture, "Business", 5, 0.0);
             AddPassengers("Kiosk", DHPType.DomesticDeparture, "Economy", 4, 0.0);
-            AddPassengers("BagDrop", DHPType.InternationalDeparture, "Economy", 3, 0.0, online: true);
+            AddPassengers("BagDrop", DHPType.InternationalDeparture, "Economy", 3, 0.0, online: true, bag: true);
             AddPassengers("Counter", DHPType.DomesticArrival, "Economy", 2, 0.0);
             AddPassengers("Web", DHPType.DomesticDeparture, "Economy", 2, 0.0);
 
@@ -2827,6 +2835,34 @@ namespace AirportPlanning.Tests
         {
             Console.WriteLine("== Gate stands and lounges ==");
 
+            GateStandards blankStandards = new GateStandards();
+            Check(blankStandards.ContactPctDomestic == 0.0 &&
+                  blankStandards.ContactPctSwing == 0.0 &&
+                  blankStandards.ContactPctInternational == 0.0 &&
+                  blankStandards.RemoteStandsPerBusGate == 1.0 &&
+                  blankStandards.MaxStandsRatio == 1.0 &&
+                  new GateLoungeProfile().PodiumsPerLounge == 0,
+                "Blank gate inputs use the TypeScript seed identities (zero shares/podiums, ratios of one)");
+
+            Dictionary<string, GateLoungeProfile> parsedProfiles = GateLoungeProfileTableParser.Parse(
+                new[]
+                {
+                    "Input,Code C,Code E,Code F",
+                    "Average seats,180,300,500",
+                    "Load factor (%),85,85,85",
+                    "Seated (%),60,60,60",
+                    "Standing (%),20,20,20",
+                    "Next-seat allowance (%),10,10,10",
+                    "Open-lounge reduction (%),0,0,0",
+                    "Boarding podiums (positions per lounge),1,1,1",
+                    "In boarding queue (%),20,20,20"
+                });
+            Check(parsedProfiles["C"].Seats == 180 &&
+                  Math.Abs(parsedProfiles["C"].LoadFactor - 0.85) < 1e-9 &&
+                  Math.Abs(parsedProfiles["C"].NextSeatAllowancePct - 0.10) < 1e-9 &&
+                  parsedProfiles["F"].Seats == 500,
+                "The saved C/E/F lounge-profile table parses seats, percentages, podiums and queues by code");
+
             List<GateCodeInput> codes = new List<GateCodeInput>
             {
                 new GateCodeInput
@@ -2834,22 +2870,40 @@ namespace AirportPlanning.Tests
                     Code = "C",
                     DomesticAtms = 4,
                     InternationalAtms = 3,
-                    OccupancyMinutes = 45.0,
-                    Seats = 180,
-                    SeatedPct = 0.70,
-                    StandingPct = 0.10,
-                    BoardingQueuePct = 0.15
+                    DomesticOccupancyMinutes = 45.0,
+                    InternationalOccupancyMinutes = 45.0
                 },
                 new GateCodeInput
                 {
                     Code = "E",
                     DomesticAtms = 2,
                     InternationalAtms = 3,
-                    OccupancyMinutes = 75.0,
+                    DomesticOccupancyMinutes = 75.0,
+                    InternationalOccupancyMinutes = 75.0
+                }
+            };
+
+            List<GateLoungeProfile> loungeProfiles = new List<GateLoungeProfile>
+            {
+                new GateLoungeProfile
+                {
+                    Code = "C",
+                    Seats = 180,
+                    LoadFactor = 0.85,
+                    SeatedPct = 0.70,
+                    StandingPct = 0.10,
+                    BoardingQueuePct = 0.15,
+                    PodiumsPerLounge = 1
+                },
+                new GateLoungeProfile
+                {
+                    Code = "E",
                     Seats = 300,
+                    LoadFactor = 0.85,
                     SeatedPct = 0.60,
                     StandingPct = 0.15,
-                    BoardingQueuePct = 0.20
+                    BoardingQueuePct = 0.20,
+                    PodiumsPerLounge = 1
                 }
             };
 
@@ -2857,7 +2911,6 @@ namespace AirportPlanning.Tests
             {
                 BufferMinutes = 10.0,
                 SparesPct = 0.0,
-                LoadFactor = 0.85,
                 ContactPctDomestic = 0.8,
                 ContactPctSwing = 0.8,
                 ContactPctInternational = 0.8,
@@ -2866,14 +2919,12 @@ namespace AirportPlanning.Tests
                 SeatedSpacePerPax = 1.7,
                 StandingSpacePerPax = 1.2,
                 BoardingQueueSpacePerPax = 1.2,
-                PodiumsPerLounge = 1,
                 PodiumAreaEach = 0.0,
-                BusLoungeCode = "C"
             };
 
             standards.SwingStands["C"] = 1;
 
-            GateSizingResult gates = GateCalculator.Calculate(codes, standards);
+            GateSizingResult gates = GateCalculator.Calculate(codes, standards, null, loungeProfiles);
 
             // Domestic: C 4 x 55/60 = 3.67 -> 4 stands; E 2 x 85/60 = 2.83 -> 3.
             // International: C 3 x 55/60 = 2.75 -> 3; E 3 x 85/60 = 4.25 -> 5.
@@ -2909,6 +2960,52 @@ namespace AirportPlanning.Tests
 
             Check(Math.Abs(codeC.AreaEach - 227.97) < 1e-6,
                 $"A code C lounge is 227.97 m2 ({codeC.AreaEach})");
+
+            GateSizingResult perCodeArea = GateCalculator.Calculate(
+                new List<GateCodeInput>
+                {
+                    new GateCodeInput
+                    {
+                        Code = "C"
+                    }
+                },
+                new GateStandards
+                {
+                    ContactPctDomestic = 1.0,
+                    ContactPctSwing = 1.0,
+                    ContactPctInternational = 1.0,
+                    SeatedSpacePerPax = 2.0,
+                    StandingSpacePerPax = 1.0,
+                    BoardingQueueSpacePerPax = 1.0
+                },
+                new GateScheduleDemand
+                {
+                    Codes = new List<GateScheduleCodeDemand>
+                    {
+                        new GateScheduleCodeDemand
+                        {
+                            Code = "C",
+                            CombinedPeak = 1,
+                            DedicatedDomestic = 1
+                        }
+                    }
+                },
+                new List<GateLoungeProfile>
+                {
+                    new GateLoungeProfile
+                    {
+                        Code = "C",
+                        Seats = 100,
+                        LoadFactor = 1.0,
+                        SeatedPct = 0.5,
+                        StandingPct = 0.5,
+                        NextSeatAllowancePct = 0.2,
+                        OpenLoungeReductionPct = 0.1,
+                        PodiumsPerLounge = 0
+                    }
+                });
+            Check(Math.Abs(perCodeArea.Lounges.Single().HoldArea - 153.0) < 1e-9,
+                $"Next-seat allowance applies to seated area only before the open-lounge reduction ({perCodeArea.Lounges.Single().HoldArea})");
 
             Check(codeC.Count == 3,
                 $"Three domestic code C contact gates need three lounges ({codeC.Count})");
@@ -2955,11 +3052,144 @@ namespace AirportPlanning.Tests
             Check(gates.NetArea > 0 && gross.Total > gates.NetArea,
                 "The gross lounge area is larger than the net");
 
+            GateSizingResult splitOccupancy = GateCalculator.Calculate(
+                new List<GateCodeInput>
+                {
+                    new GateCodeInput
+                    {
+                        Code = "C",
+                        DomesticAtms = 1,
+                        InternationalAtms = 1,
+                        DomesticOccupancyMinutes = 20,
+                        InternationalOccupancyMinutes = 80
+                    }
+                },
+                new GateStandards
+                {
+                    BufferMinutes = 10,
+                    ContactPctDomestic = 1,
+                    ContactPctSwing = 1,
+                    ContactPctInternational = 1
+                });
+            double domesticHours = splitOccupancy.Buckets.First(b => b.Bucket == "Domestic").Codes.First().StandHours;
+            double internationalHours = splitOccupancy.Buckets.First(b => b.Bucket == "International").Codes.First().StandHours;
+            Check(Math.Abs(domesticHours - 0.5) < 1e-9 && Math.Abs(internationalHours - 1.5) < 1e-9,
+                $"Domestic and international stand hours use their own occupancy inputs ({domesticHours}/{internationalHours})");
+
             // Nothing to size is reported rather than silently zero.
             GateSizingResult empty = GateCalculator.Calculate(new List<GateCodeInput>(), standards);
 
             Check(empty.Warnings.Count > 0 && empty.ActiveTotal == 0,
                 "No aircraft types reports a warning and sizes nothing");
+
+            RunGateScheduleSizing();
+        }
+
+        private static void RunGateScheduleSizing()
+        {
+            Console.WriteLine("== Schedule-based gate demand ==");
+
+            FlightScheduleResult schedule = new FlightScheduleResult
+            {
+                ScheduleName = "Gate test schedule",
+                Legs = new List<FlightLeg>
+                {
+                    GateTestLeg("D-C", LegDirection.Arrival, 8 * 60, LegSector.Domestic),
+                    GateTestLeg("D-C", LegDirection.Departure, 9 * 60, LegSector.Domestic),
+                    GateTestLeg("I-C", LegDirection.Arrival, 8 * 60, LegSector.International),
+                    GateTestLeg("I-C", LegDirection.Departure, 9 * 60, LegSector.International),
+                    GateTestLeg("M-C", LegDirection.Arrival, 8 * 60, LegSector.Domestic),
+                    GateTestLeg("M-C", LegDirection.Departure, 9 * 60, LegSector.International)
+                }
+            };
+
+            foreach (FlightLeg leg in schedule.Legs)
+                leg.Terminal = "T1";
+
+            GateScheduleDemand demand = GateScheduleDemandBuilder.Build(
+                schedule, "T1", 5.0, 5.0, 120.0);
+            GateScheduleCodeDemand codeC = demand.Codes.First(c => c.Code == "C");
+
+            Check(demand.RotationCount == 3 && codeC.CombinedPeak == 3,
+                $"Schedule mode pairs rotations and measures a combined C peak of 3 ({demand.RotationCount}, {codeC.CombinedPeak})");
+            Check(codeC.DomesticPeak == 2 && codeC.InternationalPeak == 2 &&
+                  codeC.DedicatedDomestic == 1 && codeC.DedicatedInternational == 1 && codeC.Swing == 1,
+                "Mixed-sector aircraft are counted in both sector peaks and assigned to swing stands");
+
+            GateLoungeProfile loungeC = new GateLoungeProfile
+            {
+                Code = "C",
+                Seats = 180,
+                LoadFactor = 0.85,
+                SeatedPct = 0.60,
+                StandingPct = 0.20,
+                BoardingQueuePct = 0.20,
+                NextSeatAllowancePct = 0.10,
+                OpenLoungeReductionPct = 0.0,
+                PodiumsPerLounge = 1
+            };
+            GateStandards standards = new GateStandards
+            {
+                SparesPct = 0.10,
+                ContactPctDomestic = 0.0,
+                ContactPctSwing = 0.0,
+                ContactPctInternational = 0.0,
+                RemoteStandsPerBusGate = 2.0,
+                MaxStandsRatio = 9.0
+            };
+
+            GateSizingResult sized = GateCalculator.Calculate(
+                new List<GateCodeInput>(), standards, demand,
+                new List<GateLoungeProfile> { loungeC });
+
+            Check(sized.ScheduleMode && sized.ActiveTotal == 4 &&
+                  sized.Buckets.First(b => b.Bucket == "Swing").Active == 2,
+                $"Schedule spares are added to swing and the PHP max/active ratio is ignored ({sized.ActiveTotal})");
+            Check(sized.RemoteActive == 4 && sized.BusTotal == 2 && sized.MaxStands == 4,
+                $"Schedule mode sizes remote stands, bus gates, and max stands from AOG counts ({sized.RemoteActive}/{sized.BusTotal}/{sized.MaxStands})");
+            Check(sized.LoungeCount == 2 && sized.NetArea > 0,
+                "Schedule demand reuses the per-code lounge profile and Code C bus lounge");
+
+            GateScheduleDemand noProfile = GateScheduleDemandBuilder.Build(schedule, "T1");
+            GateSizingResult standsOnly = GateCalculator.Calculate(
+                new List<GateCodeInput>(), standards, noProfile);
+            Check(standsOnly.ActiveTotal > 0 && standsOnly.LoungeCount == standsOnly.BusTotal &&
+                  standsOnly.Warnings.Any(w => w.Contains("lounge profile")),
+                "A schedule sizes stands without PHP inputs, keeps lounge counts, and warns when profiles are absent");
+
+            FlightScheduleResult midnight = new FlightScheduleResult
+            {
+                ScheduleName = "Midnight turn",
+                Legs = new List<FlightLeg>
+                {
+                    GateTestLeg("NIGHT", LegDirection.Arrival, 23 * 60 + 30, LegSector.Domestic),
+                    GateTestLeg("NIGHT", LegDirection.Departure, 30, LegSector.Domestic)
+                }
+            };
+            GateScheduleCodeDemand midnightC = GateScheduleDemandBuilder.Build(midnight, null, 0, 0, 120)
+                .Codes.First(c => c.Code == "C");
+            Check(midnightC.CombinedPeak == 1,
+                "A paired turn departing after midnight wraps to the next design-day day");
+        }
+
+        private static FlightLeg GateTestLeg(
+            string link,
+            LegDirection direction,
+            int minute,
+            LegSector sector)
+        {
+            return new FlightLeg
+            {
+                Id = link + direction,
+                LinkId = link,
+                Direction = direction,
+                HasTime = true,
+                MinutesFromMidnight = minute % 1440,
+                DayOffset = minute / 1440,
+                IcaoCodeRaw = "C",
+                SectorRaw = sector,
+                ServiceType = LegServiceType.Passenger
+            };
         }
 
         // -------------------------------------------------------------
@@ -3610,6 +3840,31 @@ namespace AirportPlanning.Tests
                   summary.DeparturePax == 40917 &&
                   summary.TotalPax == 82570,
                 $"Real schedule: passenger totals are correct ({summary.ArrivalPax} / {summary.DeparturePax})");
+
+            /* This workbook carries no via-qualified arrivals, so the legacy
+               Via-qualified filter finds zero transfer connections. The default
+               all-passenger-legs eligibility matches direct legs instead and
+               the schedule yields a real transfer ceiling. */
+            TransferDemandProfile realProfile = new TransferDemandProfile();
+            foreach (TransferScenario scenario in Enum.GetValues(typeof(TransferScenario)))
+            {
+                realProfile.ScenarioRules[scenario].MinimumConnectionMinutes = 45.0;
+                realProfile.ScenarioRules[scenario].MaximumConnectionMinutes = 300.0;
+            }
+
+            int allLegsTotal = TransferDemandCalculator
+                .CalculateScheduleCapacity(result, realProfile)
+                .Total;
+
+            realProfile.ScheduleEligibility = TransferScheduleEligibility.ViaQualifiedLegs;
+            int viaOnlyTotal = TransferDemandCalculator
+                .CalculateScheduleCapacity(result, realProfile)
+                .Total;
+
+            Check(allLegsTotal > 0,
+                $"Real schedule: all-legs eligibility finds transfer connections ({allLegsTotal} pax within 45–300 min)");
+            Check(viaOnlyTotal == 0,
+                $"Real schedule: via-qualified eligibility still finds none on this workbook ({viaOnlyTotal})");
 
             Check(summary.FreightLegs > 0 &&
                   summary.PassengerLegs > 0 &&

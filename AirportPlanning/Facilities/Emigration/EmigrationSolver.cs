@@ -1,4 +1,5 @@
 using AirportPlanning.Core.Distributions;
+using AirportPlanning.Core.Generation;
 using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Queueing;
 using AirportPlanning.Core.Inputs;
@@ -22,6 +23,86 @@ namespace AirportPlanning.Facilities.Emigration
         /// <summary>Canonical Pool Plan identity for manual emigration counters.</summary>
         public const string CounterPool = "Counter";
 
+        /// <summary>True when the passenger's scenario rules request a dedicated
+        /// transfer-emigration pool instead of the shared hall.</summary>
+        private static bool UsesSeparateEmigration(Passenger passenger)
+        {
+            return passenger != null &&
+                   passenger.Journey == PassengerJourney.Transfer &&
+                   passenger.TransferProcessing != null &&
+                   passenger.TransferProcessing.RequiresEmigration &&
+                   passenger.TransferProcessing.EmigrationRouting == TransferFacilityRouting.Separate;
+        }
+
+        /// <summary>
+        /// Routes transfer passengers whose scenario rules request a dedicated
+        /// transfer-emigration pool to the transfer channel before pool
+        /// selection. Returns the saved original channels so they can be
+        /// restored after the solve, keeping check-in routing intact.
+        /// </summary>
+        private Dictionary<Passenger, string> ApplySeparateTransferRouting(
+            List<Passenger> workingPassengers,
+            string transferChannelName,
+            IList<ChannelResourcePlan> plans)
+        {
+            Dictionary<Passenger, string> originalChannels =
+                new Dictionary<Passenger, string>();
+
+            if (workingPassengers == null || string.IsNullOrWhiteSpace(transferChannelName))
+                return originalChannels;
+
+            string channel = transferChannelName.Trim();
+
+            if (!HasConfiguredChannel(plans, channel))
+            {
+                int unconfigured = workingPassengers.Count(UsesSeparateEmigration);
+
+                if (unconfigured > 0)
+                {
+                    Warnings.Add(
+                        $"Separate emigration routing had no matching pool for '{channel}'. " +
+                        $"{unconfigured} transfer passenger(s) remain in their original channel " +
+                        "so they can share the main emigration hall (outside the e-gate/counter split). " +
+                        "Add a matching channel (and pool plan) to size them independently.");
+                }
+
+                return originalChannels;
+            }
+
+            foreach (Passenger passenger in workingPassengers)
+            {
+                if (!UsesSeparateEmigration(passenger))
+                    continue;
+
+                originalChannels[passenger] = passenger.Channel;
+                passenger.Channel = channel;
+            }
+
+            if (originalChannels.Count > 0)
+            {
+                Warnings.Add(
+                    $"{originalChannels.Count} transfer passenger(s) are routed to the separate " +
+                    $"'{channel}' emigration pool.");
+            }
+
+            return originalChannels;
+        }
+
+        /// <summary>Restores the original channels saved by
+        /// <see cref="ApplySeparateTransferRouting"/> on the working passengers
+        /// and on the clones the simulation served.</summary>
+        private static void RestoreSeparateTransferChannels(
+            Dictionary<Passenger, string> separatedChannels,
+            Dictionary<Passenger, Passenger> clones)
+        {
+            foreach (KeyValuePair<Passenger, string> pair in separatedChannels)
+            {
+                pair.Key.Channel = pair.Value;
+
+                if (clones != null && clones.TryGetValue(pair.Key, out Passenger clone))
+                    clone.Channel = pair.Value;
+            }
+        }
         private string _lastCacheKey = "";
         private List<ResourceSearchOutcome> _cachedOutcomes;
         private int _cachedBaselinePhysical = -1;
@@ -45,6 +126,11 @@ namespace AirportPlanning.Facilities.Emigration
                 .ToList();
 
             List<ChannelResourcePlan> plans = ResolvePlans(input);
+
+            Dictionary<Passenger, string> separatedChannels = ApplySeparateTransferRouting(
+                workingPassengers,
+                input.TransferChannelName,
+                plans);
 
             Dictionary<Passenger, string> originalChannels = new Dictionary<Passenger, string>();
             AssignProcessorRoutes(
@@ -84,7 +170,8 @@ namespace AirportPlanning.Facilities.Emigration
             Func<Passenger, bool> emigrationPassenger = p =>
                 p != null &&
                 p.PassengerType == PassengerType.International &&
-                IsDeparturePassenger(p);
+                IsDeparturePassenger(p) &&
+                TransferServiceUsageCalculator.UsesService(p, TransferService.Emigration);
 
             FacilitySolveResult solve = SolvePools(
                 workingPassengers,
@@ -114,6 +201,31 @@ namespace AirportPlanning.Facilities.Emigration
 
                 pair.Key.Channel = originalChannel;
                 pair.Value.Channel = originalChannel;
+            }
+
+            if (separatedChannels.Count > 0)
+            {
+                List<string> misplaced = separatedChannels.Keys
+                    .Where(p => solve.Clones.TryGetValue(p, out Passenger clone) &&
+                                clone != null &&
+                                !string.Equals(
+                                    clone.AssignedPool,
+                                    input.TransferChannelName.Trim(),
+                                    StringComparison.OrdinalIgnoreCase))
+                    .Select(p => solve.Clones[p].AssignedPool)
+                    .Where(name => !string.IsNullOrEmpty(name))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (misplaced.Count > 0)
+                {
+                    Warnings.Add(
+                        "Separate transfer-emigration routing had no matching pool; those passengers " +
+                        $"were served by: {string.Join(", ", misplaced)}. Add a Pool Plan (or channel " +
+                        $"'{input.TransferChannelName.Trim()}') to size them independently.");
+                }
+
+                RestoreSeparateTransferChannels(separatedChannels, solve.Clones);
             }
 
             QueueResults results = solve.Results;
@@ -180,7 +292,9 @@ namespace AirportPlanning.Facilities.Emigration
             List<Passenger> eligible = passengers
                 .Where(p => p != null &&
                             p.PassengerType == PassengerType.International &&
-                            IsDeparturePassenger(p))
+                            IsDeparturePassenger(p) &&
+                            !UsesSeparateEmigration(p) &&
+                            TransferServiceUsageCalculator.UsesService(p, TransferService.Emigration))
                 .ToList();
 
             if (eligible.Count == 0)

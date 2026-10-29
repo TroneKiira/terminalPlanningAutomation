@@ -35,7 +35,11 @@ namespace AirportPlanning.Core.Generation
             // Passenger Behaviour
             // -----------------------------
             passenger.Journey =
-                profile.Journey;
+                profile.TransferScenario.HasValue
+                    ? PassengerJourney.Transfer
+                    : profile.Journey;
+
+            passenger.TransferScenario = profile.TransferScenario;
 
             passenger.ArrivalTime =
                 arrivalTime;

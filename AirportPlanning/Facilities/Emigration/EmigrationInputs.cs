@@ -52,6 +52,15 @@ namespace AirportPlanning.Facilities.Emigration
         /// </summary>
         public List<PoolPlan> PoolPlans { get; set; } = new List<PoolPlan>();
 
+        /// <summary>
+        /// Channel identity that receives transfer flows whose scenario rules
+        /// set EmigrationRouting to Separate. Configure a matching channel (and
+        /// pool plan) to give them a dedicated transfer-emigration pool; without
+        /// one they fall back to the shared hall and a warning is raised. Such
+        /// passengers are excluded from the e-gate/counter route split.
+        /// </summary>
+        public string TransferChannelName { get; set; } = "Transfer Emigration";
+
         public bool OptimizeResources { get; set; }
 
         public int Seed { get; set; }

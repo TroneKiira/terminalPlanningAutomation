@@ -28,7 +28,7 @@ namespace AirportPlanning.Components.Object_Creation
 
             pManager.AddNumberParameter(
                 "Demand Factors", "F%",
-                "Demand factor for each hour as a percentage of the DHD hourly rate. One value per hour of the window. 100% = design hour.",
+                "Demand factor for each hour as a percentage of the DHD hourly rate. One value per hour of the window. 100% = design hour; Demand Basis controls whether this is terminal arrivals or flights by STD/STA.",
                 GH_ParamAccess.list);
 
             pManager.AddIntegerParameter(
@@ -43,18 +43,23 @@ namespace AirportPlanning.Components.Object_Creation
 
             pManager.AddBooleanParameter(
                 "Warm-Up", "WU",
-                "When true, a pre-window warm-up segment is simulated so facilities do not start empty.",
+                "Legacy Terminal Arrival basis only: when true, a synthetic pre-window warm-up segment is simulated so facilities do not start empty. Flight Hour basis does not generate synthetic warm-up passengers.",
                 GH_ParamAccess.item, true);
 
             pManager.AddIntegerParameter(
                 "Warm-Up Duration", "WUD",
-                "Duration of the warm-up segment in minutes.",
+                "Legacy Terminal Arrival basis only: duration of the synthetic warm-up segment in minutes.",
                 GH_ParamAccess.item, 60);
 
             pManager.AddNumberParameter(
                 "Warm-Up Factor", "WUF",
-                "Warm-up demand factor as a percentage of the DHD hourly rate.",
+                "Legacy Terminal Arrival basis only: warm-up demand factor as a percentage of the DHD hourly rate. Flight Hour basis does not synthesize warm-up demand.",
                 GH_ParamAccess.item, 50.0);
+
+            pManager.AddIntegerParameter(
+                "Demand Basis", "DB",
+                "0 = legacy Terminal Arrival demand (factor means passengers arriving in that hour); 1 = Flight Hour demand (factor means passengers on flights by STD/STA). Defaults to Flight Hour for this component.",
+                GH_ParamAccess.item, 1);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -75,6 +80,7 @@ namespace AirportPlanning.Components.Object_Creation
             bool warmUp = true;
             int warmUpMinutes = 60;
             double warmUpFactor = 50.0;
+            int demandBasis = (int)DemandTimeBasis.FlightHour;
 
             if (!DA.GetData(0, ref type)) return;
             if (!DA.GetData(1, ref dhd)) return;
@@ -84,12 +90,16 @@ namespace AirportPlanning.Components.Object_Creation
             if (!DA.GetData(5, ref warmUp)) return;
             if (!DA.GetData(6, ref warmUpMinutes)) return;
             if (!DA.GetData(7, ref warmUpFactor)) return;
+            if (!DA.GetData(8, ref demandBasis)) return;
 
             DHPType dhpType = (DHPType)Math.Max(0, Math.Min(3, type));
 
             DHP dhp = new DHP
             {
                 Type = dhpType,
+                DemandBasis = (DemandTimeBasis)Math.Max(
+                    (int)DemandTimeBasis.TerminalArrival,
+                    Math.Min((int)DemandTimeBasis.FlightHour, demandBasis)),
                 DesignHourDemand = dhd,
                 DemandFactors = factors != null ? new List<double>(factors) : new List<double>(),
                 AnalysisPeriodHours = period,

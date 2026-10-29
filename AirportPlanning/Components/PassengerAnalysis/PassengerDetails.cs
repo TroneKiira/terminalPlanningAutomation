@@ -1,4 +1,6 @@
 ﻿using AirportPlanning.Core.Models;
+using AirportPlanning.Core.Inputs;
+using AirportPlanning.Core.Generation;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
 using System;
@@ -53,6 +55,18 @@ namespace AirportPlanning.Components.PassengerAnalysis
             pManager.AddBooleanParameter("Checked Bag", "BAG", "Checked baggage status.", GH_ParamAccess.list);
             pManager.AddBooleanParameter("Requires Check-In", "CHK", "Indicates whether the passenger requires airport check-in.", GH_ParamAccess.list);
             pManager.AddBooleanParameter("Requires Bag Drop", "BD", "Indicates whether the passenger requires bag drop.", GH_ParamAccess.list);
+            pManager.AddTextParameter("Transfer Scenario", "TS", "Transfer flow, if the passenger is a classified transfer passenger.", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("Transfer Security", "TSEC", "Transfer passenger is configured to require security screening.", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("Transfer Immigration", "TIMM", "Transfer passenger is configured to require immigration.", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("Transfer Emigration", "TEMI", "Transfer passenger is configured to require emigration.", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("Baggage Recheck", "BR", "Transfer passenger is configured to require baggage recheck.", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("Transfer Desk", "TDSK", "Transfer passenger is configured to present at a transfer desk.", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("Security Separate", "TSECS", "Transfer passenger is routed to a dedicated transfer-security pool.", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("Immigration Separate", "TIMMS", "Transfer passenger is routed to a dedicated transfer-immigration pool.", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("Emigration Separate", "TEMIS", "Transfer passenger is routed to a dedicated transfer-emigration pool.", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("Transfer Rules Applied", "TRULE", "True when the passenger carries explicit scenario processing rules. False means normal passenger behaviour, not a bypass.", GH_ParamAccess.list);
+            pManager.AddTextParameter("Bypassed Services", "TBYP", "Services explicitly bypassed by this passenger's scenario rules.", GH_ParamAccess.list);
+            pManager.AddTextParameter("Bypass Reason", "TWHY", "Why each service is bypassed. Empty when no service is explicitly bypassed.", GH_ParamAccess.list);
         }
 
         /// <summary>
@@ -85,6 +99,27 @@ namespace AirportPlanning.Components.PassengerAnalysis
             DA.SetDataList(11, passengers.Select(p => p.HasCheckedBag));
             DA.SetDataList(12, passengers.Select(p => p.RequiresCheckIn));
             DA.SetDataList(13, passengers.Select(p => p.RequiresBagDrop));
+            DA.SetDataList(14, passengers.Select(p => p.TransferScenario.HasValue
+                ? p.TransferScenario.Value.ToFlowLabel()
+                : string.Empty));
+            DA.SetDataList(15, passengers.Select(p => p.TransferProcessing != null && p.TransferProcessing.RequiresSecurityScreening));
+            DA.SetDataList(16, passengers.Select(p => p.TransferProcessing != null && p.TransferProcessing.RequiresImmigration));
+            DA.SetDataList(17, passengers.Select(p => p.TransferProcessing != null && p.TransferProcessing.RequiresEmigration));
+            DA.SetDataList(18, passengers.Select(p => p.TransferProcessing != null && p.TransferProcessing.RequiresBaggageRecheck));
+            DA.SetDataList(19, passengers.Select(p => p.TransferProcessing != null && p.TransferProcessing.RequiresTransferDesk));
+            DA.SetDataList(20, passengers.Select(p => p.TransferProcessing != null && p.TransferProcessing.SecurityRouting == TransferFacilityRouting.Separate));
+            DA.SetDataList(21, passengers.Select(p => p.TransferProcessing != null && p.TransferProcessing.ImmigrationRouting == TransferFacilityRouting.Separate));
+            DA.SetDataList(22, passengers.Select(p => p.TransferProcessing != null && p.TransferProcessing.EmigrationRouting == TransferFacilityRouting.Separate));
+            DA.SetDataList(23, passengers.Select(p => p.TransferProcessing != null));
+            DA.SetDataList(24, passengers.Select(p =>
+            {
+                List<TransferService> bypassed = TransferServiceUsageCalculator.GetBypassedServices(p);
+                return string.Join(", ", bypassed.Select(service => service.ToLabel()));
+            }));
+            DA.SetDataList(25, passengers.Select(p =>
+                TransferServiceUsageCalculator.GetBypassedServices(p).Count > 0
+                    ? "Scenario rule"
+                    : string.Empty));
         }
 
         /// <summary>

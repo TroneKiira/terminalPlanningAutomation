@@ -13,7 +13,7 @@ namespace AirportPlanning.Components.SimulationComponent
     {
         public WindowedPassengerGeneratorComponent()
           : base("Windowed Passenger Generator", "WPG",
-            "Generates a passenger population over a multi-step hourly analysis window (design hour demand curve, show-up curve, transit waves and warm-up).",
+            "Generates passengers from a multi-hour demand profile. Demand Basis selects legacy terminal-arrival demand or flight-hour demand by sampled STD/STA; warm-up applies to the legacy basis only.",
             "Airport Planning", "Simulation")
         {
         }
@@ -63,7 +63,7 @@ namespace AirportPlanning.Components.SimulationComponent
             pManager.AddGenericParameter(
                 "Show-Up Profile", "SUP",
                 "Optional show-up profile for the whole run (Leisure, Business, Mix, or a custom W15/W30/W60 fit). " +
-                "Shapes how generated passengers spread across the hour before departure. Leave unwired to spread arrivals evenly.",
+                "Shapes departures across each profile's STD-relative advance interval. Leave unwired to use the profile-specific curve or the Mix fallback.",
                 GH_ParamAccess.item);
             pManager[8].Optional = true;
 
@@ -73,10 +73,32 @@ namespace AirportPlanning.Components.SimulationComponent
                 GH_ParamAccess.item);
             pManager[9].Optional = true;
 
+            pManager.AddGenericParameter(
+                "Check-In Windows", "CIW",
+                "Optional domestic/international check-in lead times. Used by flight-hour demand, which derives each passenger's check-in opening and last-admission time from the sampled STD. Leave unwired for the sector defaults (Domestic -120/-60, International -180/-60).",
+                GH_ParamAccess.item);
+            pManager[10].Optional = true;
+
+            pManager.AddNumberParameter(
+                "Arrival Delay Min", "ADm",
+                "Minimum minutes from STA to the first arrival process for flight-hour arrival passengers.",
+                GH_ParamAccess.item, 0.0);
+
+            pManager.AddNumberParameter(
+                "Arrival Delay Max", "ADM",
+                "Maximum minutes from STA to the first arrival process for flight-hour arrival passengers.",
+                GH_ParamAccess.item, 30.0);
+
             // DA (index 1) and IA (index 3) are optional: departures-only runs
             // wire just DD and ID.
             pManager[1].Optional = true;
             pManager[3].Optional = true;
+
+            pManager.AddGenericParameter(
+                "Transfer Demand Profile", "TDP",
+                "Optional transfer assumptions from Transfer Demand Profile.",
+                GH_ParamAccess.item);
+            pManager[13].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -95,6 +117,11 @@ namespace AirportPlanning.Components.SimulationComponent
                 "Arrival Simulations", "AS",
                 "Arrival simulations per passenger type and demand step, each carrying its per-minute histogram, step offset and design-hour / warm-up flags. Feed an Arrival Chart.",
                 GH_ParamAccess.list);
+
+            pManager.AddGenericParameter(
+                "Transfer Demand", "TRD",
+                "Requested and effective transfer totals by market and scenario.",
+                GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -109,6 +136,10 @@ namespace AirportPlanning.Components.SimulationComponent
             double dispersion = 0.0;
             ShowUpProfile showUpProfile = null;
             IChannelAssigner channelAssigner = null;
+            CheckInWindowRules checkInWindows = null;
+            double arrivalDelayMin = 0.0;
+            double arrivalDelayMax = 30.0;
+            TransferDemandProfile transferDemand = null;
 
             if (!DA.GetData(0, ref domesticDeparture)) return;
             DA.GetData(1, ref domesticArrival);
@@ -120,6 +151,10 @@ namespace AirportPlanning.Components.SimulationComponent
             if (!DA.GetData(7, ref dispersion)) return;
             DA.GetData(8, ref showUpProfile);
             DA.GetData(9, ref channelAssigner);
+            DA.GetData(10, ref checkInWindows);
+            if (!DA.GetData(11, ref arrivalDelayMin)) return;
+            if (!DA.GetData(12, ref arrivalDelayMax)) return;
+            DA.GetData(13, ref transferDemand);
 
             if (domesticDeparture == null || internationalDeparture == null)
             {
@@ -165,6 +200,15 @@ namespace AirportPlanning.Components.SimulationComponent
                     errors.Add($"{showUpProfile.Name}: {error}");
             }
 
+            CheckInWindowRules windows = checkInWindows ?? CheckInWindowRules.CreateDefault();
+
+            errors.AddRange(windows.GetValidationErrors());
+
+            ArrivalProcessDelay arrivalDelay = new ArrivalProcessDelay(
+                arrivalDelayMin, arrivalDelayMax);
+
+            errors.AddRange(arrivalDelay.GetValidationErrors());
+
             foreach (string error in errors)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, error);
 
@@ -180,17 +224,21 @@ namespace AirportPlanning.Components.SimulationComponent
                 seed,
                 showUpProfile,
                 channelAssigner,
-                message => AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message));
+                message => AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message),
+                windows,
+                arrivalDelay,
+                transferDemand);
 
             DA.SetDataList(0, result.Passengers);
             DA.SetData(1, result);
             DA.SetDataList(2, result.ArrivalSimulations);
+            DA.SetData(3, result.TransferDemand);
         }
 
         /// <summary>
-        /// Every supplied group must share one analysis window: same step
-        /// count, design-hour index and warm-up timing. Demand levels and
-        /// demand-factor curves may differ per type.
+        /// Every supplied group must share one analysis window: same demand
+        /// basis, step count, design-hour index and warm-up timing. Demand
+        /// levels and demand-factor curves may differ per type.
         /// </summary>
         private static List<string> ValidateSharedWindow(List<PassengerGroup> groups)
         {
@@ -210,6 +258,13 @@ namespace AirportPlanning.Components.SimulationComponent
                 DHP candidate = supplied[i].DHP;
                 string label = candidate.Type.ToString();
 
+                if (candidate.DemandBasis != reference.DemandBasis)
+                    errors.Add(
+                        $"Passenger group '{label}' uses demand basis " +
+                        $"{candidate.DemandBasis} but '{reference.Type}' uses " +
+                        $"{reference.DemandBasis}. All supplied groups must share " +
+                        $"the same demand basis.");
+
                 if (candidate.StepCount != reference.StepCount)
                     errors.Add(
                         $"Passenger group '{label}' has {candidate.StepCount} analysis steps " +
@@ -222,8 +277,9 @@ namespace AirportPlanning.Components.SimulationComponent
                         $"but '{reference.Type}' uses {reference.DesignHourIndex}. All supplied groups " +
                         $"must share the same design hour.");
 
-                if (candidate.WarmUpEnabled != reference.WarmUpEnabled ||
-                    candidate.WarmUpMinutes != reference.WarmUpMinutes)
+                if (reference.DemandBasis == DemandTimeBasis.TerminalArrival &&
+                    (candidate.WarmUpEnabled != reference.WarmUpEnabled ||
+                     candidate.WarmUpMinutes != reference.WarmUpMinutes))
                     errors.Add(
                         $"Passenger group '{label}' has different warm-up timing " +
                         $"(enabled={candidate.WarmUpEnabled}, minutes={candidate.WarmUpMinutes}) " +

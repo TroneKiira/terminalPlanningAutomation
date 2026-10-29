@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using AirportPlanning.Core.Inputs;
 
 namespace AirportPlanning.Core.Models
 {
@@ -39,6 +40,15 @@ namespace AirportPlanning.Core.Models
         public PassengerType PassengerType { get; set; }
 
         public PassengerJourney Journey { get; set; }
+
+        /// <summary>The inbound-sector to outbound-sector flow, when known.</summary>
+        public TransferScenario? TransferScenario { get; set; }
+
+        /// <summary>
+        /// Scenario processing rules resolved during generation. Null keeps
+        /// legacy check-in and bag-drop behavior unchanged.
+        /// </summary>
+        public TransferScenarioRules TransferProcessing { get; set; }
 
         public bool UsesOnlineCheckIn { get; set; }
 
@@ -213,7 +223,15 @@ namespace AirportPlanning.Core.Models
         {
             get
             {
-                return !UsesOnlineCheckIn;
+                if (DHPType != DHPType.DomesticDeparture &&
+                    DHPType != DHPType.InternationalDeparture)
+                {
+                    return false;
+                }
+
+                return TransferProcessing != null
+                    ? TransferProcessing.RequiresCheckIn
+                    : !UsesOnlineCheckIn;
             }
         }
 
@@ -222,8 +240,15 @@ namespace AirportPlanning.Core.Models
         {
             get
             {
-                return UsesOnlineCheckIn &&
-                       HasCheckedBag;
+                if (DHPType != DHPType.DomesticDeparture &&
+                    DHPType != DHPType.InternationalDeparture)
+                {
+                    return false;
+                }
+
+                return TransferProcessing != null
+                    ? TransferProcessing.RequiresBagDrop
+                    : UsesOnlineCheckIn && HasCheckedBag;
             }
         }
 
@@ -262,6 +287,10 @@ namespace AirportPlanning.Core.Models
                 Channel = this.Channel,
                 PassengerType = this.PassengerType,
                 Journey = this.Journey,
+                TransferScenario = this.TransferScenario,
+                TransferProcessing = this.TransferProcessing != null
+                    ? this.TransferProcessing.Clone()
+                    : null,
 
                 //  THIS IS THE CRITICAL LINE THAT SAVES THE FEMALES!
                 Gender = this.Gender,

@@ -15,15 +15,14 @@ namespace AirportPlanning.Components.FacilitySizingComponents
     /// separately: the stands are numbers of parking positions on the apron,
     /// and only the lounges are floor area.
     ///
-    /// The stands follow the ICAO peak-hour method - movements multiplied by
-    /// how long each aircraft holds a stand - and the lounges are sized on
-    /// the planeload the aircraft brings.
+    /// Uses peak-hour movements unless schedule-derived AOG demand is
+    /// connected; lounge sizing is shared by both methods.
     /// </summary>
     public class GateSizerComponent : GH_Component
     {
         public GateSizerComponent()
-          : base("Gate & Stand Sizer", "G-SIZE",
-            "Sizes aircraft stands from peak-hour movements and the terminal gate lounges from the planeload each aircraft brings.",
+             : base("Gate & Stand Sizer", "G-SIZE",
+             "Sizes stands from peak-hour demand or a linked design-day schedule, and sizes lounges from per-code passenger profiles.",
             "Airport Planning", "Facility Sizing")
         {
         }
@@ -38,23 +37,36 @@ namespace AirportPlanning.Components.FacilitySizingComponents
 
             pManager.AddGenericParameter(
                 "Gate Standards", "G-STD",
-                "The gate standards.",
+                "PHP stand controls and shared passenger-area standards.",
                 GH_ParamAccess.item);
             pManager[1].Optional = true;
 
             pManager.AddGenericParameter(
-                "Area Standards", "A-STD",
-                "Optional: Facility Area Standards. Supplies the circulation, MEP and structure " +
-                "allowances applied to the lounge area.",
+                "Schedule Gate Demand", "G-SCHED",
+                "Optional schedule-derived AOG demand. When connected it replaces PHP movements, occupancy, manual swing and max/active ratio.",
                 GH_ParamAccess.item);
             pManager[2].Optional = true;
 
-            pManager.AddNumberParameter(
-                "Expansion Factor", "EF",
-                "Optional: uplift applied to the lounge area before the allowances, as a fraction " +
-                "(0.10 = 10%). 0 leaves it alone.",
-                GH_ParamAccess.item, 0.0);
+            pManager.AddGenericParameter(
+                "Lounge Profiles", "PROF",
+                "Per-code passenger and lounge profiles from Gate Lounge Profiles.",
+                GH_ParamAccess.list);
             pManager[3].Optional = true;
+
+            pManager.AddNumberParameter(
+                "Circulation %", "CIR%",
+                "Gate lounge circulation allowance as percentage points. Applied once to net area.",
+                GH_ParamAccess.item, 15.0);
+
+            pManager.AddNumberParameter(
+                "MEP %", "MEP%",
+                "Gate lounge MEP allowance as percentage points, applied after circulation.",
+                GH_ParamAccess.item, 10.0);
+
+            pManager.AddNumberParameter(
+                "Structure %", "STR%",
+                "Gate lounge structure allowance as percentage points, applied after MEP.",
+                GH_ParamAccess.item, 5.0);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -132,13 +144,19 @@ namespace AirportPlanning.Components.FacilitySizingComponents
         {
             List<GateCodeInput> inputs = new List<GateCodeInput>();
             GateStandards standards = null;
-            FacilityAreaStandardSet areaStandards = null;
-            double expansionFactor = 0.0;
+            GateScheduleDemand scheduleDemand = null;
+            List<GateLoungeProfile> loungeProfiles = new List<GateLoungeProfile>();
+            double circulationPercent = 15.0;
+            double mepPercent = 10.0;
+            double structurePercent = 5.0;
 
             DA.GetDataList(0, inputs);
             DA.GetData(1, ref standards);
-            DA.GetData(2, ref areaStandards);
-            DA.GetData(3, ref expansionFactor);
+            DA.GetData(2, ref scheduleDemand);
+            DA.GetDataList(3, loungeProfiles);
+            DA.GetData(4, ref circulationPercent);
+            DA.GetData(5, ref mepPercent);
+            DA.GetData(6, ref structurePercent);
 
             if (standards == null)
             {
@@ -149,7 +167,7 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 return;
             }
 
-            if (inputs == null || inputs.Count == 0)
+            if ((inputs == null || inputs.Count == 0) && scheduleDemand == null)
             {
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Warning,
@@ -158,18 +176,14 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 return;
             }
 
-            GateSizingResult result = GateCalculator.Calculate(inputs, standards);
+            GateSizingResult result = GateCalculator.Calculate(
+                inputs, standards, scheduleDemand, loungeProfiles);
 
-            double net = result.NetArea;
-
-            if (expansionFactor > 0.0)
-                net *= (1.0 + expansionFactor);
-
-            double circulation = areaStandards != null ? areaStandards.CirculationPercent : 0.0;
-            double mep = areaStandards != null ? areaStandards.MepPercent : 0.0;
-            double structure = areaStandards != null ? areaStandards.StructurePercent : 0.0;
-
-            GrossArea gross = AreaGrossUp.Calculate(net, circulation, mep, structure);
+            GrossArea gross = AreaGrossUp.Calculate(
+                result.NetArea,
+                circulationPercent,
+                mepPercent,
+                structurePercent);
 
             List<string> standLines = DescribeStands(result);
             List<string> loungeLines = DescribeLounges(result);

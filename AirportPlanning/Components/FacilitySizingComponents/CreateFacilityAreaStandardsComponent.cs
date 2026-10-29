@@ -74,13 +74,13 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 "Names of areas added as a lump rather than sized from a count, " +
                 "e.g. Reconciliation room, Isolation suite.",
                 GH_ParamAccess.list);
-            pManager[6].Optional = true;
+            pManager[7].Optional = true;
 
             pManager.AddNumberParameter(
                 "Fixed Areas", "FA",
                 "Area of each named fixed area, m2, in the same order.",
                 GH_ParamAccess.list);
-            pManager[7].Optional = true;
+            pManager[8].Optional = true;
 
             // Appended to keep the existing input order stable in saved definitions.
             pManager.AddNumberParameter(

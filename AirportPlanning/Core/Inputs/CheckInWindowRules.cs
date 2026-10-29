@@ -121,6 +121,32 @@ namespace AirportPlanning.Core.Inputs
                 leg.TotalMinutesFromMidnight - close);
         }
 
+        /// <summary>
+        /// Sector-default window for a sampled scheduled departure. The
+        /// flight-hour demand method has no flight identity, so airline and
+        /// flight-number overrides cannot be resolved and are not applied.
+        /// </summary>
+        public CheckInWindow ResolveSector(
+            DHPType type,
+            double scheduledDepartureMinutes)
+        {
+            bool international =
+                type == DHPType.InternationalDeparture ||
+                type == DHPType.InternationalArrival;
+
+            double open = international
+                ? InternationalOpenMinutesBeforeDeparture
+                : DomesticOpenMinutesBeforeDeparture;
+
+            double close = international
+                ? InternationalLastAdmissionMinutesBeforeDeparture
+                : DomesticLastAdmissionMinutesBeforeDeparture;
+
+            return new CheckInWindow(
+                scheduledDepartureMinutes - open,
+                scheduledDepartureMinutes - close);
+        }
+
         public List<string> GetValidationErrors()
         {
             List<string> errors = new List<string>();

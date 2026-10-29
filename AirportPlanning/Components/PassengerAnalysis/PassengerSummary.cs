@@ -6,6 +6,7 @@ using System.Linq;
 
 using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Inputs;
+using AirportPlanning.Core.Generation;
 
 namespace AirportPlanning.Components.PassengerAnalysis
 {
@@ -65,7 +66,7 @@ namespace AirportPlanning.Components.PassengerAnalysis
             pManager.AddIntegerParameter(
                 "Transfer Passengers",
                 "TRF",
-                "Number of transfer passengers.",
+                "Transfer departures, counted once by outbound market (schedule arrival segments are not double-counted).",
                 GH_ParamAccess.item);
 
             pManager.AddIntegerParameter(
@@ -121,6 +122,25 @@ namespace AirportPlanning.Components.PassengerAnalysis
                 "INT-A",
                 "Number of international arrival passengers.",
                 GH_ParamAccess.item);
+
+            pManager.AddIntegerParameter("Domestic→Domestic Transfer Departures", "D-D", "Domestic-outbound transfer cohort for Domestic→Domestic.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Domestic→International Transfer Departures", "D-I", "International-outbound transfer cohort for Domestic→International.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("International→Domestic Transfer Departures", "I-D", "Domestic-outbound transfer cohort for International→Domestic.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("International→International Transfer Departures", "I-I", "International-outbound transfer cohort for International→International.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Transfer Desk Passengers", "TDSK", "Transfer passengers configured to present at a transfer desk.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Separate Security Transfers", "TSECS", "Transfer passengers routed to a dedicated transfer-security pool.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Separate Immigration Transfers", "TIMMS", "Transfer passengers routed to a dedicated transfer-immigration pool.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Separate Emigration Transfers", "TEMIS", "Transfer passengers routed to a dedicated transfer-emigration pool.", GH_ParamAccess.item);
+            pManager.AddIntegerParameter(
+                "Transfer Bypassed Services",
+                "TBYP",
+                "Total services explicitly bypassed by scenario rules across tagged transfer passengers. Missing cohorts and capacity shortfalls are not counted.",
+                GH_ParamAccess.item);
+            pManager.AddTextParameter(
+                "Transfer Service Usage",
+                "TUSE",
+                "Per-service required/bypassed counts for tagged transfer passengers. 'Without explicit transfer rules' is not a bypass.",
+                GH_ParamAccess.list);
         }
 
         /// <summary>
@@ -157,7 +177,9 @@ namespace AirportPlanning.Components.PassengerAnalysis
             DA.SetData(
                 4,
                 passengers.Count(
-                    p => p.Journey == PassengerJourney.Transfer));
+                    p => p.Journey == PassengerJourney.Transfer &&
+                         (p.DHPType == DHPType.DomesticDeparture ||
+                          p.DHPType == DHPType.InternationalDeparture)));
 
             DA.SetData(
                 5,
@@ -203,6 +225,23 @@ namespace AirportPlanning.Components.PassengerAnalysis
                 13,
                 passengers.Count(
                     p => p.DHPType == DHPType.InternationalArrival));
+
+            DA.SetData(14, passengers.Count(p => p.TransferScenario == TransferScenario.DomesticToDomestic &&
+                (p.DHPType == DHPType.DomesticDeparture || p.DHPType == DHPType.InternationalDeparture)));
+            DA.SetData(15, passengers.Count(p => p.TransferScenario == TransferScenario.DomesticToInternational &&
+                (p.DHPType == DHPType.DomesticDeparture || p.DHPType == DHPType.InternationalDeparture)));
+            DA.SetData(16, passengers.Count(p => p.TransferScenario == TransferScenario.InternationalToDomestic &&
+                (p.DHPType == DHPType.DomesticDeparture || p.DHPType == DHPType.InternationalDeparture)));
+            DA.SetData(17, passengers.Count(p => p.TransferScenario == TransferScenario.InternationalToInternational &&
+                (p.DHPType == DHPType.DomesticDeparture || p.DHPType == DHPType.InternationalDeparture)));
+            DA.SetData(18, passengers.Count(p => p.TransferProcessing != null && p.TransferProcessing.RequiresTransferDesk));
+            DA.SetData(19, passengers.Count(p => p.TransferProcessing != null && p.TransferProcessing.SecurityRouting == Core.Inputs.TransferFacilityRouting.Separate));
+            DA.SetData(20, passengers.Count(p => p.TransferProcessing != null && p.TransferProcessing.ImmigrationRouting == Core.Inputs.TransferFacilityRouting.Separate));
+            DA.SetData(21, passengers.Count(p => p.TransferProcessing != null && p.TransferProcessing.EmigrationRouting == Core.Inputs.TransferFacilityRouting.Separate));
+
+            TransferServiceUsageSummary usage = TransferServiceUsageCalculator.Calculate(passengers);
+            DA.SetData(22, usage.TotalBypassed);
+            DA.SetDataList(23, usage.CreateSummaryLines());
         }
 
         /// <summary>

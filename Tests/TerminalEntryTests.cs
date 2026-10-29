@@ -168,6 +168,97 @@ namespace AirportPlanning.Tests
                 "A schedule passenger without an entry timestamp is warned about");
         }
 
+        private static void RunTerminalEntryTransfers()
+        {
+            Console.WriteLine("== Terminal entry transfer bypass ==");
+
+            List<Passenger> passengers = new List<Passenger>();
+
+            for (int i = 0; i < 10; i++)
+            {
+                passengers.Add(CreateTerminalEntryPassenger(
+                    id: 1000 + i,
+                    type: i % 2 == 0
+                        ? DHPType.DomesticDeparture
+                        : DHPType.InternationalDeparture,
+                    arrivalTime: 60.0 + i * 3.0,
+                    walkMinutes: 2.0));
+            }
+
+            for (int i = 0; i < 5; i++)
+            {
+                Passenger transfer = CreateTerminalEntryPassenger(
+                    id: 2000 + i,
+                    type: DHPType.DomesticDeparture,
+                    arrivalTime: 80.0 + i * 4.0,
+                    walkMinutes: 2.0);
+                transfer.Journey = PassengerJourney.Transfer;
+                transfer.TransferScenario = TransferScenario.DomesticToDomestic;
+                passengers.Add(transfer);
+            }
+
+            passengers.Add(CreateTerminalEntryPassenger(
+                id: 3000,
+                type: DHPType.InternationalArrival,
+                arrivalTime: 90.0,
+                walkMinutes: 0.0));
+
+            TerminalEntrySolver solver = new TerminalEntrySolver();
+            TerminalEntryResults result = solver.Solve(new TerminalEntryInputs
+            {
+                Passengers = passengers,
+                ServiceTimeProvider = BuildTerminalEntryServiceTimeMap(),
+                DigiYatraSharePercentage = 40.0,
+                ManualPhysicalPositions = 2,
+                DigiYatraPhysicalPositions = 1,
+                OptimizeResources = false,
+                StaffingPercentage = 100.0,
+                Seed = 7
+            });
+
+            List<Passenger> processed = result.QueueResults.ProcessedPassengers;
+            List<Passenger> output = result.QueueResults.Passengers;
+
+            Check(processed.Count == 10,
+                $"Only the 10 originating departures use terminal entry ({processed.Count})");
+            Check(processed.All(p => p.Journey != PassengerJourney.Transfer),
+                "No transfer passenger is served by an entry pool");
+
+            Check(result.TransfersBypassingEntry == 5,
+                $"All 5 transfer departures bypass terminal entry ({result.TransfersBypassingEntry})");
+            Check(output.Count == passengers.Count,
+                "Transfer and arrival passengers still leave the stage on the output population");
+
+            List<Passenger> transferOutput = output
+                .Where(p => p.Journey == PassengerJourney.Transfer)
+                .ToList();
+            Check(transferOutput.Count == 5 &&
+                  transferOutput.All(p =>
+                      string.IsNullOrEmpty(p.TerminalEntryRoute) &&
+                      !p.History.ContainsKey(FacilityType.TerminalEntry)),
+                "Transfer passengers keep no entry route or terminal-entry record");
+            Check(transferOutput.All(p =>
+                    Math.Abs(p.ArrivalTime - passengers
+                        .First(source => source.Id == p.Id).ArrivalTime) < 1e-9),
+                "Transfer passenger arrival times are not reset to a terminal checkpoint");
+
+            int digiYatra = processed.Count(p =>
+                string.Equals(
+                    p.TerminalEntryRoute,
+                    TerminalEntrySolver.DigiYatraRoute,
+                    StringComparison.OrdinalIgnoreCase));
+            Check(digiYatra == 4,
+                $"The DigiYatra share applies to the 10 originating departures only ({digiYatra})");
+
+            Check(TerminalEntrySolver.RequiresTerminalEntry(
+                    passengers.First(p => p.Id == 1000)) &&
+                  !TerminalEntrySolver.RequiresTerminalEntry(
+                    passengers.First(p => p.Id == 2000)) &&
+                  !TerminalEntrySolver.RequiresTerminalEntry(
+                    passengers.First(p => p.Id == 3000)),
+                "Terminal entry requires an originating departure");
+        }
+
         private static void RunTerminalEntryOptimizer()
         {
             Console.WriteLine("== Terminal entry optimizer ==");

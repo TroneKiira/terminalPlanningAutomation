@@ -12,9 +12,10 @@ using System.Linq;
 namespace AirportPlanning.Components.SimulationComponent
 {
     /// <summary>
-    /// Terminal-entry admission queue. Departing passengers are split between
-    /// manual verification and DigiYatra/e-gate pools, simulated with the same
-    /// queue engine as the downstream facilities, then advanced to check-in.
+    /// Terminal-entry admission queue. Originating departing passengers are
+    /// split between manual verification and DigiYatra/e-gate pools, simulated
+    /// with the same queue engine as the downstream facilities, then advanced
+    /// to check-in. Transfer passengers bypass entry and continue downstream.
     /// </summary>
     public class TerminalEntryComponent : GH_Component
     {
@@ -34,7 +35,8 @@ namespace AirportPlanning.Components.SimulationComponent
         {
             pManager.AddGenericParameter(
                 "Passengers", "PAX",
-                "Passenger population arriving at the terminal-entry checkpoint.",
+                "Passenger population arriving at the terminal-entry checkpoint. " +
+                "Transfer passengers bypass entry and continue on the output population.",
                 GH_ParamAccess.list);
 
             pManager.AddGenericParameter(
@@ -97,8 +99,14 @@ namespace AirportPlanning.Components.SimulationComponent
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("Passengers", "PAX", "Passenger population after terminal entry, advanced toward check-in.", GH_ParamAccess.list);
-            pManager.AddGenericParameter("Terminal Entry Passengers", "EP", "Departing passengers served by the terminal-entry pools.", GH_ParamAccess.list);
+            pManager.AddGenericParameter(
+                "Passengers", "PAX",
+                "Complete passenger population after terminal entry. Transfer passengers pass through unchanged.",
+                GH_ParamAccess.list);
+            pManager.AddGenericParameter(
+                "Terminal Entry Passengers", "EP",
+                "Originating departing passengers served by the terminal-entry pools. Transfer passengers are not included.",
+                GH_ParamAccess.list);
             pManager.AddGenericParameter("Queue Results", "QR", "Complete terminal-entry queue simulation results.", GH_ParamAccess.item);
             pManager.AddIntegerParameter("Physical Positions", "P", "Total physical positions across both entry pools.", GH_ParamAccess.item);
             pManager.AddIntegerParameter("Active Positions", "A", "Total staffed positions simulated.", GH_ParamAccess.item);
@@ -116,6 +124,10 @@ namespace AirportPlanning.Components.SimulationComponent
             pManager.AddNumberParameter("Average Wait per Pool", "AWPP", "Average passenger waiting time (minutes) per pool, aligned with Pool Names.", GH_ParamAccess.list);
             pManager.AddNumberParameter("Maximum Wait per Pool", "MWPP", "Maximum individual passenger waiting time (minutes) per pool, aligned with Pool Names.", GH_ParamAccess.list);
             pManager.AddIntegerParameter("Peak Queue per Pool", "PQPP", "Maximum queue length per pool, aligned with Pool Names.", GH_ParamAccess.list);
+            pManager.AddIntegerParameter(
+                "Transfers Bypassing Entry", "TBE",
+                "Departing transfer passengers that did not use terminal entry and continue to downstream facilities.",
+                GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -191,6 +203,7 @@ namespace AirportPlanning.Components.SimulationComponent
             DA.SetDataList(16, result.AverageWaitPerPool);
             DA.SetDataList(17, result.MaxWaitPerPool);
             DA.SetDataList(18, result.PeakQueuePerPool);
+            DA.SetData(19, result.TransfersBypassingEntry);
         }
 
         private static List<PoolPlan> UnwrapPoolPlans(List<object> raw)

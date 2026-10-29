@@ -1,4 +1,5 @@
 using AirportPlanning.Core.Distributions;
+using AirportPlanning.Core.Generation;
 using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Queueing;
 using AirportPlanning.Core.Inputs;
@@ -15,6 +16,87 @@ namespace AirportPlanning.Facilities.Security
         private int _cachedBaselinePhysical = -1;
 
         public SecuritySolver() : base() { }
+
+        /// <summary>
+        /// Routes transfer passengers whose scenario rules request a dedicated
+        /// transfer-security pool to <see cref="SecurityInputs.TransferChannelName"/>
+        /// for pool selection, then restores their original check-in channel so
+        /// downstream facilities are unaffected.
+        /// </summary>
+        private Dictionary<Passenger, string> ApplySeparateTransferRouting(
+            List<Passenger> passengers,
+            string transferChannelName,
+            IList<ChannelResourcePlan> plans)
+        {
+            Dictionary<Passenger, string> originalChannels =
+                new Dictionary<Passenger, string>();
+
+            if (passengers == null || string.IsNullOrWhiteSpace(transferChannelName))
+                return originalChannels;
+
+            string channel = transferChannelName.Trim();
+
+            if (!HasConfiguredChannel(plans, channel))
+            {
+                int unconfigured = passengers.Count(UsesSeparateSecurity);
+
+                if (unconfigured > 0)
+                {
+                    Warnings.Add(
+                        $"Separate security routing had no matching pool for '{channel}'. " +
+                        $"{unconfigured} transfer passenger(s) remain in their original channel " +
+                        "so they can share the main security facility. Add a matching channel " +
+                        "(and pool plan) to size them independently.");
+                }
+
+                return originalChannels;
+            }
+
+            foreach (Passenger passenger in passengers)
+            {
+                if (!UsesSeparateSecurity(passenger))
+                    continue;
+
+                originalChannels[passenger] = passenger.Channel;
+                passenger.Channel = channel;
+            }
+
+            if (originalChannels.Count > 0)
+            {
+                Warnings.Add(
+                    $"{originalChannels.Count} transfer passenger(s) are routed to the separate " +
+                    $"'{channel}' security pool.");
+            }
+
+            return originalChannels;
+        }
+
+        /// <summary>True when security is required and routed to a dedicated
+        /// transfer pool.</summary>
+        private static bool UsesSeparateSecurity(Passenger passenger)
+        {
+            return passenger != null &&
+                   passenger.Journey == PassengerJourney.Transfer &&
+                   passenger.TransferProcessing != null &&
+                   passenger.TransferProcessing.RequiresSecurityScreening &&
+                   passenger.TransferProcessing.SecurityRouting == TransferFacilityRouting.Separate;
+        }
+
+        /// <summary>Restores the original channels saved by
+        /// <see cref="ApplySeparateTransferRouting"/> on the upstream passengers
+        /// and on the clones the simulation served.</summary>
+        private static void RestoreSeparateTransferChannels(
+            Dictionary<Passenger, string> originalChannels,
+            Dictionary<Passenger, Passenger> clones)
+        {
+            foreach (KeyValuePair<Passenger, string> pair in originalChannels)
+            {
+                pair.Key.Channel = pair.Value;
+
+                if (clones != null && clones.TryGetValue(pair.Key, out Passenger clone))
+                    clone.Channel = pair.Value;
+            }
+        }
 
         public SecurityResults Solve(SecurityInputs input)
         {
@@ -48,13 +130,18 @@ namespace AirportPlanning.Facilities.Security
                             _cachedOutcomes != null &&
                             _cachedBaselinePhysical > 0;
 
+            Dictionary<Passenger, string> separatedChannels = ApplySeparateTransferRouting(
+                input.Passengers,
+                input.TransferChannelName,
+                plans);
+
             List<ResourceSearchOutcome> outcomes;
 
             FacilitySolveResult solve = SolvePools(
                 input.Passengers,
                 plans,
                 input.Channels,
-                p => true,
+                RequiresSecurityScreening,
                 serviceTimeProvider,
                 input.Seed,
                 input.OptimizeResources,
@@ -62,7 +149,33 @@ namespace AirportPlanning.Facilities.Security
                 cacheHit ? _cachedOutcomes : null,
                 out outcomes,
                 Warnings.Add,
-                IsDeparturePassenger);
+                p => IsDeparturePassenger(p) &&
+                     TransferServiceUsageCalculator.UsesService(p, TransferService.Security));
+
+            if (separatedChannels.Count > 0)
+            {
+                List<string> misplaced = separatedChannels.Keys
+                    .Where(p => solve.Clones.TryGetValue(p, out Passenger clone) &&
+                                clone != null &&
+                                !string.Equals(
+                                    clone.AssignedPool,
+                                    input.TransferChannelName.Trim(),
+                                    StringComparison.OrdinalIgnoreCase))
+                    .Select(p => solve.Clones[p].AssignedPool)
+                    .Where(name => !string.IsNullOrEmpty(name))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (misplaced.Count > 0)
+                {
+                    Warnings.Add(
+                        "Separate transfer-security routing had no matching pool; those passengers " +
+                        $"were served by: {string.Join(", ", misplaced)}. Add a Pool Plan (or channel " +
+                        $"'{input.TransferChannelName.Trim()}') to size them independently.");
+                }
+
+                RestoreSeparateTransferChannels(separatedChannels, solve.Clones);
+            }
 
             if (!cacheHit && input.OptimizeResources && outcomes != null)
             {
@@ -98,6 +211,14 @@ namespace AirportPlanning.Facilities.Security
             AdvancePassengers(solve.Processed);
 
             return finalResult;
+        }
+
+        private static bool RequiresSecurityScreening(Passenger passenger)
+        {
+            return passenger != null &&
+                   (passenger.Journey != PassengerJourney.Transfer ||
+                    passenger.TransferProcessing == null ||
+                    passenger.TransferProcessing.RequiresSecurityScreening);
         }
 
         /// <summary>

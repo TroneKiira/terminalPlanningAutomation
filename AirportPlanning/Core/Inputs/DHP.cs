@@ -4,9 +4,36 @@ using System.Linq;
 
 namespace AirportPlanning.Core.Inputs
 {
+    /// <summary>
+    /// What the demand factors describe.
+    /// </summary>
+    public enum DemandTimeBasis
+    {
+        /// <summary>
+        /// Legacy: each factor is the terminal-arrival demand in that hour.
+        /// Passengers are spread inside the same hour.
+        /// </summary>
+        TerminalArrival = 0,
+
+        /// <summary>
+        /// Each factor is the passenger demand on flights whose STD (departures)
+        /// or STA (arrivals) falls in that hour. Terminal arrival is derived
+        /// from the flight time, the profile's advance window and the show-up
+        /// curve.
+        /// </summary>
+        FlightHour = 1
+    }
+
     public class DHP
     {
         public DHPType Type { get; set; }
+
+        /// <summary>
+        /// Whether <see cref="DemandFactors"/> describe terminal arrivals or
+        /// flight-hour demand. Defaults to the legacy terminal-arrival basis so
+        /// existing programmatic callers keep their behaviour.
+        /// </summary>
+        public DemandTimeBasis DemandBasis { get; set; } = DemandTimeBasis.TerminalArrival;
 
         public int DesignHourDemand { get; set; }
 
@@ -47,6 +74,9 @@ namespace AirportPlanning.Core.Inputs
         {
             List<string> errors = new List<string>();
 
+            if (!Enum.IsDefined(typeof(DemandTimeBasis), DemandBasis))
+                errors.Add("Demand Basis must be TerminalArrival (0) or FlightHour (1).");
+
             if (AnalysisPeriodHours <= 0)
                 errors.Add("Analysis Period must be greater than 0 hours.");
 
@@ -72,11 +102,14 @@ namespace AirportPlanning.Core.Inputs
             if (DesignHourIndex < 0 || DesignHourIndex > maxIndex)
                 errors.Add($"Design Hour Index must be between 0 and {maxIndex}.");
 
-            if (WarmUpEnabled && WarmUpMinutes < 0)
-                errors.Add("Warm-Up Duration cannot be negative.");
+            if (DemandBasis == DemandTimeBasis.TerminalArrival)
+            {
+                if (WarmUpEnabled && WarmUpMinutes < 0)
+                    errors.Add("Warm-Up Duration cannot be negative.");
 
-            if (WarmUpFactor < 0.0)
-                errors.Add("Warm-Up Factor cannot be negative.");
+                if (WarmUpFactor < 0.0)
+                    errors.Add("Warm-Up Factor cannot be negative.");
+            }
 
             return errors;
         }

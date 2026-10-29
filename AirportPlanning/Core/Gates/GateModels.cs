@@ -5,8 +5,7 @@ using System.Linq;
 namespace AirportPlanning.Core.Gates
 {
     /// <summary>
-    /// One aircraft type: the movements it makes in the peak hour and the
-    /// people it brings.
+    /// One aircraft code's PHP peak-hour stand demand.
     ///
     /// The stand is apron; the lounge is terminal. The two are counted
     /// separately and never added together.
@@ -14,9 +13,7 @@ namespace AirportPlanning.Core.Gates
     public class GateCodeInput
     {
         /// <summary>
-        /// Annex 14 code letter: A, B, C, D, E or F. A code B or D aircraft
-        /// is folded into the next stand up by the planner before it is
-        /// typed here.
+        /// Annex 14 code letter: A, B, C, D, E or F.
         /// </summary>
         public string Code { get; set; } = string.Empty;
 
@@ -27,26 +24,47 @@ namespace AirportPlanning.Core.Gates
         public int InternationalAtms { get; set; }
 
         /// <summary>
-        /// Minutes an aircraft of this code holds a stand: on-block to
-        /// off-block. The same figure is used for both sectors here; where a
-        /// domestic and an international turn differ, size them on the longer.
+        /// Minutes an aircraft of this code holds a stand in the domestic
+        /// sector, on-block to off-block.
         /// </summary>
-        public double OccupancyMinutes { get; set; }
+        public double DomesticOccupancyMinutes { get; set; }
 
-        /// <summary>Seats on one aircraft of this code.</summary>
+        /// <summary>Stand occupancy minutes in the international sector.</summary>
+        public double InternationalOccupancyMinutes { get; set; }
+
+    }
+
+    /// <summary>
+    /// One aircraft code's passenger and lounge assumptions. Kept separate
+    /// from PHP movements so the same profiles can size either demand method.
+    /// </summary>
+    public class GateLoungeProfile
+    {
+        public string Code { get; set; } = string.Empty;
+
+        /// <summary>Average seats on one aircraft of this code.</summary>
         public int Seats { get; set; }
 
-        /// <summary>Share of the planeload seated in the lounge, 0..1.</summary>
+        /// <summary>Share of seats filled, from 0 to 1.</summary>
+        public double LoadFactor { get; set; }
+
+        /// <summary>Share of the planeload seated in the lounge.</summary>
         public double SeatedPct { get; set; }
 
-        /// <summary>Share of the planeload standing in the lounge, 0..1.</summary>
+        /// <summary>Share of the planeload standing in the lounge.</summary>
         public double StandingPct { get; set; }
 
-        /// <summary>
-        /// Share of the planeload waiting to board, 0..1. The seated,
-        /// standing and boarding shares need not total 100%.
-        /// </summary>
+        /// <summary>Share of the planeload waiting in the boarding queue.</summary>
         public double BoardingQueuePct { get; set; }
+
+        /// <summary>Extra area for seated passengers using the next seat.</summary>
+        public double NextSeatAllowancePct { get; set; }
+
+        /// <summary>Hold-area reduction for an open lounge.</summary>
+        public double OpenLoungeReductionPct { get; set; }
+
+        /// <summary>Boarding podium positions in one lounge of this code.</summary>
+        public int PodiumsPerLounge { get; set; }
     }
 
     /// <summary>
@@ -63,30 +81,27 @@ namespace AirportPlanning.Core.Gates
         /// <summary>Spare stands, as a share of the peak requirement.</summary>
         public double SparesPct { get; set; } = 0.0;
 
-        /// <summary>Share of the seats filled.</summary>
-        public double LoadFactor { get; set; } = 0.85;
-
         /// <summary>Stands of each code able to serve either sector.</summary>
         public Dictionary<string, int> SwingStands { get; set; } =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Share of the domestic group's active stands that are contact.</summary>
-        public double ContactPctDomestic { get; set; } = 0.8;
+        public double ContactPctDomestic { get; set; } = 0.0;
 
         /// <summary>Share of the swing group's active stands that are contact.</summary>
-        public double ContactPctSwing { get; set; } = 0.8;
+        public double ContactPctSwing { get; set; } = 0.0;
 
         /// <summary>Share of the international group's active stands that are contact.</summary>
-        public double ContactPctInternational { get; set; } = 0.8;
+        public double ContactPctInternational { get; set; } = 0.0;
 
         /// <summary>Remote stands one bus gate serves in active use.</summary>
-        public double RemoteStandsPerBusGate { get; set; } = 2.0;
+        public double RemoteStandsPerBusGate { get; set; } = 1.0;
 
         /// <summary>
         /// All stands including overnight parking, divided by the active
         /// stands. A combined ratio.
         /// </summary>
-        public double MaxStandsRatio { get; set; } = 1.35;
+        public double MaxStandsRatio { get; set; } = 1.0;
 
         /// <summary>Space for one seated passenger, m².</summary>
         public double SeatedSpacePerPax { get; set; } = 1.7;
@@ -97,29 +112,8 @@ namespace AirportPlanning.Core.Gates
         /// <summary>Space for one passenger waiting to board, m².</summary>
         public double BoardingQueueSpacePerPax { get; set; } = 1.2;
 
-        /// <summary>
-        /// Extra seated space for passengers putting belongings on the next
-        /// seat, as a share of the seated area.
-        /// </summary>
-        public double NextSeatAllowancePct { get; set; } = 0.0;
-
-        /// <summary>
-        /// Reduction where a lounge is open to the concourse and borrows its
-        /// space, as a share of the hold area.
-        /// </summary>
-        public double OpenLoungeReductionPct { get; set; } = 0.0;
-
-        /// <summary>Boarding podiums in one lounge.</summary>
-        public int PodiumsPerLounge { get; set; } = 1;
-
         /// <summary>Area of one boarding podium, m².</summary>
         public double PodiumAreaEach { get; set; } = 0.0;
-
-        /// <summary>
-        /// The code a bus gate's lounge is sized as. A bus gate serves
-        /// whatever it serves, so it is sized as the smallest lounge.
-        /// </summary>
-        public string BusLoungeCode { get; set; } = "C";
 
         /// <summary>The swing stands stated for one code.</summary>
         public int SwingFor(string code)
@@ -129,6 +123,38 @@ namespace AirportPlanning.Core.Gates
 
             return SwingStands.TryGetValue(code.Trim(), out int value) ? value : 0;
         }
+    }
+
+    /// <summary>
+    /// Aircraft-on-ground demand measured from a linked design-day schedule.
+    /// The three peaks are measured from the 5-minute domestic, international
+    /// and mixed-sector curves, using the same rotation rules as the TypeScript
+    /// source implementation.
+    /// </summary>
+    public class GateScheduleCodeDemand
+    {
+        public string Code { get; set; } = string.Empty;
+        public int DomesticPeak { get; set; }
+        public int InternationalPeak { get; set; }
+        public int CombinedPeak { get; set; }
+        public int MixedPeak { get; set; }
+        public int PeakSlot { get; set; }
+        public int Swing { get; set; }
+        public int DedicatedDomestic { get; set; }
+        public int DedicatedInternational { get; set; }
+        public bool MixedFloor { get; set; }
+    }
+
+    /// <summary>Schedule-derived stand demand for one terminal or the airport.</summary>
+    public class GateScheduleDemand
+    {
+        public string ScheduleName { get; set; } = string.Empty;
+        public string Terminal { get; set; } = string.Empty;
+        public bool TerminalIsAirport { get; set; }
+        public int RotationCount { get; set; }
+        public int SplitTerminalRotations { get; set; }
+        public List<GateScheduleCodeDemand> Codes { get; set; } = new List<GateScheduleCodeDemand>();
+        public List<string> Warnings { get; set; } = new List<string>();
     }
 
     /// <summary>
@@ -235,6 +261,9 @@ namespace AirportPlanning.Core.Gates
     /// </summary>
     public class GateSizingResult
     {
+        /// <summary>True when stand demand came from schedule-derived AOG peaks.</summary>
+        public bool ScheduleMode { get; set; }
+
         /// <summary>The three groups of stands.</summary>
         public List<GateBucketStands> Buckets { get; set; } = new List<GateBucketStands>();
 

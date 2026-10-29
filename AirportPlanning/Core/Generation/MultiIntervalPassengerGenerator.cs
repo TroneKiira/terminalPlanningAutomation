@@ -17,7 +17,10 @@ namespace AirportPlanning.Core.Generation
             int seed,
             ShowUpProfile showUpProfile = null,
             IChannelAssigner channelAssigner = null,
-            Action<string> warn = null)
+            Action<string> warn = null,
+            CheckInWindowRules checkInWindows = null,
+            ArrivalProcessDelay arrivalDelay = null,
+            TransferDemandProfile transferDemand = null)
         {
             if (groups == null || groups.Count == 0)
                 throw new ArgumentNullException(nameof(groups));
@@ -40,10 +43,26 @@ namespace AirportPlanning.Core.Generation
                         "Every supplied passenger group needs a DHP.", nameof(groups));
             }
 
-            // All supplied DHPs share one analysis window: same step count,
-            // design-hour index and warm-up timing. Demand levels and curves
-            // may differ per type.
+            // All supplied DHPs share one analysis window: same basis, step
+            // count, design-hour index and warm-up timing. Demand levels and
+            // curves may differ per type.
             ValidateSharedWindow(active);
+
+            DemandTimeBasis demandBasis = active[0].DHP.DemandBasis;
+
+            checkInWindows = checkInWindows ?? CheckInWindowRules.CreateDefault();
+            arrivalDelay = arrivalDelay ?? new ArrivalProcessDelay();
+
+            List<string> checkInErrors = checkInWindows.GetValidationErrors();
+            List<string> delayErrors = arrivalDelay.GetValidationErrors();
+
+            if (checkInErrors.Count > 0)
+                throw new ArgumentException(
+                    string.Join(" ", checkInErrors), nameof(checkInWindows));
+
+            if (delayErrors.Count > 0)
+                throw new ArgumentException(
+                    string.Join(" ", delayErrors), nameof(arrivalDelay));
 
             waves = waves ?? new WaveSettings();
 
@@ -52,6 +71,16 @@ namespace AirportPlanning.Core.Generation
                 : "none";
 
             List<string> warnings = new List<string>();
+
+            if (demandBasis == DemandTimeBasis.FlightHour &&
+                checkInWindows.Overrides != null &&
+                checkInWindows.Overrides.Count > 0)
+            {
+                warnings.Add(
+                    "Airline/flight check-in overrides are not applied to flight-hour " +
+                    "demand because the sampled flights carry no airline or flight number. " +
+                    "The sector-default check-in windows are used.");
+            }
 
             Random rnd = new Random(seed);
 
@@ -68,14 +97,20 @@ namespace AirportPlanning.Core.Generation
             int analysisPeriodHours = active[0].DHP.StepCount;
             int designHourIndex = active[0].DHP.DesignHourIndex;
 
-            bool warmUpEnabled = active[0].DHP.WarmUpEnabled;
+            bool warmUpEnabled =
+                demandBasis == DemandTimeBasis.TerminalArrival &&
+                active[0].DHP.WarmUpEnabled;
+
             int warmUpMinutes = active[0].DHP.WarmUpMinutes;
 
+            // Flight-hour demand is placed relative to its STD/STA, so the
+            // run naturally starts before the first demand step. There is no
+            // synthetic warm-up segment in that basis.
             double windowStart =
                 (warmUpEnabled && warmUpMinutes > 0) ? warmUpMinutes : 0.0;
 
             // ---------------------------------------------------------
-            // Warm-up segment (simulated but excluded from metrics)
+            // Warm-up segment (legacy terminal-arrival basis only)
             // ---------------------------------------------------------
             if (windowStart > 0.0)
             {
@@ -110,12 +145,26 @@ namespace AirportPlanning.Core.Generation
                     if (stepTotal <= 0)
                         continue;
 
-                    GenerateGroup(
-                        stepTotal, group, stepStartAbs, 60, step, hourIndex,
-                        false, step == designHourIndex,
-                        waves, showUpProfile, showUpSignature, walkingProfile, rnd, channelAssigner, channelRnd,
-                        passengers, result.ArrivalSimulations,
-                        ref nextId, ref waveCounter, warnings);
+                    if (demandBasis == DemandTimeBasis.FlightHour)
+                    {
+                        GenerateFlightGroup(
+                            stepTotal, group, stepStartAbs, 60, step,
+                            step == designHourIndex,
+                            showUpProfile, walkingProfile,
+                            checkInWindows, arrivalDelay,
+                            rnd, channelAssigner, channelRnd,
+                            passengers, result.ArrivalSimulations,
+                            ref nextId);
+                    }
+                    else
+                    {
+                        GenerateGroup(
+                            stepTotal, group, stepStartAbs, 60, step, hourIndex,
+                            false, step == designHourIndex,
+                            waves, showUpProfile, showUpSignature, walkingProfile, rnd, channelAssigner, channelRnd,
+                            passengers, result.ArrivalSimulations,
+                            ref nextId, ref waveCounter, warnings);
+                    }
                 }
             }
 
@@ -127,6 +176,10 @@ namespace AirportPlanning.Core.Generation
 
             result.Passengers = passengers.OrderBy(p => p.ArrivalTime).ToList();
 
+            result.TransferDemand = TransferPassengerTagger.ApplyAggregate(
+                result.Passengers,
+                transferDemand);
+
             foreach (Passenger passenger in result.Passengers)
                 passenger.QueueArrivalTime = passenger.ArrivalTime;
 
@@ -134,9 +187,9 @@ namespace AirportPlanning.Core.Generation
         }
 
         /// <summary>
-        /// Every supplied group must share one analysis window: same step
-        /// count, design-hour index and warm-up timing. Demand levels and
-        /// demand-factor curves may differ per type.
+        /// Every supplied group must share one analysis window: same demand
+        /// basis, step count, design-hour index and warm-up timing. Demand
+        /// levels and demand-factor curves may differ per type.
         /// </summary>
         private static void ValidateSharedWindow(List<PassengerGroup> active)
         {
@@ -146,6 +199,13 @@ namespace AirportPlanning.Core.Generation
             {
                 DHP candidate = active[i].DHP;
                 string label = candidate.Type.ToString();
+
+                if (candidate.DemandBasis != reference.DemandBasis)
+                    throw new ArgumentException(
+                        $"Passenger group '{label}' uses demand basis " +
+                        $"{candidate.DemandBasis} but '{reference.Type}' uses " +
+                        $"{reference.DemandBasis}. All supplied groups must share " +
+                        $"the same demand basis.");
 
                 if (candidate.StepCount != reference.StepCount)
                     throw new ArgumentException(
@@ -159,8 +219,9 @@ namespace AirportPlanning.Core.Generation
                         $"but '{reference.Type}' uses {reference.DesignHourIndex}. All supplied groups " +
                         $"must share the same design hour.");
 
-                if (candidate.WarmUpEnabled != reference.WarmUpEnabled ||
-                    candidate.WarmUpMinutes != reference.WarmUpMinutes)
+                if (reference.DemandBasis == DemandTimeBasis.TerminalArrival &&
+                    (candidate.WarmUpEnabled != reference.WarmUpEnabled ||
+                     candidate.WarmUpMinutes != reference.WarmUpMinutes))
                     throw new ArgumentException(
                         $"Passenger group '{label}' has different warm-up timing " +
                         $"(enabled={candidate.WarmUpEnabled}, minutes={candidate.WarmUpMinutes}) " +
@@ -255,6 +316,189 @@ namespace AirportPlanning.Core.Generation
 
                 issued += taken;
             }
+        }
+
+        /// <summary>
+        /// Flight-hour demand: the step count is passengers on flights whose
+        /// STD (departures) or STA (arrivals) falls inside this hour. Flight
+        /// identities are not synthesized, so each passenger samples a single
+        /// flight time inside the hour (Option A).
+        ///
+        /// Departures are placed backwards from the sampled STD exactly as the
+        /// schedule generator does: the profile's advance interval is stretched
+        /// through the show-up curve. Arrivals are placed forwards from the
+        /// sampled STA by the explicit arrival-process delay.
+        /// </summary>
+        private void GenerateFlightGroup(
+            int count,
+            PassengerGroup group,
+            double stepStartAbs,
+            int stepMinutes,
+            int stepIndex,
+            bool isDesignStep,
+            ShowUpProfile fallbackShowUp,
+            WalkingProfile walkingProfile,
+            CheckInWindowRules checkInWindows,
+            ArrivalProcessDelay arrivalDelay,
+            Random rnd,
+            IChannelAssigner channelAssigner,
+            Random channelRnd,
+            List<Passenger> passengers,
+            List<ArrivalSimulationResult> simulations,
+            ref int nextId)
+        {
+            if (count <= 0 || group.Profiles == null || group.Profiles.Count == 0)
+                return;
+
+            DHPType type = group.DHP.Type;
+            bool departure = IsDepartureType(type);
+            bool domestic = IsDomesticType(type);
+
+            List<PassengerAllocation> allocations =
+                AllocatePassengers(count, group.Profiles);
+
+            List<double> arrivalTimes = new List<double>(count);
+
+            for (int a = 0; a < allocations.Count; a++)
+            {
+                PassengerAllocation allocation = allocations[a];
+
+                if (allocation.PassengerCount <= 0 || allocation.Profile == null)
+                    continue;
+
+                PassengerProfile profile = allocation.Profile;
+                ShowUpProfile showUp = null;
+                string signature = "none";
+
+                double minAdvance = 0.0;
+                double maxAdvance = 0.0;
+
+                if (departure)
+                {
+                    minAdvance = profile.MinAdvanceMinutes;
+                    maxAdvance = profile.MaxAdvanceMinutes;
+
+                    if (maxAdvance < minAdvance)
+                    {
+                        double swap = minAdvance;
+                        minAdvance = maxAdvance;
+                        maxAdvance = swap;
+                    }
+
+                    showUp = profile.DepartureShowUp ??
+                             fallbackShowUp ??
+                             ShowUpProfile.Mix();
+
+                    signature = showUp.GetSignature();
+                }
+                else
+                {
+                    signature =
+                        $"arrival-process|{arrivalDelay.MinimumMinutes:R}|" +
+                        $"{arrivalDelay.MaximumMinutes:R}";
+                }
+
+                for (int i = 0; i < allocation.PassengerCount; i++)
+                {
+                    double flightTime =
+                        stepStartAbs + rnd.NextDouble() * stepMinutes;
+
+                    double arrivalTime;
+
+                    if (departure)
+                    {
+                        arrivalTime = SampleDepartureArrival(
+                            flightTime, minAdvance, maxAdvance, showUp, rnd);
+                    }
+                    else
+                    {
+                        arrivalTime = flightTime + arrivalDelay.Sample(rnd);
+                    }
+
+                    Passenger passenger = PassengerFactory.Create(
+                        nextId++,
+                        profile,
+                        walkingProfile,
+                        arrivalTime,
+                        rnd,
+                        channelAssigner,
+                        channelRnd,
+                        type);
+
+                    passenger.DemandStepIndex = stepIndex;
+                    passenger.DemandHourIndex = stepIndex;
+                    passenger.IsWarmUp = false;
+                    passenger.IsDesignStep = isDesignStep;
+                    passenger.WaveId = -1;
+                    passenger.ShowUpSignature = signature;
+                    passenger.PassengerType = domestic
+                        ? PassengerType.Domestic
+                        : PassengerType.International;
+                    passenger.QueueArrivalTime = arrivalTime;
+
+                    if (departure)
+                    {
+                        CheckInWindow window = checkInWindows.ResolveSector(
+                            type, flightTime);
+
+                        passenger.TerminalEntryArrivalTime = arrivalTime;
+                        passenger.ScheduledDepartureTime = flightTime;
+                        passenger.CheckInOpenTime = window.OpensAt;
+                        passenger.CheckInLastAdmissionTime = window.LastAdmissionAt;
+                        passenger.ArrivedBeforeCheckInOpen =
+                            arrivalTime < window.OpensAt;
+                        passenger.IsLateForCheckIn =
+                            arrivalTime > window.LastAdmissionAt;
+                    }
+                    else
+                    {
+                        passenger.ScheduledArrivalTime = flightTime;
+                    }
+
+                    passengers.Add(passenger);
+                    arrivalTimes.Add(arrivalTime);
+                }
+            }
+
+            if (arrivalTimes.Count > 0)
+            {
+                simulations.Add(BuildFlightArrivalSimulation(
+                    arrivalTimes,
+                    type,
+                    stepIndex,
+                    isDesignStep));
+            }
+        }
+
+        private static double SampleDepartureArrival(
+            double scheduledDeparture,
+            double minAdvance,
+            double maxAdvance,
+            ShowUpProfile showUp,
+            Random rnd)
+        {
+            double earliest = scheduledDeparture - maxAdvance;
+            double latest = scheduledDeparture - minAdvance;
+            double interval = latest - earliest;
+
+            if (interval <= 0.0)
+                return latest;
+
+            double fraction = showUp.SampleNormalizedElapsed(rnd);
+
+            return earliest + interval * fraction;
+        }
+
+        private static bool IsDepartureType(DHPType type)
+        {
+            return type == DHPType.DomesticDeparture ||
+                   type == DHPType.InternationalDeparture;
+        }
+
+        private static bool IsDomesticType(DHPType type)
+        {
+            return type == DHPType.DomesticDeparture ||
+                   type == DHPType.DomesticArrival;
         }
 
         private ArrivalTimeSet GenerateStepTimes(
@@ -475,6 +719,59 @@ namespace AirportPlanning.Core.Generation
             simulation.IsWarmUp = isWarmUp;
             simulation.IsDesignStep = isDesignStep;
             simulation.Label = BuildSimulationLabel(type, stepIndex, isWarmUp, isDesignStep);
+
+            return simulation;
+        }
+
+        /// <summary>
+        /// Histogram for flight-hour demand. A demand step counts flights in
+        /// its hour, but the derived terminal arrivals can fall before the
+        /// window (departures) and after it (arrivals). The histogram is
+        /// therefore anchored to the realized times instead of a fixed 60
+        /// buckets from the step start, so negative and overflow minutes are
+        /// retained rather than silently dropped.
+        /// </summary>
+        private static ArrivalSimulationResult BuildFlightArrivalSimulation(
+            List<double> arrivalTimes,
+            DHPType type,
+            int stepIndex,
+            bool isDesignStep)
+        {
+            ArrivalSimulationResult simulation = new ArrivalSimulationResult();
+
+            int firstMinute = int.MaxValue;
+            int lastMinute = int.MinValue;
+
+            foreach (double time in arrivalTimes)
+            {
+                int minute = (int)Math.Floor(time);
+                firstMinute = Math.Min(firstMinute, minute);
+                lastMinute = Math.Max(lastMinute, minute);
+            }
+
+            int length = lastMinute - firstMinute + 1;
+            int[] histogram = new int[Math.Max(1, length)];
+
+            foreach (double time in arrivalTimes)
+            {
+                int minute = (int)Math.Floor(time);
+                simulation.ArrivalMinutes.Add(minute);
+
+                int bucket = minute - firstMinute;
+
+                if (bucket >= 0 && bucket < histogram.Length)
+                    histogram[bucket]++;
+            }
+
+            simulation.Histogram.AddRange(histogram);
+
+            simulation.StepStartMinute = firstMinute;
+            simulation.StepMinutes = histogram.Length;
+            simulation.StepIndex = stepIndex;
+            simulation.IsWarmUp = false;
+            simulation.IsDesignStep = isDesignStep;
+            simulation.Label = BuildSimulationLabel(
+                type, stepIndex, false, isDesignStep);
 
             return simulation;
         }

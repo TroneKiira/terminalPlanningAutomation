@@ -9,6 +9,13 @@ namespace AirportPlanning.Facilities.TerminalEntry
         public QueueResults QueueResults { get; set; }
         public int PhysicalPositions { get; set; }
         public int ActivePositions { get; set; }
+
+        /// <summary>
+        /// Departing transfer passengers passed through without terminal-entry
+        /// service. They remain in <see cref="QueueResults"/> Passengers for
+        /// downstream facilities.
+        /// </summary>
+        public int TransfersBypassingEntry { get; set; }
         public List<string> PoolNames { get; set; } = new List<string>();
         public List<int> PhysicalPerPool { get; set; } = new List<int>();
         public List<int> ActivePerPool { get; set; } = new List<int>();

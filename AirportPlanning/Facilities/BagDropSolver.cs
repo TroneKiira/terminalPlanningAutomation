@@ -1,3 +1,4 @@
+using AirportPlanning.Core.Generation;
 using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Queueing;
 using AirportPlanning.Core.Inputs;
@@ -71,7 +72,9 @@ namespace AirportPlanning.Facilities
                 cacheHit ? _cachedOutcomes : null,
                 out outcomes,
                 Warnings.Add,
-                p => IsDeparturePassenger(p) && !HasBagDropHistory(p));
+                p => IsDeparturePassenger(p) &&
+                     !HasBagDropHistory(p) &&
+                     TransferServiceUsageCalculator.UsesService(p, TransferService.BagDrop));
 
             if (!cacheHit && input.OptimizeResources && outcomes != null)
             {

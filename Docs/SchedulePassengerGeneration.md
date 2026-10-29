@@ -30,6 +30,11 @@ Schedule Passenger Generator (PGR)
 
 `Flight Schedule Deconstruct`, `Arrival Legs`, and `Departure Legs` are inspection outputs. They are not required for generation.
 
+Tagged transfer passengers bypass the Terminal Entry stage: only originating
+departures are queued at the entry gates. Transfers continue on the Terminal
+Entry `Passengers` output to downstream facilities, and the component reports
+them on `Transfers Bypassing Entry`.
+
 ## Groups without a manual DHP
 
 Schedule mode does not require `Create Passenger Demand`. Use
@@ -43,6 +48,24 @@ Schedule mode does not require `Create Passenger Demand`. Use
 CSPG has no DHP input, so it cannot fail on a missing D. The existing
 DHP-based Windowed Passenger Generator still uses `Create Passenger Demand` and
 `Create Passenger Group`.
+
+## Windowed demand basis
+
+`Create Passenger Demand` defaults to `Demand Basis = 1` (**Flight Hour**): each
+hourly factor describes passengers on flights whose STD (departures) or STA
+(arrivals) falls in that hour. Each passenger samples an STD/STA inside the
+hour; departure passengers are placed backwards using their profile's advance
+interval and show-up curve, while arrival passengers are placed at
+`STA + Arrival Delay`. This is a passenger-level approximation, not a
+synthesized flight schedule. Check-in windows use sector defaults because no
+airline or flight identity is available.
+
+Set `Demand Basis = 0` (**Terminal Arrival**) to retain the legacy behavior,
+where each factor describes passengers arriving at the terminal in that same
+hour. The warm-up inputs apply only to this legacy basis; Flight Hour demand
+does not add synthetic warm-up passengers because departures may arrive before
+the analysis window naturally. The design-hour tag remains attached to the
+selected flight-demand step, and facility Wait95 targets remain whole-run.
 
 ## Schedule demand outputs
 
@@ -107,7 +130,10 @@ timestamp; the Terminal Entry stage passes them through with a warning.
 | Domestic | STD - 120 min | STD - 60 min |
 | International | STD - 180 min | STD - 60 min |
 
-Closing means last admission. Passengers admitted by then may finish service. Passengers projected after last admission are flagged and are not served by Check-In. Early arrivals are flagged; the current queue engine does not yet delay counters to the opening time.
+Closing means last admission. Passengers admitted by then may finish service.
+Passengers projected after last admission are flagged and are not served by
+Check-In. Early arrivals are flagged and wait in the hall until check-in opens;
+that pre-opening time is not counted as check-in queue wait.
 
 Optional override lines:
 

@@ -1,4 +1,5 @@
 using AirportPlanning.Core.Distributions;
+using AirportPlanning.Core.Generation;
 using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Queueing;
 using AirportPlanning.Core.Inputs;
@@ -17,6 +18,24 @@ namespace AirportPlanning.Facilities.CheckIn
 
         public CheckInSolver() : base()
         {
+        }
+
+        protected override void PreparePoolPassenger(
+            Passenger passenger,
+            Passenger source)
+        {
+            if (passenger == null ||
+                double.IsNaN(passenger.CheckInOpenTime) ||
+                double.IsInfinity(passenger.CheckInOpenTime))
+            {
+                return;
+            }
+
+            // Early passengers wait in the public hall until counters open;
+            // that time is not included in their check-in queue wait.
+            passenger.QueueArrivalTime = Math.Max(
+                passenger.QueueArrivalTime,
+                passenger.CheckInOpenTime);
         }
 
         public CheckInResults Solve(CheckInInputs input)
@@ -70,6 +89,23 @@ namespace AirportPlanning.Facilities.CheckIn
 
             List<ResourceSearchOutcome> outcomes;
 
+            /* Check-In owns two services: the check-in desk and the physical
+               BagDrop channel. A record belongs in the stage when its flags or
+               its scenario rule require either service. Checking the rule per
+               service matters: a bag-drop-channel transfer that requires
+               check-in but not bag drop is still served at a desk, while an
+               online record without a bag (the virtual Web channel) has no
+               physical check-in visit and never enters a pool. The predicate
+               is passed as the required predicate so a wired Channels list
+               cannot bypass it. */
+            Func<Passenger, bool> checkInPassenger = p =>
+                p != null &&
+                IsDeparturePassenger(p) &&
+                !p.IsLateForCheckIn &&
+                (TransferServiceUsageCalculator.UsesService(p, TransferService.CheckIn) ||
+                 (IsBagDropChannel(p.Channel) &&
+                  TransferServiceUsageCalculator.UsesService(p, TransferService.BagDrop)));
+
             FacilitySolveResult solve = SolvePools(
                 input.Passengers,
                 plans,
@@ -82,7 +118,7 @@ namespace AirportPlanning.Facilities.CheckIn
                 cacheHit ? _cachedOutcomes : null,
                 out outcomes,
                 Warnings.Add,
-                p => IsDeparturePassenger(p) && !p.IsLateForCheckIn);
+                checkInPassenger);
 
             if (!cacheHit && input.OptimizeResources && outcomes != null)
             {
@@ -201,7 +237,10 @@ namespace AirportPlanning.Facilities.CheckIn
                 return;
 
             List<Passenger> bagDropPassengers = processed
-                .Where(p => p != null && IsBagDropChannel(p.Channel))
+                .Where(p => p != null &&
+                            IsBagDropChannel(p.Channel) &&
+                            p.RequiresBagDrop &&
+                            !TransferServiceUsageCalculator.IsBypassed(p, TransferService.BagDrop))
                 .ToList();
 
             if (bagDropPassengers.Count > 0)
@@ -250,6 +289,7 @@ namespace AirportPlanning.Facilities.CheckIn
                                 string.Equals(p.Channel, channel, StringComparison.OrdinalIgnoreCase) &&
                                 IsDeparturePassenger(p) &&
                                 !p.IsLateForCheckIn &&
+                                !TransferServiceUsageCalculator.IsBypassed(p, TransferService.CheckIn) &&
                                 !string.IsNullOrWhiteSpace(p.ProfileName))
                     .Select(p => new { p.DHPType, ProfileName = p.ProfileName.Trim() })
                     .Distinct()

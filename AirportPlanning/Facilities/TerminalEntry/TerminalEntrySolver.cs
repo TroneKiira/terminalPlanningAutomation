@@ -9,7 +9,9 @@ using System.Linq;
 namespace AirportPlanning.Facilities.TerminalEntry
 {
     /// <summary>
-    /// Simulates the departure-terminal admission queue. The channel field is
+    /// Simulates the departure-terminal admission queue. Originating
+    /// departures use the entry pools; transfer passengers are already airside
+    /// and pass through the stage without being queued. The channel field is
     /// temporarily mapped to the entry route on private working copies, then
     /// restored before passengers leave this stage; check-in routing is kept
     /// independent in TerminalEntryRoute.
@@ -50,6 +52,10 @@ namespace AirportPlanning.Facilities.TerminalEntry
                 .Select(p => p.Clone())
                 .ToList();
 
+            int transferPassengers = workingPassengers.Count(p =>
+                IsDeparturePassenger(p) &&
+                p.Journey == PassengerJourney.Transfer);
+
             Dictionary<Passenger, string> originalChannels = new Dictionary<Passenger, string>();
             PrepareTerminalEntryArrivals(workingPassengers);
             AssignRoutes(workingPassengers, input.DigiYatraSharePercentage, input.Seed, originalChannels);
@@ -81,7 +87,7 @@ namespace AirportPlanning.Facilities.TerminalEntry
                 cacheHit ? _cachedOutcomes : null,
                 out outcomes,
                 Warnings.Add,
-                IsDeparturePassenger);
+                RequiresTerminalEntry);
 
             if (!cacheHit && input.OptimizeResources && outcomes != null)
             {
@@ -136,7 +142,8 @@ namespace AirportPlanning.Facilities.TerminalEntry
                 MaxWaitPerPool = poolSnapshots.Select(p => p.MaxWait).ToList(),
                 Wait95ListPerPool = poolSnapshots.Select(p => p.Wait95).ToList(),
                 PeakQueuePerPool = poolSnapshots.Select(p => p.PeakQueueLength).ToList(),
-                SearchOutcomes = solve.SearchOutcomes ?? new List<ResourceSearchOutcome>()
+                SearchOutcomes = solve.SearchOutcomes ?? new List<ResourceSearchOutcome>(),
+                TransfersBypassingEntry = transferPassengers
             };
         }
 
@@ -204,13 +211,25 @@ namespace AirportPlanning.Facilities.TerminalEntry
             return passenger != null && !string.IsNullOrWhiteSpace(passenger.FlightLegId);
         }
 
+        /// <summary>
+        /// True when the passenger enters through the public terminal hall.
+        /// Transfer passengers are already airside and therefore bypass the
+        /// terminal-entry pools; they still pass through to downstream
+        /// facilities on the component's Passengers output.
+        /// </summary>
+        public static bool RequiresTerminalEntry(Passenger passenger)
+        {
+            return IsDeparturePassenger(passenger) &&
+                   passenger.Journey != PassengerJourney.Transfer;
+        }
+
         private void PrepareTerminalEntryArrivals(List<Passenger> passengers)
         {
             int incompatibleSchedulePassengers = 0;
 
             foreach (Passenger passenger in passengers)
             {
-                if (!IsDeparturePassenger(passenger))
+                if (!RequiresTerminalEntry(passenger))
                     continue;
 
                 if (HasTerminalEntryTime(passenger))
@@ -258,7 +277,7 @@ namespace AirportPlanning.Facilities.TerminalEntry
 
             foreach (Passenger passenger in passengers)
             {
-                if (!IsDeparturePassenger(passenger))
+                if (!RequiresTerminalEntry(passenger))
                     continue;
 
                 if (!HasTerminalEntryTime(passenger) && IsSchedulePassenger(passenger))
