@@ -15,8 +15,9 @@ namespace AirportPlanning.Facilities
         public ServiceProfile ServiceProfile { get; set; }
 
         /// <summary>
-        /// Channels this facility serves. Empty means the legacy predicate
-        /// (RequiresBagDrop) applies; non-empty filters on the passenger channel.
+        /// Legacy input retained for saved definitions. Bag Drop passengers are
+        /// selected by their separate bag-drop requirement, not by their
+        /// primary check-in channel.
         /// </summary>
         public List<string> Channels { get; set; } = new List<string>();
 
@@ -24,8 +25,8 @@ namespace AirportPlanning.Facilities
         public IServiceTimeProvider ServiceTimeProvider { get; set; }
 
         /// <summary>
-        /// Physical bag-drop counters per channel. Used when optimization is
-        /// switched off; a single value broadcasts to every channel.
+        /// Physical bag-drop counters. Used when optimization is switched off;
+        /// Bag Drop is one shared facility queue, so the first value applies.
         /// </summary>
         public List<int> PhysicalResources { get; set; } = new List<int>();
 

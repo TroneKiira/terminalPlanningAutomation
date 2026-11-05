@@ -26,8 +26,8 @@ namespace AirportPlanning.Facilities.CheckIn
         /// <summary>
         /// Optional CHR output. When Channels is empty, its configured route
         /// channels define the physical pools so names do not need to be
-        /// re-entered. Virtual routes (Web) are skipped automatically, while
-        /// BagDrop is treated as a physical Check-In channel.
+        /// re-entered. Virtual Web routes are skipped, and Bag Drop is a
+        /// separate facility stage rather than a Check-In channel.
         /// </summary>
         public ProfileChannelMap ChannelRouting { get; set; }
 

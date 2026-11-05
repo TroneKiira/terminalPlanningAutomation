@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 
+using AirportPlanning.Core.Inputs;
+
 namespace AirportPlanning.Core.Queueing
 {
     /// <summary>
@@ -252,14 +254,42 @@ namespace AirportPlanning.Core.Queueing
             if (string.IsNullOrWhiteSpace(poolKey))
                 return false;
 
-            string[] parts = poolKey.Split(new[] { '|' }, 2);
-            if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[1]))
+            string trimmed = poolKey.Trim();
+            int separator = trimmed.IndexOf('|');
+
+            if (separator < 0)
+            {
+                // Single word: either a valid DHP type (sector split) or a
+                // profile name (profile split). Both are valid.
+                if (Enum.TryParse(trimmed, true, out DHPType parsedDhp) &&
+                    Enum.IsDefined(typeof(DHPType), parsedDhp))
+                {
+                    return true;  // sector-only split
+                }
+                else
+                {
+                    return !string.IsNullOrWhiteSpace(trimmed);  // profile-only split
+                }
+            }
+
+            string[] parts = trimmed.Split(new[] { '|' }, 2);
+            if (parts.Length == 1)
                 return false;
 
-            if (!Enum.TryParse(parts[0].Trim(), true, out AirportPlanning.Core.Inputs.DHPType dhpType))
+            string dhpPart = parts[0].Trim();
+            string profilePart = parts.Length > 1 ? parts[1].Trim() : string.Empty;
+
+            if (string.IsNullOrWhiteSpace(profilePart))
+                return false;  // must supply profile when using separator
+
+            DHPType dhpType = default;
+
+            if (!string.IsNullOrEmpty(dhpPart) &&
+                (!Enum.TryParse(dhpPart, true, out dhpType) ||
+                 !Enum.IsDefined(typeof(DHPType), dhpType)))
                 return false;
 
-            return Enum.IsDefined(typeof(AirportPlanning.Core.Inputs.DHPType), dhpType);
+            return true;
         }
 
         private static void WarnOnLengthMismatch(IList<int> values, int count, string label, Action<string> warn)

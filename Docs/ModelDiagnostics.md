@@ -25,11 +25,25 @@ Every input is optional. With only `Passengers`, the component audits the
 transfer rules and the facility visits recorded in passenger history. With only
 service results, it audits counts and numeric outputs.
 
-**Bag Drop is a channel inside Check-In**, not a separate component. Do not wire a
-`BagDropResults` item. The Bag Drop row is added automatically and its processed
-records are read from the `BagDrop` history written by Check-In's BagDrop
-channel. That history is collected from the wired population and from every
-wired stage output, because Check-In writes it on its processed clones.
+**Bag Drop is its own stage**, separate from Check-In. Check-In serves the
+check-in visit only: Counter and Kiosk passengers queue at their desk, and a
+Counter passenger's checked bag is accepted at the counter itself. Web and
+Kiosk passengers with a checked bag, and transfers whose scenario rule requires
+a bag drop, are served by the standalone `BagDrop` component, which writes its
+own `BagDrop` history. Wire a `BagDropResults` item and it is audited on its own
+service row with its own channel, passenger-mix, departure-type and journey
+breakdowns. Check-In never writes BagDrop history, so a legacy `BagDrop`
+channel share in the Channel Routing map is normalised to `Web` and cannot
+become a Check-In pool.
+
+Bag Drop pooling: unwired `Pool Plans` means one shared facility queue. Keyed
+plans must use the identity `BagDrop` or `BagDrop|DHPType|ProfileName` — each
+pool serves its own profile slice of the bag-drop population (Web and Kiosk
+carriers of that profile), and any uncovered segment falls back to a shared
+pool with a warning. The `BagDrop|` prefix is a segment label, never matched
+against a passenger's primary check-in channel; other prefixes (for example a
+legacy `Web|...` key) are rejected with a warning. The diagnostics channel
+coverage check (`SVC-011`) does not apply to the Bag Drop row.
 
 `Dwell` has no `QueueResults` output either, so it is added automatically from
 the `DepartureLounge` history record when any wired output carries one.
@@ -59,7 +73,7 @@ label.
 | `Status` | `PASS`, `WARN`, `FAIL` or `NOT WIRED` |
 | `Summary` | Headline counts, services at a glance, coverage and first steps |
 | `Issues` | One block per finding with code, expected/actual and passenger IDs |
-| `Service Table` | Incoming, applicable, expected, processed, warm-up, bypassed, missing, extra, missing history, pools, Wait95 |
+| `Service Table` | Incoming, applicable, expected, processed, warm-up, bypassed, missing, extra, missing history, pools, Wait95; plus the channel, passenger-mix, departure, journey and exception breakdowns for Check-In, and the bag-drop breakdown for Bag Drop |
 | `Transfer Table` | Requested, feasible, effective, tagged, population-tagged, outbound/inbound records |
 | `Transfer Service Table` | Required, bypassed, no-rules, history-backed processed, missing, served-anyway |
 | `Peak Table` | Transfer services at the busiest rolling 60-minute window |
@@ -76,9 +90,9 @@ label.
 - **Expected** — recomputed from `DHPType`, `Journey`, passenger flags and
   transfer scenario rules. Solvers are not re-run.
 - **Processed** — `QueueResults.ProcessedPassengers`. For a history-only stage
-  (Bag Drop, Dwell) the list is rebuilt from facility history found on the wired
-  population and on every wired stage output, because the visit may be written by
-  the stage that owns the channel. Warm-up passengers are included.
+  (Dwell) the list is rebuilt from facility history found on the wired population
+  and on every wired stage output, because the visit may be written by the stage
+  that owns the channel. Warm-up passengers are included.
 - **Warm-up** — simulated, but excluded from `QueuePoolResult.PassengerCount`
   and from queue metrics. This is the usual reason "processed" and "pool" totals
   differ.
@@ -89,13 +103,25 @@ label.
 - **Tagged** — outbound departure records tagged by the transfer generator. It
   never counts arrival records, which are separate passengers.
 - **Transfer service processed** — a transfer record counts as served when it
-  carries the corresponding facility history. Bag Drop served through the
-  Check-In `BagDrop` channel is included.
+  carries the corresponding facility history. Bag Drop history is written by
+  the standalone Bag Drop stage.
+- **Check-In expected** — a departure is expected when its flags or scenario rule
+  require the check-in visit, unless it is late for check-in. Web check-in has
+  no physical queue; Counter and Kiosk are the physical methods.
+- **Bag Drop expected** — a departure whose checked bag must be handled at the
+  separate stage (`RequiresSeparateBagDrop`): a Web or Kiosk passenger with a
+  checked bag, or a transfer rule that requires bag drop. A Counter passenger's
+  bag is accepted at the counter, so that record is not Bag Drop demand.
+- **Bag drop recorded** — expected Bag Drop records carrying a `BagDrop` history
+  record written by the Bag Drop stage (or an earlier Bag Drop run).
+- **Bag drop missing** — expected Bag Drop records with no `BagDrop` history.
+- **Bag drop exceptions** — late check-ins and explicit transfer-rule bypasses
+  are excluded from the expected set by the same rule Check-In applies.
 - **Served elsewhere** — expected by the rule, but the incoming population
   already carries that facility's history, so the visit was recorded by another
-  stage (for example Bag Drop through Check-In's `BagDrop` channel) or an earlier
-  run. Those records are not counted as expected for this result; the service row
-  note states how many.
+  stage or an earlier run. Those records
+  are not counted as expected for this result; the service row note states how
+  many.
 
 ## Reading a service mismatch
 
@@ -105,20 +131,23 @@ label.
   covers. Add the channel to the facility's `Channels`, or add a pool plan for
   it. The finding details list the count per channel.
 - `SVC-012` — online-check-in records on the virtual `Web` channel entered a
-  physical Check-In pool. Do not wire `Web` to Check-In: online records with a
-  bag use `BagDrop`, online records without a bag need no airport visit.
+  physical Check-In pool. Web has no queue, so this is a wiring error.
+- `SVC-014` — the Bag Drop row processed a record that requires the separate
+  stage but wrote no `BagDrop` history, or the Check-In row served a bag-drop
+  transfer that was also expected at Check-In.
 - `SVC-002` extras are records the facility admitted although their flags say
   they do not need it. The issue row shows `online check-in` and `checked bag`
   so the admitting rule is visible.
-- If the Bag Drop row still shows missing records, they carry no `BagDrop`
-  history anywhere in the wired results, so Check-In's BagDrop channel did not
-  serve them. Their `Channel` shows whether they were routed to that channel at
-  all; `SVC-011` lists any channel that no result pool covers.
+- If the Bag Drop breakdown still shows missing records, they carry no
+  `BagDrop` history anywhere in the wired results. Their `Channel` shows whether
+  they are Web or Kiosk bag carriers, and `SVC-011` lists any channel that no
+  result pool covers.
 
 ## Status rules
 
-- `FAIL` — a passenger is missing or extra, a required transfer service has no
-  history, a bypassed service was served, or a numeric result contradicts itself.
+- `FAIL` — a passenger is missing or extra, a bag-drop visit is missing, a
+  required transfer service has no history, a bypassed service was served, or a
+  numeric result contradicts itself.
 - `WARN` — history is missing on processed records, pool counts disagree, a
   sizing result has warnings, or demand was not fully tagged.
 - `INFO` — capped demand, late check-in, missing optional metadata.
@@ -140,6 +169,8 @@ label.
 | `PAX-103` | Late-for-check-in flag on a non-departure |
 | `PAX-104` | No service channel |
 | `PAX-105` | No profile name |
+| `PAX-TRF-001` | Transfer rules require a service the record has no history for |
+| `PAX-TRF-002` | Transfer rules require Check-in or Bag drop, but the record is late for check-in and was not served (info) |
 | `PAX-999` | Passenger issue list truncated |
 
 ### Schedule and generation
@@ -179,6 +210,7 @@ label.
 | `SVC-010` | Stage population differs from the queue output population |
 | `SVC-011` | Expected records are on channels that no result pool covers |
 | `SVC-012` | Virtual `Web` channel served at Check-In |
+| `SVC-014` | Bag Drop processed a record without a `BagDrop` history |
 | `SVC-020` | Verification gates have no throughput |
 | `SVC-021` | Verification has demand but no gates |
 | `SVC-022` | Verification utilization outside 0–100% |
@@ -203,6 +235,11 @@ label.
 | `TRF-SVC-002` | Bypassed transfer service was served |
 | `TRF-SVC-003` | Transfer service has demand but no result |
 | `TRF-SVC-010` | Demand-result service usage is stale against the population |
+
+For Check-in and Bag drop, a rule-required transfer that is late for check-in is
+not counted as missing: the Check-In facility skips late passengers, so no
+history can be recorded. The audit applies the same exclusion and names the
+records as info issues (`PAX-TRF-002`) instead of failing the service row.
 | `TRF-PEAK-001` | Required service short at the peak |
 | `TRF-PEAK-002` | Bypassed service served at the peak |
 

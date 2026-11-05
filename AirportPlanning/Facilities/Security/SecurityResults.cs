@@ -47,6 +47,27 @@ namespace AirportPlanning.Facilities.Security
         /// <summary>Full metrics of each pool, in plan order.</summary>
         public List<QueueResults> PoolResults { get; set; } = new List<QueueResults>();
 
+        /// <summary>
+        /// Complete result of the entry e-gate stage (series mode only). Null
+        /// when security ran as one stage.
+        /// </summary>
+        public QueueResults EGateResults { get; set; }
+
+        /// <summary>
+        /// Complete result of the ATRS screening stage (series mode only). Null
+        /// when security ran as one stage.
+        /// </summary>
+        public QueueResults AtrsResults { get; set; }
+
+        /// <summary>Physical entry e-gates, series mode only.</summary>
+        public int EGatePhysicalCount { get; set; }
+
+        /// <summary>Physical ATRS screening lanes, series mode only.</summary>
+        public int AtrsPhysicalCount { get; set; }
+
+        /// <summary>True when security was simulated as two queues in series.</summary>
+        public bool IsSeries { get; set; }
+
         /// <summary>Optimizer search outcomes with trace data for charting.</summary>
         public List<ResourceSearchOutcome> SearchOutcomes { get; set; } = new List<ResourceSearchOutcome>();
     }

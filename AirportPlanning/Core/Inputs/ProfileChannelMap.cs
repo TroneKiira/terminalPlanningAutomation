@@ -28,12 +28,58 @@ namespace AirportPlanning.Core.Inputs
     /// Per-passenger channel assignment driven by a per-profile share table
     /// built in Grasshopper. Shares for a profile are normalised at draw time;
     /// a profile with no entry falls back to the default channel.
+    ///
+    /// The map assigns the passenger's PRIMARY check-in method: Counter, Web or
+    /// Kiosk. Bag Drop is a separate service stage, so it is never assigned as
+    /// a primary channel here. A legacy BagDrop share is treated as Web: the
+    /// passenger has no physical check-in queue and may still need the separate
+    /// Bag Drop stage, which is derived from their checked-bag flag.
     /// </summary>
     public class ProfileChannelMap : IChannelAssigner
     {
         public string DefaultChannel { get; set; } = DefaultChannelAssigner.CounterChannel;
 
         public List<ProfileChannelEntry> Entries { get; set; } = new List<ProfileChannelEntry>();
+
+        /// <summary>
+        /// Legacy setting retained for saved definitions. Bag Drop is now a
+        /// separate service stage and is no longer routed as a primary channel,
+        /// so this value does not change the assignment.
+        /// </summary>
+        public bool EnforceBagDropRouting { get; set; } = true;
+
+        /// <summary>
+        /// Legacy lookup retained for saved definitions: the first configured
+        /// channel that names a bag-drop desk, or null. Bag Drop routing is now
+        /// derived from the passenger's bag-drop requirement, not this name.
+        /// </summary>
+        public string BagDropRoutingChannel
+        {
+            get
+            {
+                if (Entries == null)
+                    return null;
+
+                foreach (ProfileChannelEntry entry in Entries)
+                {
+                    if (entry?.Shares == null)
+                        continue;
+
+                    foreach (ChannelShare share in entry.Shares)
+                    {
+                        if (share == null ||
+                            share.Share <= 0.0 ||
+                            string.IsNullOrWhiteSpace(share.Channel))
+                            continue;
+
+                        if (DefaultChannelAssigner.IsBagDropChannel(share.Channel))
+                            return share.Channel;
+                    }
+                }
+
+                return null;
+            }
+        }
 
         /// <summary>
         /// Returns the unique configured route channels in first-seen order,
@@ -58,8 +104,9 @@ namespace AirportPlanning.Core.Inputs
                         if (share == null || share.Share <= 0.0 || string.IsNullOrWhiteSpace(share.Channel))
                             continue;
 
-                        string channel = share.Channel.Trim();
-                        if (seen.Add(channel))
+                        string channel = DefaultChannelAssigner.NormalizePrimaryChannel(
+                            share.Channel);
+                        if (channel.Length > 0 && seen.Add(channel))
                             channels.Add(channel);
                     }
                 }
@@ -81,7 +128,7 @@ namespace AirportPlanning.Core.Inputs
             ProfileChannelEntry entry = Find(profileName);
 
             if (entry == null || entry.Shares == null || entry.Shares.Count == 0)
-                return DefaultChannel;
+                return DefaultChannelAssigner.NormalizePrimaryChannel(DefaultChannel);
 
             double total = 0.0;
 
@@ -92,7 +139,7 @@ namespace AirportPlanning.Core.Inputs
             }
 
             if (total <= 0.0)
-                return DefaultChannel;
+                return DefaultChannelAssigner.NormalizePrimaryChannel(DefaultChannel);
 
             double draw = rnd.NextDouble() * total;
             double cumulative = 0.0;
@@ -107,11 +154,13 @@ namespace AirportPlanning.Core.Inputs
                 cumulative += share.Share;
 
                 if (draw < cumulative)
-                    return share.Channel;
+                    return DefaultChannelAssigner.NormalizePrimaryChannel(share.Channel);
             }
 
             // Floating-point safety: return the last usable channel.
-            return last != null ? last.Channel : DefaultChannel;
+            return last != null
+                ? DefaultChannelAssigner.NormalizePrimaryChannel(last.Channel)
+                : DefaultChannelAssigner.NormalizePrimaryChannel(DefaultChannel);
         }
 
         private ProfileChannelEntry Find(string profileName)
@@ -137,6 +186,8 @@ namespace AirportPlanning.Core.Inputs
 
                 builder.Append("default=");
                 builder.Append(DefaultChannel);
+                builder.Append(";bagDropRouting=");
+                builder.Append(EnforceBagDropRouting ? "on" : "off");
 
                 if (Entries != null)
                 {
@@ -168,19 +219,22 @@ namespace AirportPlanning.Core.Inputs
     }
 
     /// <summary>
-    /// Reproduces the terminal's built-in routing when no channel map is wired:
+    /// Reproduces the terminal's built-in PRIMARY routing when no channel map
+    /// is wired:
     ///
-    ///   not online-checked-in            -> Counter
-    ///   online-checked-in with a bag     -> BagDrop
-    ///   otherwise                        -> Web
+    ///   not online-checked-in -> Counter
+    ///   online-checked-in     -> Web
     ///
-    /// Deterministic (no RNG draw), so existing numbers are untouched.
+    /// Bag Drop is a separate service stage. An online passenger with a
+    /// checked bag has no physical check-in queue but is still eligible for
+    /// that separate Bag Drop visit. Deterministic (no RNG draw).
     /// </summary>
     public class DefaultChannelAssigner : IChannelAssigner
     {
         public static readonly DefaultChannelAssigner Instance = new DefaultChannelAssigner();
 
         public const string CounterChannel = "Counter";
+        public const string KioskChannel = "Kiosk";
         public const string BagDropChannel = "BagDrop";
         public const string WebChannel = "Web";
 
@@ -189,10 +243,61 @@ namespace AirportPlanning.Core.Inputs
             if (passenger == null)
                 return WebChannel;
 
-            if (!passenger.UsesOnlineCheckIn)
-                return CounterChannel;
+            return passenger.UsesOnlineCheckIn ? WebChannel : CounterChannel;
+        }
 
-            return passenger.HasCheckedBag ? BagDropChannel : WebChannel;
+        /// <summary>
+        /// The primary channel used for a passenger. A legacy BagDrop share is
+        /// treated as Web because bag drop is no longer a primary check-in
+        /// method.
+        /// </summary>
+        public static string NormalizePrimaryChannel(string channel)
+        {
+            if (string.IsNullOrWhiteSpace(channel))
+                return string.Empty;
+
+            string trimmed = channel.Trim();
+
+            return IsBagDropChannel(trimmed) ? WebChannel : trimmed;
+        }
+
+        public static bool IsCounterChannel(string channel)
+        {
+            return Matches(channel, CounterChannel);
+        }
+
+        public static bool IsKioskChannel(string channel)
+        {
+            return Matches(channel, KioskChannel);
+        }
+
+        public static bool IsWebChannel(string channel)
+        {
+            return Matches(channel, WebChannel);
+        }
+
+        public static bool IsBagDropChannel(string channel)
+        {
+            if (string.IsNullOrWhiteSpace(channel))
+                return false;
+
+            // Accept "BagDrop", "Bag Drop", "bag-drop" and similar labels.
+            string normalized = new string(
+                channel.Where(char.IsLetterOrDigit).ToArray());
+
+            return string.Equals(
+                normalized,
+                BagDropChannel,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool Matches(string channel, string expected)
+        {
+            return !string.IsNullOrWhiteSpace(channel) &&
+                   string.Equals(
+                       channel.Trim(),
+                       expected,
+                       StringComparison.OrdinalIgnoreCase);
         }
 
         public string CacheKey

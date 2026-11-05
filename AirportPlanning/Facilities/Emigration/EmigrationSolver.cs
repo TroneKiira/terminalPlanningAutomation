@@ -142,7 +142,7 @@ namespace AirportPlanning.Facilities.Emigration
                 originalChannels);
 
             IServiceTimeProvider serviceTimeProvider =
-                ResolveServiceTimeProvider(input.ServiceTimeProvider, input.ServiceProfile);
+                ResolveServiceTimeProvider(input.ServiceTimeProvider, input.ServiceProfile, FacilityScopes.Emigration, Warnings.Add);
 
             if (serviceTimeProvider == null)
             {
@@ -245,7 +245,7 @@ namespace AirportPlanning.Facilities.Emigration
             finalResult.PoolResults = solve.PoolResults;
             finalResult.SearchOutcomes = solve.SearchOutcomes;
 
-            PoolPlanResolver.WarnOnEmptyPools(plans, solve.PoolResults, Warnings.Add);
+            PoolPlanResolver.WarnOnEmptyPools(plans, solve.PoolResults, workingPassengers, Warnings.Add);
             PoolPlanResolver.WarnOnUncoveredChannels(plans, input.Channels, Warnings.Add);
 
             results.BaselineProcessorCount = _cachedBaselinePhysical;
@@ -353,7 +353,7 @@ namespace AirportPlanning.Facilities.Emigration
             if (input.PoolPlans != null && input.PoolPlans.Count > 0)
             {
                 return PoolPlanResolver.Resolve(
-                    input.PoolPlans, fallbackDomain, Warnings.Add)
+                    input.PoolPlans, fallbackDomain, Warnings.Add, FacilityScopes.Emigration)
                     ?? ResolveLegacyPlans(input, fallbackDomain);
             }
 

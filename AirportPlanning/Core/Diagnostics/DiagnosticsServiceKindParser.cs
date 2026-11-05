@@ -117,9 +117,8 @@ namespace AirportPlanning.Core.Diagnostics
             if (counts.Count == 0)
                 return DiagnosticsServiceKind.Unknown;
 
-            // Prefer a key that every processed passenger carries. Check-In
-            // results can also carry BagDrop for bag-drop-channel passengers,
-            // but every served passenger carries CheckIn, so the intersection
+            // Prefer a key that every processed passenger carries. A result
+            // normally writes exactly one facility history, so the intersection
             // identifies the facility that actually ran.
             List<FacilityType> common = counts
                 .Where(pair => pair.Value == processed.Count)
@@ -143,7 +142,9 @@ namespace AirportPlanning.Core.Diagnostics
                     FacilityType.Immigration,
                     FacilityType.PassengerVerification,
                     FacilityType.DepartureLounge,
-                    FacilityType.Boarding
+                    FacilityType.Boarding,
+                    FacilityType.TransferDesk,
+                    FacilityType.BaggageRecheck
                 })
                 {
                     if (common.Contains(candidate))
@@ -193,6 +194,10 @@ namespace AirportPlanning.Core.Diagnostics
                     return DiagnosticsServiceKind.Dwell;
                 case FacilityType.Boarding:
                     return DiagnosticsServiceKind.Boarding;
+                case FacilityType.TransferDesk:
+                    return DiagnosticsServiceKind.TransferDesk;
+                case FacilityType.BaggageRecheck:
+                    return DiagnosticsServiceKind.BaggageRecheck;
                 default:
                     return DiagnosticsServiceKind.Unknown;
             }

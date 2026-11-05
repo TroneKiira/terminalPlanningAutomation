@@ -1,0 +1,91 @@
+=====PDF_PAGE 622=====
+& TATA. ntl Passenger Terminal 
+3.3.4.7. Level of Service Guidelines 
+Exhibit 3.3.4.7 provides the LoS guidelines for each airport terminal facility/subsystem. The table provides 
+guidelines to be used when undertaking capacity and LoS analyses. Guidelines have been supplemented to 
+include facilities involving self-service processing and customs control. 
+The LoS guidelines have been adjusted to better reflect the current global aviation market. It is recognized, 
+however, that different regions, countries and markets require adjustments to the airport environment to better 
+equate with their service needs. The revised LoS benchmarks now include a range of values for space and 
+time to better enable an airport to tailor its service level to the market and region it serves. 
+The table below summarizes the main processing and holding facilities common to almost all airports globally. 
+In some jurisdictions, other processes may be required (i.e., health checks, landside security). Careful 
+consultation between airport authorities, planners and the users of the airport should be established to define 
+the applicable LoS standards for those facilities. 
+EDITION 12 - MAY 2022 603 
+=====PDF_PAGE 623=====
+x lil ye 
+IATA Airport Development Reference Manual 
+Impact of COVID-19 on the Level of Service Guidelines 
+See 1.8 COVID19 Green Pages for additional information 
+From the very early stages of the pandemic, one of the key protective measures that have been implemented 
+across almost every country is a requirement to maintain a physical distance that reduces the risk of 
+transmission. Physical distancing is an effective measure to limit transmission of SARS-CoV-2 and should be 
+part of a comprehensive package of measures to limit the spread of COVID-19. 
+However, one of the key challenges of the pandemic has been the lack of consistent application of the health￾related measures globally. In particular, where requirements have been applied different recommendations in 
+terms of physical distancing have been proposed ranging between 1 and 2 meters. 
+In an attempt to propose a harmonized approach to physical distancing both the WHO and ICAO established 
+a recommendation to keep a distance of at least 1m which, in combination with other health related 
+regulations (use of face masks, vaccination certificates, optimizing passenger flows etc), should provide the 
+means for a safe and healthy journey. 
+While there are different interpretations on how to measure the physical distance and how to apply it to 
+queuing and holding areas of terminal buildings, it appears to be clear that the objective is to avoid potential 
+droplets/aerosols from the nose and mouth of one passenger teaching the passengers standing immediately 
+next to them. Therefore, it is fair to make the interpretation that a direct linear separation between two 
+Passengers should suffice in order to comply with a physical distancing requirement of 1 meter. 
+With all of this in mind, the current Level of Service Guidelines are perfectly able to accommodate those 
+minimum requirements without any changes. Only minor adjustments to the layouts of queueing or seating 
+areas should be required to accommodate the minimum requirements set by the WHO and ICAO. 
+It should also be noted that while we recognize that regulatory mandates vary across different countries and 
+regions imposing more stringent separation requirements than the minimum, it is IATA's view that these 
+measures are likely to be temporary and will be lifted once the vaccination rates are high and consistent 
+globally. This is also consistent with what has been observed in those countries with high vaccination rates 
+and low number of infections where physical distancing requirements have been lifted in other public 
+buildings, modes of transport and interior spaces. 
+In addition, the Level of Service guidelines also address queueing times and seating availability. Both of these 
+areas have also been impacted by some of the health-related restrictions (see Impact of COVID-19 on 
+Terminal Capacity). While it is recognized that during times with additional processes or extra processing 
+times the queueing objective defined in the LOS framework may not be achievable, the temporary nature of 
+those restrictions should not have an impact on queueing requirements defined in the Level of Service 
+guidelines. Similarly, current seating design makes it impossible to maintain the separation distances, but it 
+should also be seen as temporary measure. Advancements in self check in and security screening will 
+increase queuing efficiency. Other technologies exist or are being developed to flatten peaks using virtual 
+queuing.” 
+604 EDITION 12 - MAY 2022 
+=====PDF_PAGE 624=====
+G— | } IATA ii Passenger Terminal 
+Asa conclusion, and taking all of the above into consideration, IATA does not see the need to change any of 
+the recommended space, queueing time or seating requirements in the Level of Service guidelines. 
+Note: Circulation and dwelling areas in passenger terminals have, in general, not been a capacity 
+constraint. However, passengers are often less than 1m apart in these areas, in particular where 2-way flows 
+and cross flows occur. Natural physical distancing of passengers may result in congestion occurring in such 
+areas of conflict. Application of passenger guidance to create 1-way flows, such as using web barriers, may 
+be appropriate to ease congestion as demand grows. 
+EDITION 12 - MAY 2022 605 
+=====PDF_PAGE 625=====
+IATA atl Airport Development Reference Manual wae 
+Exhibit 3.3.4.7: LoS Guidelines for Airport Terminal Facilities 
+paraptsuo> aq ue> (sawn Bugle anyeBau) 399 urea) aye 
+(souce vojssaouo> wy} papiaoud 5! Buneas ge anisuayK y! AU palapisuoD aq o} yu JAMO] , 
+swoysng Aq paysay> Suiaq ave srauassed ayy Jo sg0T uaym aunpanoud e 0)Jayau Sau Surana (2) 
+‘anyap Beq 
+“siySiy yesoue Apog apm e 40, saznu sz+ 
+9 mosseU 30) Sanu T+ 
+PP 0} aid ay “UAISap-san0 
+anya sBeg “auassed ayn 40 8eq pjoy e Buy204> Jo A>uaroya aly azUNeW 0) J9ps0 Ut ‘seanUIW Os9z aq pjnoys3j9q WHE;Pa! By) LO SuUAIUE afeBeq S14 aN pL aq 
+‘urers aut Sune saSuassed siu au uBaMtad aa au) ‘(Avaniap Seq sy ay; wos Suaunod} 129 uo Beq se 01 Sale anfen au] UODaS ay *,8ea 1.4 01 JaBLASSEd si, 01 SaIeIad ATER aU SAN BU} “aU, ALBATAQ aBe83ER 0} Jaya saw ‘wrerDay aBeBeq 104 (t} 
+ey w wy o> ex renremvaned 
+s< > s< > €t> BT< 
+st< o> sT> tts ‘yesnury Apog apm, 
+eju se p oT> tte Josuop sapsog anewoyny {wet sap anand} 
+5 ((onue9 r0dsse4 punogui] 
+tp sT< ‘Gurpuers [ae ow ww scompH ep 
+eu « b o> rte Jono sapsog ewoiny (w2't agp anant) 
+q ore s> OT> tt< 50 uouesAIW payeIS Jonuoy uopessiwa| 
+ts T> {uz Tapp anand] oK< s> OT> tI< ounu09 Ayunaag 
+&< > 
+. {wg't - »°T yapym ananb) 
+(WSiT =P pm anand) fe iD s< > €T> gT< 1800 do1a eg 
+(GuiB8eq Beg / sseq Suipieo) eT> 
+Source: IATA 
+EDITION 12 - MAY 2022 606 

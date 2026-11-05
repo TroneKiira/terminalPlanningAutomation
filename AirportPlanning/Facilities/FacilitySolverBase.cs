@@ -154,17 +154,36 @@ namespace AirportPlanning.Facilities
         /// by DHPType + ProfileName (the key format is "DHPType|ProfileName").
         /// A required predicate (e.g. departures-only) is always applied on top,
         /// so wiring a channel can never let excluded passengers through.
+        /// Set <paramref name="matchPrimaryChannel"/> to false for a stage such
+        /// as Bag Drop, whose passengers are selected by their service
+        /// requirement rather than by their primary check-in channel.
         /// </summary>
         protected static Func<Passenger, bool> BuildPlanFilter(
             ChannelResourcePlan plan,
             List<string> channels,
             Func<Passenger, bool> legacyPredicate,
-            Func<Passenger, bool> requiredPredicate = null)
+            Func<Passenger, bool> requiredPredicate = null,
+            bool matchPrimaryChannel = true,
+            Func<Passenger, bool> sharedPoolFilter = null)
         {
             Func<Passenger, bool> baseFilter;
 
             if (plan == null || plan.IsSharedPool)
-                baseFilter = BuildChannelFilter(channels, legacyPredicate);
+            {
+                if (sharedPoolFilter != null)
+                {
+                    // A facility can define its own shared-pool population, for
+                    // example Bag Drop's fallback pool takes the eligible
+                    // passengers whose segment no keyed plan covers.
+                    baseFilter = sharedPoolFilter;
+                }
+                else
+                {
+                    baseFilter = matchPrimaryChannel
+                        ? BuildChannelFilter(channels, legacyPredicate)
+                        : legacyPredicate;
+                }
+            }
             else
             {
                 string channel = plan.Channel;
@@ -174,13 +193,32 @@ namespace AirportPlanning.Facilities
                 {
                     (DHPType? dhpType, string profileName) = ParsePoolKey(poolKey);
 
-                    baseFilter = p => p != null &&
-                        string.Equals(p.Channel, channel, StringComparison.OrdinalIgnoreCase) &&
-                        MatchesPoolKey(p, dhpType, profileName);
+                    // C# 7.3 (the net48 target) rejects a conditional over two
+                    // lambdas that need separate conversions, so the branches
+                    // are written out explicitly.
+                    if (matchPrimaryChannel)
+                    {
+                        baseFilter = p => p != null &&
+                            string.Equals(p.Channel, channel, StringComparison.OrdinalIgnoreCase) &&
+                            MatchesPoolKey(p, dhpType, profileName);
+                    }
+                    else
+                    {
+                        baseFilter = p => p != null && MatchesPoolKey(p, dhpType, profileName);
+                    }
                 }
                 else
                 {
-                    baseFilter = p => p != null && string.Equals(p.Channel, channel, StringComparison.OrdinalIgnoreCase);
+                    if (matchPrimaryChannel)
+                    {
+                        baseFilter = p =>
+                            p != null &&
+                            string.Equals(p.Channel, channel, StringComparison.OrdinalIgnoreCase);
+                    }
+                    else
+                    {
+                        baseFilter = p => p != null;
+                    }
                 }
             }
 
@@ -204,10 +242,21 @@ namespace AirportPlanning.Facilities
             string trimmed = poolKey.Trim();
             int separator = trimmed.IndexOf('|');
 
+            // Try single-word forms first: a valid DHP type = sector split,
+            // anything else = profile split.
             if (separator < 0)
             {
-                // No separator: treat the whole key as a profile name, no DHP constraint.
-                return (null, trimmed);
+                if (Enum.TryParse(trimmed, true, out DHPType parsedDhp) &&
+                    Enum.IsDefined(typeof(DHPType), parsedDhp))
+                {
+                    // Sector-only split: DHP type applies, no profile constraint.
+                    return (parsedDhp, string.Empty);
+                }
+                else
+                {
+                    // Profile-only split: profile applies, no DHP constraint.
+                    return (null, trimmed);
+                }
             }
 
             string dhpPart = trimmed.Substring(0, separator).Trim();
@@ -218,7 +267,7 @@ namespace AirportPlanning.Facilities
             if (!string.IsNullOrEmpty(dhpPart) &&
                 Enum.TryParse(dhpPart, true, out DHPType parsed))
             {
-                dhpType = parsed;
+                dhpType = Enum.IsDefined(typeof(DHPType), parsed) ? parsed : (DHPType?)null;
             }
 
             return (dhpType, profilePart);
@@ -250,6 +299,37 @@ namespace AirportPlanning.Facilities
         }
 
         /// <summary>
+        /// True when any keyed plan's segment covers the passenger. A keyed
+        /// plan with a pool key covers its DHPType/ProfileName slice; a keyed
+        /// plan without a pool key is facility-wide and covers everyone. Used
+        /// by facilities whose keyed pools are segment queues, to decide who
+        /// still needs the shared fallback pool.
+        /// </summary>
+        protected static bool MatchesAnyKeyedSegment(
+            Passenger passenger,
+            IEnumerable<ChannelResourcePlan> keyedPlans)
+        {
+            if (passenger == null || keyedPlans == null)
+                return false;
+
+            foreach (ChannelResourcePlan plan in keyedPlans)
+            {
+                if (plan == null || plan.IsSharedPool)
+                    continue;
+
+                if (string.IsNullOrWhiteSpace(plan.PoolKey))
+                    return true;
+
+                (DHPType? dhpType, string profileName) = ParsePoolKey(plan.PoolKey);
+
+                if (MatchesPoolKey(passenger, dhpType, profileName))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Sizes and simulates every pool of a facility.
         ///
         /// Service times are assigned once per pool from the seed, so all
@@ -269,7 +349,9 @@ namespace AirportPlanning.Facilities
             List<ResourceSearchOutcome> cachedOutcomes,
             out List<ResourceSearchOutcome> outcomesUsed,
             Action<string> warn,
-            Func<Passenger, bool> requiredPredicate = null)
+            Func<Passenger, bool> requiredPredicate = null,
+            bool matchPrimaryChannel = true,
+            Func<Passenger, bool> sharedPoolFilter = null)
         {
             FacilitySolveResult solve = new FacilitySolveResult();
 
@@ -292,7 +374,13 @@ namespace AirportPlanning.Facilities
 
                 List<Passenger> pool = BuildPool(
                     passengers,
-                    BuildPlanFilter(plans[i], channels, legacyPredicate, requiredPredicate),
+                    BuildPlanFilter(
+                        plans[i],
+                        channels,
+                        legacyPredicate,
+                        requiredPredicate,
+                        matchPrimaryChannel,
+                        sharedPoolFilter),
                     serviceTimeProvider,
                     seed,
                     solve.Clones,
@@ -628,7 +716,8 @@ namespace AirportPlanning.Facilities
                     StartServiceTime = passenger.StartServiceTime,
                     EndServiceTime = passenger.EndServiceTime,
                     WaitTime = passenger.WaitTime,
-                    AssignedResource = passenger.AssignedCounter
+                    AssignedResource = passenger.AssignedCounter,
+                    PoolName = passenger.AssignedPool ?? string.Empty
                 };
             }
         }
@@ -926,19 +1015,33 @@ namespace AirportPlanning.Facilities
 
         /// <summary>
         /// Picks the service-time provider, falling back to a constant provider
-        /// around the legacy single-profile input.
+        /// around the legacy single-profile input. When a facility name is given,
+        /// a facility-tagged <see cref="ServiceTimeMap"/> is scoped to it first,
+        /// so the same key can hold different values at different facilities.
+        /// Scoping problems (unknown tags, an emptied scope, foreign stage keys)
+        /// are reported through <paramref name="warn"/>.
         /// </summary>
         protected static IServiceTimeProvider ResolveServiceTimeProvider(
             IServiceTimeProvider provider,
-            ServiceProfile fallback)
+            ServiceProfile fallback,
+            string facility = null,
+            Action<string> warn = null)
         {
+            IServiceTimeProvider picked;
+
             if (provider != null)
-                return provider;
+                picked = provider;
+            else if (fallback != null)
+                picked = new ConstantServiceProvider(fallback);
+            else
+                return null;
 
-            if (fallback != null)
-                return new ConstantServiceProvider(fallback);
+            ServiceTimeMap map = picked as ServiceTimeMap;
 
-            return null;
+            if (map != null && !string.IsNullOrWhiteSpace(facility))
+                return map.ScopedTo(facility, warn);
+
+            return picked;
         }
 
         /// <summary>

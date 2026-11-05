@@ -65,6 +65,17 @@ namespace AirportPlanning.Core.Models
         /// </summary>
         public int DesignStepIndex { get; set; } = -1;
 
+        /// <summary>
+        /// Number of queues stacked in series by a facility that simulates the
+        /// same passengers through consecutive stages (for example security's
+        /// e-gate stage feeding the ATRS stage). The pooled results then hold
+        /// one cohort per stage, so the sum of pool passenger counts is
+        /// <see cref="ProcessedPassengers"/> times this count, not once.
+        /// Zero or one means a conventional result where every passenger is
+        /// served exactly once.
+        /// </summary>
+        public int SeriesStageCount { get; set; }
+
         /// <summary>Duration of the warm-up segment in minutes.</summary>
         public double WarmUpMinutes { get; set; }
 

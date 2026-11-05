@@ -53,6 +53,40 @@ namespace AirportPlanning.Facilities.Security
         /// </summary>
         public string TransferChannelName { get; set; } = "Transfer Security";
 
+        /// <summary>
+        /// True to simulate the checkpoint as two queues in series: an entry
+        /// e-gate stage (identity "EGate") feeding an ATRS screening stage
+        /// (identity "ATRS"). Each passenger waits at the e-gate first, is
+        /// served, then queues for a screening lane, so the checkpoint
+        /// throughput is the slower stage rather than a merged rate.
+        /// </summary>
+        public bool UseEGateSeries { get; set; }
+
+        /// <summary>
+        /// Physical entry e-gates (stage 1) when no "EGate" pool plan is wired.
+        /// </summary>
+        public int EGatePhysicalResources { get; set; } = 1;
+
+        /// <summary>
+        /// Target whole-run 95th-percentile wait at the entry e-gates, minutes,
+        /// when no "EGate" pool plan is wired. Zero means no target.
+        /// </summary>
+        public double EGateTargetWait95 { get; set; } = 2.0;
+
+        /// <summary>
+        /// Mean entry e-gate service time in seconds, used when no service-time
+        /// map resolves the stage. Key "EGate" on the map wins, then this value,
+        /// then the legacy Service Profile... which is why a wired map key is
+        /// the safest way to give the e-gate and the ATRS lane their own times.
+        /// </summary>
+        public double EGateServiceTimeSeconds { get; set; } = 7.0;
+
+        /// <summary>
+        /// Walk from the e-gate to the screening lane, in minutes. Added to the
+        /// arrival time every passenger carries from stage 1 into stage 2.
+        /// </summary>
+        public double EGateToAtrsWalkMinutes { get; set; }
+
         public bool OptimizeResources { get; set; }
 
         public int Seed { get; set; }

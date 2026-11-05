@@ -45,7 +45,7 @@ namespace AirportPlanning.Facilities.CheckIn
             CheckInResults finalResult = new CheckInResults();
 
             IServiceTimeProvider serviceTimeProvider =
-                ResolveServiceTimeProvider(input.ServiceTimeProvider, input.ServiceProfile);
+                ResolveServiceTimeProvider(input.ServiceTimeProvider, input.ServiceProfile, FacilityScopes.CheckIn, Warnings.Add);
 
             List<string> channels = ResolveChannels(input);
             IList<IList<string>> poolKeysPerChannel = BuildCounterPoolKeys(input, channels);
@@ -89,22 +89,17 @@ namespace AirportPlanning.Facilities.CheckIn
 
             List<ResourceSearchOutcome> outcomes;
 
-            /* Check-In owns two services: the check-in desk and the physical
-               BagDrop channel. A record belongs in the stage when its flags or
-               its scenario rule require either service. Checking the rule per
-               service matters: a bag-drop-channel transfer that requires
-               check-in but not bag drop is still served at a desk, while an
-               online record without a bag (the virtual Web channel) has no
-               physical check-in visit and never enters a pool. The predicate
-               is passed as the required predicate so a wired Channels list
-               cannot bypass it. */
+            /* Check-In owns the check-in visit only. Bag Drop is a separate
+               facility stage: Counter passengers have their bag accepted at
+               the desk, while Web and Kiosk passengers with a checked bag
+               continue to Bag Drop afterwards. The required predicate keeps
+               that separation, so a wired Channels list cannot make Check-In
+               serve a bag-drop-only record. Virtual Web never enters a pool. */
             Func<Passenger, bool> checkInPassenger = p =>
                 p != null &&
                 IsDeparturePassenger(p) &&
                 !p.IsLateForCheckIn &&
-                (TransferServiceUsageCalculator.UsesService(p, TransferService.CheckIn) ||
-                 (IsBagDropChannel(p.Channel) &&
-                  TransferServiceUsageCalculator.UsesService(p, TransferService.BagDrop)));
+                TransferServiceUsageCalculator.UsesService(p, TransferService.CheckIn);
 
             FacilitySolveResult solve = SolvePools(
                 input.Passengers,
@@ -145,7 +140,7 @@ namespace AirportPlanning.Facilities.CheckIn
             finalResult.PoolResults = solve.PoolResults;
             finalResult.SearchOutcomes = solve.SearchOutcomes;
 
-            PoolPlanResolver.WarnOnEmptyPools(plans, solve.PoolResults, Warnings.Add);
+            PoolPlanResolver.WarnOnEmptyPools(plans, solve.PoolResults, input.Passengers, Warnings.Add);
             PoolPlanResolver.WarnOnUncoveredChannels(plans, channels, Warnings.Add);
 
             // Baseline travels down the wire so the reporter can compare against it.
@@ -153,7 +148,6 @@ namespace AirportPlanning.Facilities.CheckIn
             results.PhysicalProcessorCount = solve.TotalPhysical;
 
             WriteFacilityHistory(solve.Processed, FacilityType.CheckIn);
-            WriteBagDropHistory(solve.Processed);
             AdvancePassengers(solve.Processed);
 
             return finalResult;
@@ -175,7 +169,7 @@ namespace AirportPlanning.Facilities.CheckIn
 
             List<string> channels = new List<string>();
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            List<string> skippedVirtual = new List<string>();
+            List<string> skipped = new List<string>();
 
             if (source == null)
                 return channels;
@@ -185,15 +179,20 @@ namespace AirportPlanning.Facilities.CheckIn
                 if (string.IsNullOrWhiteSpace(rawChannel))
                     continue;
 
-                string channel = rawChannel.Trim();
+                string channel = DefaultChannelAssigner.NormalizePrimaryChannel(
+                    rawChannel);
 
-                // A virtual route such as Web has no physical Check-In
-                // processors. Only CHR-derived routes are filtered here: an
-                // explicit Channels list is still taken literally.
-                if (!explicitChannels && IsVirtualChannel(channel))
+                if (channel.Length == 0)
+                    continue;
+
+                // Web has no physical Check-In processors, and Bag Drop is a
+                // separate facility stage. Neither can become a Check-In pool,
+                // even when an explicit Channels list names it.
+                if (DefaultChannelAssigner.IsWebChannel(channel) ||
+                    DefaultChannelAssigner.IsBagDropChannel(channel))
                 {
-                    if (!skippedVirtual.Contains(channel, StringComparer.OrdinalIgnoreCase))
-                        skippedVirtual.Add(channel);
+                    if (!skipped.Contains(channel, StringComparer.OrdinalIgnoreCase))
+                        skipped.Add(channel);
 
                     continue;
                 }
@@ -207,58 +206,15 @@ namespace AirportPlanning.Facilities.CheckIn
                 channels.Add(channel);
             }
 
-            if (skippedVirtual.Count > 0)
+            if (skipped.Count > 0)
             {
                 Warnings.Add(
-                    $"Virtual channel(s) {string.Join(", ", skippedVirtual)} are not physical " +
-                    "Check-In channels and were excluded. Wire an explicit Channels list only " +
-                    "if they should receive processors.");
+                    $"Channel(s) {string.Join(", ", skipped)} are not physical Check-In " +
+                    "processors and were excluded. Web has no queue, and Bag Drop is a " +
+                    "separate facility stage.");
             }
 
             return channels;
-        }
-
-        private static bool IsVirtualChannel(string channel)
-        {
-            return string.Equals(
-                channel?.Trim(),
-                DefaultChannelAssigner.WebChannel,
-                StringComparison.OrdinalIgnoreCase);
-        }
-
-        /// <summary>
-        /// Records Bag Drop visits for passengers served through a BagDrop
-        /// channel. The Check-In record is kept as well, because the processor
-        /// they used belongs to the Check-In facility.
-        /// </summary>
-        private void WriteBagDropHistory(IEnumerable<Passenger> processed)
-        {
-            if (processed == null)
-                return;
-
-            List<Passenger> bagDropPassengers = processed
-                .Where(p => p != null &&
-                            IsBagDropChannel(p.Channel) &&
-                            p.RequiresBagDrop &&
-                            !TransferServiceUsageCalculator.IsBypassed(p, TransferService.BagDrop))
-                .ToList();
-
-            if (bagDropPassengers.Count > 0)
-                WriteFacilityHistory(bagDropPassengers, FacilityType.BagDrop);
-        }
-
-        private static bool IsBagDropChannel(string channel)
-        {
-            if (string.IsNullOrWhiteSpace(channel))
-                return false;
-
-            // Accept "BagDrop", "Bag Drop", "bag-drop" and similar labels.
-            string normalized = new string(channel.Where(char.IsLetterOrDigit).ToArray());
-
-            return string.Equals(
-                normalized,
-                DefaultChannelAssigner.BagDropChannel,
-                StringComparison.OrdinalIgnoreCase);
         }
 
         private IList<IList<string>> BuildCounterPoolKeys(
@@ -325,7 +281,7 @@ namespace AirportPlanning.Facilities.CheckIn
             if (input.PoolPlans != null && input.PoolPlans.Count > 0)
             {
                 return PoolPlanResolver.Resolve(
-                    input.PoolPlans, fallbackDomain, Warnings.Add)
+                    input.PoolPlans, fallbackDomain, Warnings.Add, FacilityScopes.CheckIn)
                     ?? ResolveLegacyPlans(input, channels, poolKeysPerChannel, fallbackDomain);
             }
 

@@ -33,6 +33,8 @@ namespace AirportPlanning.Tests
             RunAggregateTransferServiceConsistency();
             RunScheduleTransferServiceConsistency();
             RunUnspecifiedTransferRuleWarning();
+            RunTransferBagDropChannelRouting();
+            RunScheduleTransferBagDropChannelRouting();
         }
 
         // -------------------------------------------------------------
@@ -179,26 +181,26 @@ namespace AirportPlanning.Tests
         }
 
         /// <summary>
-        /// A BagDrop-channel transfer can need check-in without bag drop. The
-        /// channel must not decide the service: each service's own rule does,
-        /// so the record is served at a desk and gets no Bag Drop history.
+        /// Check-In and Bag Drop are separate stages. Check-In serves the
+        /// check-in visit only; Web and Kiosk passengers with a checked bag
+        /// continue to Bag Drop, while a counter accepts the bag itself.
         /// </summary>
         private static void RunCheckInBagDropChannelRuleConsistency()
         {
-            Console.WriteLine("-- Check-In BagDrop channel rule consistency --");
+            Console.WriteLine("-- Check-In / Bag Drop stage consistency --");
 
             List<Passenger> passengers = new List<Passenger>
             {
                 TscPassenger(
-                    2001, DHPType.DomesticDeparture, PassengerType.Domestic, "BagDrop",
+                    2001, DHPType.DomesticDeparture, PassengerType.Domestic, "Counter",
                     PassengerJourney.Transfer, TransferScenario.DomesticToDomestic,
                     TscRules(checkIn: true), online: true, bag: true, arrival: 1.0),
                 TscPassenger(
-                    2002, DHPType.DomesticDeparture, PassengerType.Domestic, "BagDrop",
+                    2002, DHPType.DomesticDeparture, PassengerType.Domestic, "Web",
                     PassengerJourney.Transfer, TransferScenario.DomesticToDomestic,
                     TscRules(bagDrop: true), online: true, bag: true, arrival: 1.1),
                 TscPassenger(
-                    2003, DHPType.DomesticDeparture, PassengerType.Domestic, "BagDrop",
+                    2003, DHPType.DomesticDeparture, PassengerType.Domestic, "Web",
                     PassengerJourney.Transfer, TransferScenario.DomesticToDomestic,
                     TscRules(), online: true, bag: true, arrival: 1.2),
                 TscPassenger(
@@ -208,17 +210,27 @@ namespace AirportPlanning.Tests
                     2005, DHPType.DomesticDeparture, PassengerType.Domestic, "Web",
                     PassengerJourney.Origin, null, null, online: true, arrival: 1.4),
                 TscPassenger(
-                    2006, DHPType.DomesticDeparture, PassengerType.Domestic, "BagDrop",
-                    PassengerJourney.Origin, null, null, online: true, bag: true, arrival: 1.5)
+                    2006, DHPType.DomesticDeparture, PassengerType.Domestic, "Web",
+                    PassengerJourney.Origin, null, null, online: true, bag: true, arrival: 1.5),
+                TscPassenger(
+                    2007, DHPType.DomesticDeparture, PassengerType.Domestic, "Counter",
+                    PassengerJourney.Origin, null, null, online: true, bag: true, arrival: 1.6),
+                TscPassenger(
+                    2008, DHPType.DomesticDeparture, PassengerType.Domestic, "Counter",
+                    PassengerJourney.Transfer, TransferScenario.DomesticToDomestic,
+                    TscRules(bagDrop: true), online: true, bag: true, arrival: 1.7),
+                TscPassenger(
+                    2009, DHPType.DomesticDeparture, PassengerType.Domestic, "Counter",
+                    PassengerJourney.Origin, null, null, bag: true, arrival: 1.8)
             };
 
             CheckInResults result = new CheckInSolver().Solve(new CheckInInputs
             {
                 Passengers = passengers,
                 ServiceProfile = TscServiceProfile(),
-                Channels = new List<string> { "Counter", "BagDrop" },
-                PhysicalResources = new List<int> { 1, 1 },
-                TargetWait95 = new List<double> { 10.0, 10.0 },
+                Channels = new List<string> { "Counter" },
+                PhysicalResources = new List<int> { 1 },
+                TargetWait95 = new List<double> { 10.0 },
                 OptimizeResources = false,
                 Seed = 7,
                 StaffingPercentage = 100.0
@@ -227,26 +239,43 @@ namespace AirportPlanning.Tests
             HashSet<int> served = TscIds(result.QueueResults.ProcessedPassengers);
 
             Check(served.Contains(2001),
-                "A BagDrop-channel transfer that requires check-in is served when its bag-drop rule bypasses");
-            Check(served.Contains(2002) && served.Contains(2004) && served.Contains(2006),
-                "Records that need check-in or bag drop are served");
+                "A transfer that requires check-in is served at Check-In");
+            Check(served.Contains(2004) && served.Contains(2007) && served.Contains(2009),
+                "Counter passengers are served at Check-In");
+            Check(!served.Contains(2002) && !served.Contains(2008),
+                "A bag-drop-only transfer is not served at Check-In");
             Check(!served.Contains(2003),
-                "A BagDrop-channel transfer that bypasses both services is not served");
-            Check(!served.Contains(2005),
-                "An online record without a bag on the virtual Web channel is not served");
+                "A transfer that bypasses both services is not served");
+            Check(!served.Contains(2005) && !served.Contains(2006),
+                "Web passengers never enter a physical Check-In pool");
 
             Check(result.QueueResults.ProcessedPassengers.All(p =>
                     p.History.ContainsKey(FacilityType.CheckIn)),
                 "Every served record carries the Check-In history");
-            Check(!result.QueueResults.ProcessedPassengers
-                    .First(p => p.Id == 2001)
-                    .History.ContainsKey(FacilityType.BagDrop),
-                "A check-in-only BagDrop-channel record gets no Bag Drop history");
-            Check(new[] { 2002, 2006 }.All(id =>
-                    result.QueueResults.ProcessedPassengers
-                        .First(p => p.Id == id)
-                        .History.ContainsKey(FacilityType.BagDrop)),
-                "Bag Drop served through the channel is recorded on the passenger");
+            Check(result.QueueResults.ProcessedPassengers.All(p =>
+                    !p.History.ContainsKey(FacilityType.BagDrop)),
+                "Check-In never records a separate Bag Drop visit");
+
+            BagDropResults bagDrop = new BagDropSolver().Solve(new BagDropInputs
+            {
+                Passengers = result.QueueResults.Passengers,
+                ServiceProfile = TscServiceProfile(),
+                PhysicalResources = new List<int> { 1 },
+                TargetWait95 = new List<double> { 10.0 },
+                OptimizeResources = false,
+                Seed = 7,
+                StaffingPercentage = 100.0
+            });
+
+            HashSet<int> dropped = TscIds(bagDrop.QueueResults.ProcessedPassengers);
+
+            Check(dropped.SetEquals(new[] { 2002, 2006, 2008 }),
+                $"Bag Drop serves Web bag carriers and rule-required transfers ({string.Join(", ", dropped.OrderBy(id => id))})");
+            Check(!dropped.Contains(2007) && !dropped.Contains(2009),
+                "Counter bag carriers have their bag accepted at check-in");
+            Check(bagDrop.QueueResults.ProcessedPassengers.All(p =>
+                    p.History.ContainsKey(FacilityType.BagDrop)),
+                "The Bag Drop stage records its own visit");
         }
 
         // -------------------------------------------------------------
@@ -265,7 +294,7 @@ namespace AirportPlanning.Tests
             {
                 passengers.Add(TscPassenger(
                     2000 + i, DHPType.DomesticDeparture, PassengerType.Domestic,
-                    "BagDrop", PassengerJourney.Origin, null, null,
+                    "Web", PassengerJourney.Origin, null, null,
                     online: true, bag: true, arrival: 1.0 + i * 0.2));
             }
 
@@ -289,32 +318,32 @@ namespace AirportPlanning.Tests
             {
                 passengers.Add(TscPassenger(
                     2100 + i, DHPType.DomesticDeparture, PassengerType.Domestic,
-                    "BagDrop", PassengerJourney.Transfer,
+                    "Kiosk", PassengerJourney.Transfer,
                     TransferScenario.DomesticToDomestic, required,
-                    online: true, bag: true, arrival: 2.0 + i * 0.2));
+                    online: false, bag: true, arrival: 2.0 + i * 0.2));
             }
 
             for (int i = 0; i < 2; i++)
             {
                 passengers.Add(TscPassenger(
                     2110 + i, DHPType.DomesticDeparture, PassengerType.Domestic,
-                    "BagDrop", PassengerJourney.Transfer,
+                    "Kiosk", PassengerJourney.Transfer,
                     TransferScenario.DomesticToDomestic, bypassed,
-                    online: true, bag: true, arrival: 2.0 + i * 0.2));
+                    online: false, bag: true, arrival: 2.0 + i * 0.2));
             }
 
             for (int i = 0; i < 2; i++)
             {
                 passengers.Add(TscPassenger(
                     2120 + i, DHPType.DomesticDeparture, PassengerType.Domestic,
-                    "BagDrop", PassengerJourney.Transfer,
+                    "Web", PassengerJourney.Transfer,
                     TransferScenario.DomesticToDomestic, null,
                     online: true, bag: true, arrival: 2.0 + i * 0.2));
             }
 
             Passenger alreadyDropped = TscPassenger(
                 2130, DHPType.DomesticDeparture, PassengerType.Domestic,
-                "BagDrop", PassengerJourney.Transfer,
+                "Web", PassengerJourney.Transfer,
                 TransferScenario.DomesticToDomestic, required,
                 online: true, bag: true, arrival: 30.0);
             alreadyDropped.History[FacilityType.BagDrop] = new FacilityRecord
@@ -349,7 +378,7 @@ namespace AirportPlanning.Tests
             Func<Passenger, bool> expected = p =>
                 p != null &&
                 TscIsDeparture(p) &&
-                string.Equals(p.Channel, "BagDrop", StringComparison.OrdinalIgnoreCase) &&
+                p.RequiresSeparateBagDrop &&
                 !TransferServiceUsageCalculator.IsBypassed(p, TransferService.BagDrop) &&
                 !p.History.ContainsKey(FacilityType.BagDrop);
 
@@ -374,7 +403,7 @@ namespace AirportPlanning.Tests
                   usage[TransferService.BagDrop].Required - 1,
                 $"Bag Drop serves every required transfer that has not already dropped a bag ({usage[TransferService.BagDrop].Required - 1} of {usage[TransferService.BagDrop].Required})");
             Check(solver.Warnings.Any(w => w.Contains("already carry a Bag Drop record")),
-                "Bag Drop reports passengers already served by the Check-In BagDrop channel");
+                "Bag Drop reports passengers already served by an earlier Bag Drop stage");
 
             BagDropResults shared = new BagDropSolver().Solve(new BagDropInputs
             {
@@ -1615,6 +1644,209 @@ namespace AirportPlanning.Tests
             Check(checkIn.QueueResults.ProcessedPassengers.Count(p =>
                     p.Journey == PassengerJourney.Transfer) == 50,
                 "All 50 unspecified outbound transfers keep normal check-in service");
+        }
+
+        // -------------------------------------------------------------
+        // Transfer bag-drop routing: tagging must mark the separate Bag Drop
+        // requirement without replacing the passenger's primary channel.
+        // -------------------------------------------------------------
+        private static void RunTransferBagDropChannelRouting()
+        {
+            Console.WriteLine("-- Transfer bag-drop channel routing --");
+
+            TransferDemandProfile profile = new TransferDemandProfile
+            {
+                DomesticTransferPercent = 12.5,
+                InternationalToDomesticPercent = 100.0
+            };
+            profile.ScenarioRules[TransferScenario.InternationalToDomestic].HasProcessingRules = true;
+            profile.ScenarioRules[TransferScenario.InternationalToDomestic].RequiresCheckIn = true;
+            profile.ScenarioRules[TransferScenario.InternationalToDomestic].RequiresBagDrop = true;
+
+            ProfileChannelMap routing = new ProfileChannelMap
+            {
+                DefaultChannel = DefaultChannelAssigner.CounterChannel,
+                Entries =
+                {
+                    new ProfileChannelEntry
+                    {
+                        ProfileName = "Transfer routing",
+                        Shares =
+                        {
+                            new ChannelShare { Channel = "Counter", Share = 0.75 },
+                            new ChannelShare { Channel = "Kiosk", Share = 0.25 },
+                            new ChannelShare { Channel = "Bag-Drop", Share = 0.5 }
+                        }
+                    }
+                }
+            };
+
+            Check(routing.BagDropRoutingChannel == "Bag-Drop",
+                "The legacy bag-drop name is still discoverable");
+            Check(routing.GetChannels().Contains("Web") &&
+                  !routing.GetChannels().Contains("Bag-Drop"),
+                "A legacy BagDrop share is normalized to Web as the primary channel");
+
+            List<Passenger> MakePopulation()
+            {
+                return Enumerable.Range(1, 40)
+                    .Select(id => new Passenger
+                    {
+                        Id = id,
+                        PassengerType = PassengerType.Domestic,
+                        DHPType = DHPType.DomesticDeparture,
+                        Journey = PassengerJourney.Origin,
+                        Channel = id % 4 == 0 ? "Kiosk" : "Counter",
+                        UsesOnlineCheckIn = false,
+                        HasCheckedBag = true,
+                        ProfileName = "Transfer routing",
+                        ArrivalTime = 1.0 + id * 0.05,
+                        QueueArrivalTime = 1.0 + id * 0.05
+                    })
+                    .ToList();
+            }
+
+            // Tagging marks the separate requirement; the primary channel stays.
+            List<Passenger> routed = MakePopulation();
+
+            TransferDemandResult tagged =
+                TransferPassengerTagger.ApplyAggregate(routed, profile, routing);
+
+            List<Passenger> transfers = routed
+                .Where(p => p.Journey == PassengerJourney.Transfer)
+                .ToList();
+
+            Check(transfers.Count == 5,
+                $"Aggregate tagging tags 5 International→Domestic transfers ({transfers.Count})");
+            Check(transfers.All(p => p.RequiresBagDrop && p.RequiresSeparateBagDrop),
+                "Every tagged transfer rule requires the separate Bag Drop stage");
+            Check(transfers.All(p =>
+                    string.Equals(p.Channel, "Counter", StringComparison.Ordinal) ||
+                    string.Equals(p.Channel, "Kiosk", StringComparison.Ordinal)),
+                $"A tagged transfer keeps its primary channel ({string.Join(", ", transfers.Select(p => p.Channel).Distinct())})");
+            Check(transfers.All(p => !DefaultChannelAssigner.IsBagDropChannel(p.Channel)),
+                "Bag Drop is never assigned as a primary channel");
+
+            // Idempotence: re-tagging an already-marked population is stable.
+            TransferPassengerTagger.ApplyAggregate(routed, profile, routing);
+            Check(transfers.All(p => p.RequiresSeparateBagDrop),
+                "Re-tagging keeps the separate Bag Drop requirement");
+
+            // The legacy enforcement flag no longer rewrites primary channels.
+            routing.EnforceBagDropRouting = false;
+            List<Passenger> byShares = MakePopulation();
+
+            TransferPassengerTagger.ApplyAggregate(byShares, profile, routing);
+
+            List<Passenger> shareTransfers = byShares
+                .Where(p => p.Journey == PassengerJourney.Transfer)
+                .ToList();
+            Check(shareTransfers.All(p => !DefaultChannelAssigner.IsBagDropChannel(p.Channel)) &&
+                  shareTransfers.All(p =>
+                      string.Equals(p.Channel, "Counter", StringComparison.Ordinal) ||
+                      string.Equals(p.Channel, "Kiosk", StringComparison.Ordinal)),
+                "The legacy enforcement flag leaves the primary channels untouched");
+        }
+
+        // -------------------------------------------------------------
+        // Schedule mode: the generator must mark the separate Bag Drop
+        // requirement while leaving the primary channel intact.
+        // -------------------------------------------------------------
+        private static void RunScheduleTransferBagDropChannelRouting()
+        {
+            Console.WriteLine("-- Schedule transfer bag-drop channel routing --");
+
+            FlightScheduleResult schedule = new FlightScheduleResult
+            {
+                ScheduleName = "TSC bag-drop routing"
+            };
+
+            for (int i = 0; i < 5; i++)
+            {
+                schedule.Legs.Add(MakeTransferLeg(
+                    $"TSC-R-ARR-I-{i}", LegDirection.Arrival, 60 + i * 10, 20,
+                    LegSector.International, "LHR", "DXB"));
+                schedule.Legs.Add(MakeTransferLeg(
+                    $"TSC-R-DEP-D-{i}", LegDirection.Departure, 600 + i * 10, 20,
+                    LegSector.Domestic, "SIN", "BOM"));
+            }
+
+            foreach (FlightLeg leg in schedule.Legs)
+                leg.Terminal = "T1";
+
+            PassengerProfile scheduleProfile = MakeScheduleProfile(
+                "TSC routing", 100.0, 60.0, 120.0, ShowUpProfile.Mix());
+            scheduleProfile.OnlineCheckInProbability = 0.0;
+            scheduleProfile.CheckedBagProbability = 0.0;
+
+            TransferDemandProfile profile = new TransferDemandProfile
+            {
+                DomesticTransferPercent = 10.0,
+                InternationalToDomesticPercent = 100.0
+            };
+            profile.ScenarioRules[TransferScenario.InternationalToDomestic].HasProcessingRules = true;
+            profile.ScenarioRules[TransferScenario.InternationalToDomestic].RequiresCheckIn = true;
+            profile.ScenarioRules[TransferScenario.InternationalToDomestic].RequiresBagDrop = true;
+
+            ProfileChannelMap routing = new ProfileChannelMap
+            {
+                DefaultChannel = DefaultChannelAssigner.CounterChannel,
+                Entries =
+                {
+                    new ProfileChannelEntry
+                    {
+                        ProfileName = "TSC routing",
+                        Shares =
+                        {
+                            new ChannelShare { Channel = "Counter", Share = 1.0 }
+                        }
+                    },
+                    // A bag-drop desk exists in the routing table, held on a
+                    // profile that the schedule groups do not use.
+                    new ProfileChannelEntry
+                    {
+                        ProfileName = "TSC unused",
+                        Shares =
+                        {
+                            new ChannelShare { Channel = "Bag-Drop", Share = 1.0 }
+                        }
+                    }
+                }
+            };
+
+            SchedulePassengerGenerationResult generated = new SchedulePassengerGenerator().Generate(
+                schedule,
+                new List<PassengerGroup>
+                {
+                    MakeTypedScheduleGroup(DHPType.DomesticDeparture, scheduleProfile),
+                    MakeTypedScheduleGroup(DHPType.InternationalArrival, scheduleProfile),
+                    MakeTypedScheduleGroup(DHPType.InternationalDeparture, scheduleProfile)
+                },
+                new WalkingProfile { AverageSpeed = 1.35, StandardDeviation = 0.0 },
+                seed: 17,
+                arrivalDelay: new ArrivalProcessDelay(0.0, 0.0),
+                channelAssigner: routing,
+                transferDemand: profile);
+
+            List<Passenger> outbound = generated.Passengers
+                .Where(p => p.Journey == PassengerJourney.Transfer &&
+                            (p.DHPType == DHPType.DomesticDeparture ||
+                             p.DHPType == DHPType.InternationalDeparture))
+                .ToList();
+
+            Check(outbound.Count == 10,
+                $"Schedule transfer tagging tags 10 International→Domestic departure legs ({outbound.Count})");
+            Check(outbound.All(p => p.RequiresBagDrop && p.RequiresSeparateBagDrop),
+                "Every scheduled transfer rule requires the separate Bag Drop stage");
+            Check(outbound.All(p => string.Equals(p.Channel, "Counter", StringComparison.Ordinal)),
+                $"The generator keeps the primary Counter channel ({string.Join(", ", outbound.Select(p => p.Channel).Distinct())})");
+
+            List<Passenger> origins = generated.Passengers
+                .Where(p => p.Journey == PassengerJourney.Origin)
+                .ToList();
+
+            Check(origins.All(p => string.Equals(p.Channel, "Counter", StringComparison.Ordinal)),
+                "Origin departures keep their share-routed channel");
         }
 
         // -------------------------------------------------------------

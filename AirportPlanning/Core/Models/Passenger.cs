@@ -28,7 +28,8 @@ namespace AirportPlanning.Core.Models
         public string ProfileName { get; set; } = string.Empty;
 
         /// <summary>
-        /// Assigned service channel (e.g. "Counter", "Kiosk", "Web", "BagDrop").
+        /// Assigned PRIMARY check-in method (e.g. "Counter", "Kiosk", "Web").
+        /// Bag Drop is a separate service stage, never a primary channel here.
         /// Assigned at generation; user-defined names, nothing hardcoded.
         /// </summary>
         public string Channel { get; set; } = string.Empty;
@@ -137,6 +138,24 @@ namespace AirportPlanning.Core.Models
         public string EmigrationRoute { get; set; } = string.Empty;
 
         /// <summary>
+        /// Route through the security entry stage, for example "EGate". Empty
+        /// when security ran as one stage (series mode off).
+        /// </summary>
+        public string SecurityEntryRoute { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Route through the security screening stage, for example "ATRS" or
+        /// "Transfer Security". Empty when security ran as one stage.
+        /// </summary>
+        public string SecurityScreeningRoute { get; set; } = string.Empty;
+
+        /// <summary>Queue wait at the security entry stage, in minutes.</summary>
+        public double SecurityEntryWait { get; set; }
+
+        /// <summary>Queue wait at the security screening stage, in minutes.</summary>
+        public double SecurityScreeningWait { get; set; }
+
+        /// <summary>
         /// Scheduled flight arrival time in simulation minutes for arrival-leg
         /// passengers. Zero for departure passengers and unscheduled runs.
         /// </summary>
@@ -219,6 +238,12 @@ namespace AirportPlanning.Core.Models
         // Passenger Behaviour
         // ============================================================
 
+        /// <summary>
+        /// True when the passenger must visit a physical Check-In processor.
+        /// Web check-in has no queue. Counter and Kiosk are physical methods,
+        /// even when the profile also has an online-check-in probability, so
+        /// the assigned primary channel is the source of truth.
+        /// </summary>
         public bool RequiresCheckIn
         {
             get
@@ -229,13 +254,25 @@ namespace AirportPlanning.Core.Models
                     return false;
                 }
 
-                return TransferProcessing != null
-                    ? TransferProcessing.RequiresCheckIn
-                    : !UsesOnlineCheckIn;
+                if (TransferProcessing != null)
+                    return TransferProcessing.RequiresCheckIn;
+
+                if (DefaultChannelAssigner.IsWebChannel(Channel))
+                    return false;
+
+                if (DefaultChannelAssigner.IsCounterChannel(Channel) ||
+                    DefaultChannelAssigner.IsKioskChannel(Channel))
+                    return true;
+
+                // Legacy/unassigned channel: preserve the old online rule.
+                return !UsesOnlineCheckIn;
             }
         }
 
-
+        /// <summary>
+        /// True when the passenger's checked bag must be handled somewhere.
+        /// This includes bags accepted at a staffed counter.
+        /// </summary>
         public bool RequiresBagDrop
         {
             get
@@ -248,7 +285,28 @@ namespace AirportPlanning.Core.Models
 
                 return TransferProcessing != null
                     ? TransferProcessing.RequiresBagDrop
-                    : UsesOnlineCheckIn && HasCheckedBag;
+                    : HasCheckedBag;
+            }
+        }
+
+        /// <summary>
+        /// True when the bag must be dropped at a SEPARATE Bag Drop facility.
+        /// A staffed counter accepts the bag as part of check-in; Web and Kiosk
+        /// passengers with a checked bag continue to the Bag Drop stage.
+        /// A transfer rule that requires bag drop always uses the separate
+        /// stage, whatever primary channel it was assigned.
+        /// </summary>
+        public bool RequiresSeparateBagDrop
+        {
+            get
+            {
+                if (!RequiresBagDrop)
+                    return false;
+
+                if (TransferProcessing != null)
+                    return true;
+
+                return !DefaultChannelAssigner.IsCounterChannel(Channel);
             }
         }
 
@@ -318,6 +376,10 @@ namespace AirportPlanning.Core.Models
                 TerminalEntryWalkMinutes = this.TerminalEntryWalkMinutes,
                 TerminalEntryRoute = this.TerminalEntryRoute,
                 EmigrationRoute = this.EmigrationRoute,
+                SecurityEntryRoute = this.SecurityEntryRoute,
+                SecurityScreeningRoute = this.SecurityScreeningRoute,
+                SecurityEntryWait = this.SecurityEntryWait,
+                SecurityScreeningWait = this.SecurityScreeningWait,
                 ScheduledArrivalTime = this.ScheduledArrivalTime,
                 FlightLegId = this.FlightLegId,
                 FlightLinkId = this.FlightLinkId,

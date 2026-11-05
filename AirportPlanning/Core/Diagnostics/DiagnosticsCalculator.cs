@@ -763,45 +763,21 @@ namespace AirportPlanning.Core.Diagnostics
 
                 FacilityType? historyKey = kind.ToFacilityType();
                 bool historyDerived = false;
-                bool integratedBagDrop = false;
 
                 bool historyOnly = queue == null && processed.Count == 0;
 
-                if (historyKey.HasValue &&
-                    (historyOnly || kind == DiagnosticsServiceKind.BagDrop))
+                if (historyKey.HasValue && historyOnly)
                 {
                     // A facility can be served inside another stage's result.
-                    // Bag Drop, for example, is a channel inside Check-In: the
-                    // visit is written on Check-In's processed clones, which the
-                    // wired population may not contain. Collect the history from
-                    // every source before deciding what this stage served.
+                    // Collect its history from every source before deciding
+                    // what this stage served.
                     List<Passenger> withHistory =
                         CollectHistoryBacked(historyKey.Value, incoming);
 
-                    if (historyOnly)
+                    if (withHistory.Count > 0)
                     {
-                        if (withHistory.Count > 0)
-                        {
-                            processed = withHistory;
-                            historyDerived = true;
-                        }
-                    }
-                    else
-                    {
-                        // Bag Drop is integrated, so history is the authority even
-                        // if a separate Bag Drop result is still wired. Keep any
-                        // processed record the history scan did not return.
-                        HashSet<int> known = new HashSet<int>(processed.Select(p => p.Id));
-                        int before = processed.Count;
-
-                        foreach (Passenger passenger in withHistory)
-                        {
-                            if (known.Add(passenger.Id))
-                                processed.Add(passenger);
-                        }
-
-                        integratedBagDrop = kind == DiagnosticsServiceKind.BagDrop &&
-                                            processed.Count > before;
+                        processed = withHistory;
+                        historyDerived = true;
                     }
                 }
 
@@ -814,6 +790,7 @@ namespace AirportPlanning.Core.Diagnostics
 
                 List<Passenger> missingExpected = new List<Passenger>();
                 List<Passenger> extraProcessed = new List<Passenger>();
+                List<Passenger> expectedPassengers = new List<Passenger>();
 
                 bool canCheckRules = kind != DiagnosticsServiceKind.Unknown &&
                                      incoming.Count > 0 &&
@@ -829,6 +806,7 @@ namespace AirportPlanning.Core.Diagnostics
                         if (expectation.IsEligible)
                         {
                             expected++;
+                            expectedPassengers.Add(passenger);
                             if (!processedIds.Contains(passenger.Id))
                                 missingExpected.Add(passenger);
                         }
@@ -906,9 +884,52 @@ namespace AirportPlanning.Core.Diagnostics
                 int warmUpProcessed = processed.Count(p => p.IsWarmUp);
 
                 List<string> plannedChannels = GetPlannedChannels(queue);
-                List<Passenger> uncoveredExpected = missingExpected
-                    .Where(p => !IsChannelCovered(p.Channel, plannedChannels))
-                    .ToList();
+                List<Passenger> uncoveredExpected = kind == DiagnosticsServiceKind.BagDrop
+                    ? new List<Passenger>()
+                    : missingExpected
+                        .Where(p => !IsChannelCovered(p.Channel, plannedChannels))
+                        .ToList();
+
+                // Check-In and Bag Drop are separate stages. Each row carries
+                // its own channel and passenger-mix breakdowns. Bag Drop also
+                // reports its visit history; it is no longer a Check-In subset.
+                List<DiagnosticsBreakdownRow> channelBreakdown =
+                    new List<DiagnosticsBreakdownRow>();
+                List<DiagnosticsBreakdownRow> mixBreakdown =
+                    new List<DiagnosticsBreakdownRow>();
+                List<DiagnosticsBreakdownRow> departureBreakdown =
+                    new List<DiagnosticsBreakdownRow>();
+                List<DiagnosticsBreakdownRow> journeyBreakdown =
+                    new List<DiagnosticsBreakdownRow>();
+                List<DiagnosticsBreakdownRow> exceptionBreakdown =
+                    new List<DiagnosticsBreakdownRow>();
+                DiagnosticsBagDropBreakdown bagDrop = null;
+
+                bool isPhysicalDepartureStage =
+                    kind == DiagnosticsServiceKind.CheckIn ||
+                    kind == DiagnosticsServiceKind.BagDrop;
+
+                if (isPhysicalDepartureStage && canCheckRules)
+                {
+                    channelBreakdown = BuildBreakdown(
+                        expectedPassengers, processedIds, DescribeChannel);
+                    mixBreakdown = BuildBreakdown(
+                        expectedPassengers, processedIds, DescribePassengerMix);
+                    departureBreakdown = BuildBreakdown(
+                        expectedPassengers, processedIds, DescribeDepartureType);
+                    journeyBreakdown = BuildBreakdown(
+                        expectedPassengers, processedIds, DescribeJourney);
+                }
+
+                if (kind == DiagnosticsServiceKind.CheckIn && canCheckRules)
+                {
+                    exceptionBreakdown = BuildExceptionBreakdown(incoming);
+                }
+
+                if (kind == DiagnosticsServiceKind.BagDrop && canCheckRules)
+                {
+                    bagDrop = BuildBagDropBreakdown(expectedPassengers, incoming);
+                }
 
                 List<string> notes = new List<string>();
                 if (service.Notes != null)
@@ -926,18 +947,12 @@ namespace AirportPlanning.Core.Diagnostics
                               "Queue Results were supplied.");
                 }
 
-                if (kind == DiagnosticsServiceKind.BagDrop &&
-                    (historyDerived || integratedBagDrop))
-                {
-                    notes.Add("Bag Drop is served as a channel inside Check-In; visits are read " +
-                              "from BagDrop history on the wired stage outputs, not from a separate " +
-                              "Bag Drop component.");
-                }
-
                 if (kind == DiagnosticsServiceKind.TransferDesk ||
                     kind == DiagnosticsServiceKind.BaggageRecheck)
                 {
-                    notes.Add("No facility solver writes a history record for this service.");
+                    notes.Add("Recorded by the Transfer Desk and Baggage Recheck components; " +
+                              "wire them on the arrival side so the history-driven processed " +
+                              "population matches the scenario-rule expectations.");
                 }
 
                 if (queue == null && !historyDerived)
@@ -1018,6 +1033,15 @@ namespace AirportPlanning.Core.Diagnostics
                         status = DiagnosticStatus.Fail;
                     }
 
+                    // Bag Drop cannot pass while an eligible record has no
+                    // Bag Drop history. The generic missing-expected check
+                    // normally catches this first; the breakdown keeps the
+                    // reason explicit.
+                    if (bagDrop != null && bagDrop.Missing > 0)
+                    {
+                        status = DiagnosticStatus.Fail;
+                    }
+
                     if (status != DiagnosticStatus.Fail &&
                         (missingHistory.Count > 0 || historyOnUnprocessed.Count > 0))
                     {
@@ -1034,7 +1058,7 @@ namespace AirportPlanning.Core.Diagnostics
 
                     if (status == DiagnosticStatus.Pass &&
                         poolCount > 0 &&
-                        poolPassengers != nonWarmUpProcessed)
+                        poolPassengers != nonWarmUpProcessed * StageMultiplier(queue))
                     {
                         status = DiagnosticStatus.Warn;
                     }
@@ -1052,6 +1076,14 @@ namespace AirportPlanning.Core.Diagnostics
                 {
                     notes.Add(missingExpected.Count + " expected record(s) were not processed (" +
                               DescribeChannels(missingExpected) + ").");
+                }
+
+                if (bagDrop != null && bagDrop.Active)
+                {
+                    notes.Add("Bag Drop: " + bagDrop.Expected +
+                              " expected, " + bagDrop.Recorded + " recorded, " +
+                              bagDrop.Missing + " missing. Counter passengers have their bag " +
+                              "accepted at check-in; Web and Kiosk bag carriers use this stage.");
                 }
 
                 if (extraProcessed.Count > 0)
@@ -1079,10 +1111,15 @@ namespace AirportPlanning.Core.Diagnostics
                               historyKey?.ToString() + " history record.");
                 }
 
-                if (poolCount > 0 && poolPassengers != nonWarmUpProcessed)
+                if (poolCount > 0 && poolPassengers != nonWarmUpProcessed * StageMultiplier(queue))
                 {
+                    int stages = StageMultiplier(queue);
+
                     notes.Add("Pool passenger counts sum to " + poolPassengers +
-                              " but the non-warm-up processed list has " + nonWarmUpProcessed + ".");
+                              " but the non-warm-up processed list has " + nonWarmUpProcessed +
+                              (stages > 1
+                                  ? " (x " + stages + " stacked stages in series mode)."
+                                  : "."));
                 }
 
                 DiagnosticsServiceRow row = new DiagnosticsServiceRow
@@ -1114,7 +1151,13 @@ namespace AirportPlanning.Core.Diagnostics
                     Status = status,
                     Notes = notes,
                     MissingPassengerIds = CapIds(missingExpected.Select(p => p.Id)),
-                    ExtraPassengerIds = CapIds(extraProcessed.Select(p => p.Id))
+                    ExtraPassengerIds = CapIds(extraProcessed.Select(p => p.Id)),
+                    Channels = channelBreakdown,
+                    PassengerMix = mixBreakdown,
+                    DepartureTypes = departureBreakdown,
+                    Journeys = journeyBreakdown,
+                    Exceptions = exceptionBreakdown,
+                    BagDrop = bagDrop
                 };
 
                 _report.Services.Add(row);
@@ -1172,6 +1215,39 @@ namespace AirportPlanning.Core.Diagnostics
                         "PAX-SVC-002",
                         DiagnosticSeverity.Error,
                         label + " processed although the rules did not expect it.");
+                }
+
+                if (bagDrop != null && bagDrop.Missing > 0)
+                {
+                    HashSet<int> missingBagDropIds =
+                        new HashSet<int>(bagDrop.MissingPassengerIds);
+                    List<Passenger> missingBagDropProcessed = expectedPassengers
+                        .Where(p => missingBagDropIds.Contains(p.Id) &&
+                                    processedIds.Contains(p.Id))
+                        .ToList();
+
+                    if (missingBagDropProcessed.Count > 0)
+                    {
+                        AddFinding(
+                            "SVC-014",
+                            DiagnosticCategory.Service,
+                            DiagnosticSeverity.Error,
+                            "Bag Drop processed a record without Bag Drop history",
+                            label + ": " + missingBagDropProcessed.Count + " processed record(s) " +
+                            "require the Bag Drop stage but carry no Bag Drop history.",
+                            metric: "bag-drop history",
+                            expected: bagDrop.Expected,
+                            actual: bagDrop.Recorded,
+                            serviceLabel: label,
+                            ids: missingBagDropProcessed.Select(p => p.Id),
+                            details: DescribeBreakdown(bagDrop.MissingMix));
+
+                        AddPassengerIssues(
+                            missingBagDropProcessed,
+                            "PAX-SVC-014",
+                            DiagnosticSeverity.Error,
+                            label + " processed the record but wrote no Bag Drop history.");
+                    }
                 }
 
                 if (duplicateProcessed > 0)
@@ -1300,17 +1376,23 @@ namespace AirportPlanning.Core.Diagnostics
                         serviceLabel: label);
                 }
 
-                if (poolCount > 0 && poolPassengers != nonWarmUpProcessed)
+                if (poolCount > 0 && poolPassengers != nonWarmUpProcessed * StageMultiplier(queue))
                 {
+                    int stages = StageMultiplier(queue);
+
                     AddFinding(
                         "SVC-007",
                         DiagnosticCategory.Service,
                         DiagnosticSeverity.Warning,
                         "Pool passenger counts do not match the processed list",
-                        label + ": pool passenger counts exclude warm-up, but the total differs " +
-                        "from the non-warm-up processed records.",
+                        stages > 1
+                            ? label + ": the pooled results carry " + stages + " stacked stages, but their " +
+                              "passenger counts still exclude warm-up, so the totals differ from the " +
+                              "non-warm-up processed records."
+                            : label + ": pool passenger counts exclude warm-up, but the total differs " +
+                              "from the non-warm-up processed records.",
                         metric: "passengers",
-                        expected: nonWarmUpProcessed,
+                        expected: nonWarmUpProcessed * stages,
                         actual: poolPassengers,
                         serviceLabel: label);
                 }
@@ -1721,6 +1803,17 @@ namespace AirportPlanning.Core.Diagnostics
                         .Where(p => TransferServiceUsageCalculator.IsRequired(p, service))
                         .ToList();
 
+                    // The Check-In facility skips passengers who reach it after
+                    // the flight's last-admission time, so a rule-required
+                    // check-in or bag drop cannot be recorded for them. The
+                    // audit applies the same exclusion and names the records
+                    // instead of failing them.
+                    bool lateExcluded = kind == DiagnosticsServiceKind.CheckIn ||
+                                        kind == DiagnosticsServiceKind.BagDrop;
+                    List<Passenger> requiredLate = lateExcluded
+                        ? required.Where(p => p.IsLateForCheckIn).ToList()
+                        : new List<Passenger>();
+
                     List<Passenger> bypassed = applicable
                         .Where(p => TransferServiceUsageCalculator.IsBypassed(p, service))
                         .ToList();
@@ -1729,32 +1822,42 @@ namespace AirportPlanning.Core.Diagnostics
                         .Where(p => TransferServiceUsageCalculator.IsUnspecified(p, service))
                         .ToList();
 
-                    List<Passenger> served = historyKey.HasValue
-                        ? applicable
-                            .Where(p => HasHistory(p, historyKey.Value))
-                            .ToList()
-                        : new List<Passenger>();
+                    // History may live on a stage output clone used by Check-In,
+                    // not on the wired population record, so read every source
+                    // and match by passenger Id.
+                    HashSet<int> historyIds = historyKey.HasValue
+                        ? new HashSet<int>(
+                            CollectHistoryBacked(historyKey.Value, transfers)
+                                .Select(p => p.Id))
+                        : new HashSet<int>();
 
-                    List<Passenger> missingRequired = historyKey.HasValue
-                        ? required
-                            .Where(p => !HasHistory(p, historyKey.Value))
-                            .ToList()
-                        : new List<Passenger>();
+                    List<Passenger> served = applicable
+                        .Where(p => historyIds.Contains(p.Id))
+                        .ToList();
 
-                    List<Passenger> servedBypassed = historyKey.HasValue
-                        ? bypassed
-                            .Where(p => HasHistory(p, historyKey.Value))
-                            .ToList()
-                        : new List<Passenger>();
+                    List<Passenger> missingRequired = required
+                        .Where(p => !historyIds.Contains(p.Id) &&
+                                    (!lateExcluded || !p.IsLateForCheckIn))
+                        .ToList();
 
-                    List<Passenger> processedUnspecified = historyKey.HasValue
-                        ? unspecified
-                            .Where(p => HasHistory(p, historyKey.Value))
-                            .ToList()
-                        : new List<Passenger>();
+                    List<Passenger> servedBypassed = bypassed
+                        .Where(p => historyIds.Contains(p.Id))
+                        .ToList();
+
+                    List<Passenger> processedUnspecified = unspecified
+                        .Where(p => historyIds.Contains(p.Id))
+                        .ToList();
 
                     bool wired = _report.Services.Any(s => s.Kind == kind) ||
-                                 served.Count > 0;
+                                 served.Count > 0 ||
+                                 (kind == DiagnosticsServiceKind.BagDrop &&
+                                  ((_input.Services ?? new List<DiagnosticsServiceInput>())
+                                       .Any(s =>
+                                           s != null &&
+                                           (s.Kind == DiagnosticsServiceKind.CheckIn ||
+                                            s.Kind == DiagnosticsServiceKind.BagDrop)) ||
+                                   _report.Services.Any(s =>
+                                       s.Kind == DiagnosticsServiceKind.CheckIn)));
 
                     // The demand result records the same rule counts it tagged.
                     // If they no longer match the population, the demand result
@@ -1792,6 +1895,22 @@ namespace AirportPlanning.Core.Diagnostics
 
                     if (!historyKey.HasValue)
                         notes.Add("Required transfer records cannot be checked for service history.");
+
+                    if (requiredLate.Count > 0)
+                    {
+                        notes.Add(requiredLate.Count + " required transfer(s) reached check-in " +
+                                  "after its last-admission time and were not served; excluded " +
+                                  "with the Check-In stage (passenger " +
+                                  string.Join(" ", CapIds(requiredLate.Select(p => p.Id))) + ").");
+
+                        AddPassengerIssues(
+                            requiredLate,
+                            "PAX-TRF-002",
+                            DiagnosticSeverity.Info,
+                            "Transfer rules require " + service.ToLabel() +
+                            " but the record reached check-in after its last-admission time " +
+                            "and was not served.");
+                    }
 
                     if (usageMismatch)
                     {
@@ -2150,6 +2269,8 @@ namespace AirportPlanning.Core.Diagnostics
                         .Sum(b => b?.Contact ?? 0);
                     int bucketBus = (result.Buckets ?? new List<GateBucketStands>())
                         .Sum(b => b?.Bus ?? 0);
+                    int bucketRemote = (result.Buckets ?? new List<GateBucketStands>())
+                        .Sum(b => b?.Remote ?? 0);
 
                     AddGateRow(
                         "Active stands (total vs bucket sum)",
@@ -2180,11 +2301,27 @@ namespace AirportPlanning.Core.Diagnostics
                         bucketContact,
                         "Contact stands should reconcile across the stand groups.");
 
-                    AddGateRow(
-                        "Bus stands (total vs bucket sum)",
-                        result.BusTotal,
-                        bucketBus,
-                        "Bus stands should reconcile across the stand groups.");
+                    if (!result.ScheduleMode)
+                    {
+                        // PHP mode: every non-contact stand is a bus gate, so
+                        // the gate total is the quantity that must sum.
+                        AddGateRow(
+                            "Bus gates (total vs group sum)",
+                            result.BusTotal,
+                            bucketBus,
+                            "Bus gates should reconcile across the stand groups.");
+                    }
+                    else
+                    {
+                        // Schedule mode: the non-contact stands are remote
+                        // stands and the bus gates are derived facility-wide
+                        // from the ratio.
+                        AddGateRow(
+                            "Remote stands (total vs group sum)",
+                            result.RemoteActive,
+                            bucketRemote,
+                            "Non-contact stands are remote stands in schedule mode.");
+                    }
 
                     int expectedRemote = result.MaxStands - result.ContactTotal;
                     AddGateRow(
@@ -2539,10 +2676,17 @@ namespace AirportPlanning.Core.Diagnostics
                     "be audited downstream.");
 
                 AddDefinition(
+                    "Bag Drop",
+                    "separate stage",
+                    "Counter passengers have their bag accepted at the check-in desk. Web and Kiosk " +
+                    "passengers with a checked bag, and transfers whose rule requires bag drop, are " +
+                    "served by the standalone Bag Drop stage, which writes Bag Drop history.");
+
+                AddDefinition(
                     "Transfer service processed",
                     "history presence",
                     "A transfer record counts as served when it carries the corresponding facility " +
-                    "history. Bag drop served through the Check-In BagDrop channel is included.");
+                    "history. Bag Drop history is written by the Bag Drop stage.");
 
                 AddDefinition(
                     "Not wired",
@@ -2778,6 +2922,204 @@ namespace AirportPlanning.Core.Diagnostics
                         passenger.DHPType == DHPType.InternationalDeparture);
             }
 
+            // ---------------------------------------------------------
+            // Breakdowns
+            // ---------------------------------------------------------
+
+            /// <summary>
+            /// Groups the expected set by one passenger attribute and keeps the
+            /// missing subset. IDs are stored only for missing records so the
+            /// aggregate rows stay short.
+            /// </summary>
+            private List<DiagnosticsBreakdownRow> BuildBreakdown(
+                List<Passenger> expected,
+                ISet<int> processedIds,
+                Func<Passenger, string> label)
+            {
+                return expected
+                    .GroupBy(label)
+                    .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(group =>
+                    {
+                        List<Passenger> missing = group
+                            .Where(p => !processedIds.Contains(p.Id))
+                            .ToList();
+
+                        return new DiagnosticsBreakdownRow
+                        {
+                            Label = group.Key,
+                            Expected = group.Count(),
+                            Processed = group.Count() - missing.Count,
+                            Missing = missing.Count,
+                            PassengerIds = CapIds(missing.Select(p => p.Id))
+                        };
+                    })
+                    .ToList();
+            }
+
+            /// <summary>
+            /// Groups an already-filtered subset (for example the missing
+            /// bag-drop records) by one attribute.
+            /// </summary>
+            private List<DiagnosticsBreakdownRow> BuildCountBreakdown(
+                List<Passenger> records,
+                Func<Passenger, string> label)
+            {
+                return records
+                    .GroupBy(label)
+                    .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => new DiagnosticsBreakdownRow
+                    {
+                        Label = group.Key,
+                        Count = group.Count(),
+                        Expected = group.Count(),
+                        Missing = group.Count(),
+                        PassengerIds = CapIds(group.Select(p => p.Id))
+                    })
+                    .ToList();
+            }
+
+            private DiagnosticsBagDropBreakdown BuildBagDropBreakdown(
+                List<Passenger> expected,
+                List<Passenger> incoming)
+            {
+                List<Passenger> bagDropExpected = expected
+                    .Where(p => p.RequiresSeparateBagDrop)
+                    .ToList();
+
+                HashSet<int> recordedIds = new HashSet<int>(
+                    CollectHistoryBacked(FacilityType.BagDrop, incoming)
+                        .Select(p => p.Id));
+
+                List<Passenger> recorded = bagDropExpected
+                    .Where(p => recordedIds.Contains(p.Id))
+                    .ToList();
+
+                List<Passenger> missing = bagDropExpected
+                    .Where(p => !recordedIds.Contains(p.Id))
+                    .ToList();
+
+                List<Passenger> late = incoming
+                    .Where(p => IsDeparture(p) &&
+                                p.RequiresSeparateBagDrop &&
+                                p.IsLateForCheckIn)
+                    .ToList();
+
+                return new DiagnosticsBagDropBreakdown
+                {
+                    Active = bagDropExpected.Count > 0 || recordedIds.Count > 0,
+                    Expected = bagDropExpected.Count,
+                    // Bag Drop is a separate stage, so every eligible passenger
+                    // is correctly placed regardless of their primary channel.
+                    OnChannel = bagDropExpected.Count,
+                    Recorded = recorded.Count,
+                    Missing = missing.Count,
+                    RoutingMismatch = 0,
+                    LateBypassed = late.Count,
+                    MissingPassengerIds = CapIds(missing.Select(p => p.Id)),
+                    RecordedPassengerIds = CapIds(recorded.Select(p => p.Id)),
+                    RoutingMismatchPassengerIds = new List<int>(),
+                    Channels = BuildBreakdown(
+                        bagDropExpected, recordedIds, DescribeChannel),
+                    RoutingMismatchChannels = new List<DiagnosticsBreakdownRow>(),
+                    MissingChannels = BuildCountBreakdown(missing, DescribeChannel),
+                    MissingMix = BuildCountBreakdown(missing, DescribePassengerMix),
+                    MissingDepartureTypes = BuildCountBreakdown(
+                        missing, DescribeDepartureType),
+                    MissingJourneys = BuildCountBreakdown(missing, DescribeJourney)
+                };
+            }
+
+            private List<DiagnosticsBreakdownRow> BuildExceptionBreakdown(
+                List<Passenger> incoming)
+            {
+                List<DiagnosticsBreakdownRow> rows = new List<DiagnosticsBreakdownRow>();
+
+                List<Passenger> late = incoming
+                    .Where(p => IsDeparture(p) && p.IsLateForCheckIn)
+                    .ToList();
+
+                if (late.Count > 0)
+                {
+                    rows.Add(new DiagnosticsBreakdownRow
+                    {
+                        Label = "Late for check-in",
+                        Count = late.Count,
+                        PassengerIds = CapIds(late.Select(p => p.Id))
+                    });
+                }
+
+                List<Passenger> ruleBypass = incoming
+                    .Where(p => IsDeparture(p) &&
+                                !p.IsLateForCheckIn &&
+                                p.Journey == PassengerJourney.Transfer &&
+                                p.TransferProcessing != null &&
+                                TransferServiceUsageCalculator.IsBypassed(
+                                    p, TransferService.CheckIn) &&
+                                TransferServiceUsageCalculator.IsBypassed(
+                                    p, TransferService.BagDrop))
+                    .ToList();
+
+                if (ruleBypass.Count > 0)
+                {
+                    rows.Add(new DiagnosticsBreakdownRow
+                    {
+                        Label = "Transfer rule bypasses check-in and bag drop",
+                        Count = ruleBypass.Count,
+                        PassengerIds = CapIds(ruleBypass.Select(p => p.Id))
+                    });
+                }
+
+                return rows;
+            }
+
+            private static string DescribeChannel(Passenger passenger)
+            {
+                return DescribeChannel(passenger?.Channel);
+            }
+
+            private static string DescribeChannel(string channel)
+            {
+                return string.IsNullOrWhiteSpace(channel)
+                    ? "(no channel)"
+                    : channel.Trim();
+            }
+
+            private static string DescribePassengerMix(Passenger passenger)
+            {
+                return (passenger.UsesOnlineCheckIn ? "Online" : "Offline") +
+                       (passenger.HasCheckedBag ? " + bag" : " + no bag");
+            }
+
+            private static string DescribeDepartureType(Passenger passenger)
+            {
+                switch (passenger.DHPType)
+                {
+                    case DHPType.DomesticDeparture:
+                        return "Domestic departure";
+                    case DHPType.InternationalDeparture:
+                        return "International departure";
+                    default:
+                        return passenger.DHPType.ToString();
+                }
+            }
+
+            private static string DescribeJourney(Passenger passenger)
+            {
+                return passenger.Journey == PassengerJourney.Transfer
+                    ? "Transfer"
+                    : "Origin";
+            }
+
+            private static List<string> DescribeBreakdown(
+                List<DiagnosticsBreakdownRow> rows)
+            {
+                return (rows ?? new List<DiagnosticsBreakdownRow>())
+                    .Where(row => row != null && row.Count > 0)
+                    .Select(row => row.Label + ": " + row.Count)
+                    .ToList();
+            }
+
             private static bool IsArrival(Passenger passenger)
             {
                 return passenger != null &&
@@ -2816,6 +3158,21 @@ namespace AirportPlanning.Core.Diagnostics
                     .Where(c => !string.IsNullOrWhiteSpace(c))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
+            }
+
+            /// <summary>
+            /// How many stacked stage cohorts the result's pools hold. One means
+            /// a conventional result: every passenger is served exactly once, so
+            /// pool passenger counts reconcile one-to-one with the processed
+            /// list. A facility that queues the same passengers through
+            /// consecutive stages in series (security's e-gate then ATRS)
+            /// reports its stage count here, and the reconciliation multiplies.
+            /// </summary>
+            private static int StageMultiplier(QueueResults queue)
+            {
+                return queue != null && queue.SeriesStageCount > 1
+                    ? queue.SeriesStageCount
+                    : 1;
             }
 
             private static string ChannelPart(string poolName)

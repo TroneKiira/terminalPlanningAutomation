@@ -1,0 +1,158 @@
+=====PDF_PAGE 31=====
+Se & 
+IATA Airport Development Reference Manual 
+2.1.1.3 Design Hour Rate (DHR) 
+The definition and calculation of the appropriate Design Hour Rate (DHR) is discussed in 2.2.10.1 Selection of 
+the Design Rate Definition. It is also described how to forecast the current level to future planning scenarios. 
+The calculations require access to a full year of historical traffic schedule. The airport data records (AODB, 
+FIDS, Data Warehouse) is the natural preferred data source, alternatively aviation data services (OAG, SRS 
+analyzer etc.) may be able to provide schedules, however, they do not provide full coverage of all operations 
+and passengers, which will impact the selection of the Design Hour Level. 
+For the calculation of the Design Hour Rate, the flight schedule data may easily be aggregated to an hourly 
+level, possibly split in various segments (domestic/international, arrival/departure etc.) 
+2.1.1.4 Design Day Flight Schedule (DDFS) 
+The development of a future Design Day Flight Schedule (DDFS) is relevant in a number of planning studies 
+depending on the planning horizon, data availability and required level of granularity (see 2.2.10.3 Design Day 
+Flight Schedules). 
+The development of a future DDFS builds on a thorough analysis and understanding of the current schedule 
+and earlier schedule development, which in turn requires access to historical flight schedules for several years 
+(5+ years is recommended). As was the case for the DHR calculations, the airport data records (AODB, FIDS, 
+Data Warehouse) is the natural preferred data source, alternatively aviation data services (OAG, SRS 
+analyzer etc.) may be able to provide schedules. 
+2.1.1.5 Demand Calculation 
+Within the ADRM Facility Sizing Process, “demand” is defined as the number of people that undertake a 
+specific terminal process over a period of time. 3.3.4.9 Demand-Capacity Assessment provides two 
+alternative methods for calculating the demand required for future facility sizing, building on either the future 
+Design Hour Level or a future Design Day Flight Schedule. In both situations, the expected passenger 
+presentation at the processing facilities must be considered. 
+Several data sources may be used to construct presentation profiles (‘when do passengers for flight X show 
+up at the back of the line for processor Y?”) which can later be applied to the DDFS to calculate the demand. 
+Boarding card scans from existing automated access gates at the processor provide the best possible data 
+source as the timestamp and flight number may be combined with additional schedule information from the 
+airport flight records to produce detailed presentation profiles for various passenger and time segments 
+(domestic/international, weekday/weekend, morning/afternoon) or even on a route-by-route level. Similarly, 
+12 EDITION 12 - MAY 2022 
+=====PDF_PAGE 70=====
+Be ial ; 
+IATA Forecasting 
+2.2.9.4.3 VVIP Aircraft Activity 
+It is important to remember that not all airports are the same when developing a general aviation forecast. A 
+key segment that may affect some airports is often called VVIP, or “very, very important person” activity. 
+WIPs are most commonly royalty or political figures. Airports with VVIP activity often have a private apron 
+and/or an exclusive FBO associated with this traffic. Although VVIP service is not common at most airports, it 
+is significant to keep this type of activity in mind when developing a general aviation forecast. 
+2.2.9.5 Military/Government ATM Forecast 
+Historical military/government aviation activity should be identified using airport statistics. Work with airport 
+management and staff who are in contact with representatives of the military to have a better understanding 
+of the expected future levels of military and government activity. Often, military movements are limited and/or 
+secretive, and therefore hard to forecast. 
+2.2.9.6 Total ATM Forecast 
+The total movements forecast should be derived by adding all the ATM forecasts described above. An overall 
+tabular format of total movements should be created displaying each category as well as total movements, 
+including compound annual growth rates. The results from each segment of the movements forecast will be 
+used for the peak period analysis described in detail in the next chapter. 
+2.2.10 Peak Period Forecast 
+Traffic demand at an airport is subject to seasonal, monthly, daily, and hourly variations. These variations 
+result in peak periods when the greatest amount of demand is placed upon facilities required to accommodate 
+passenger and aircraft movements. Peaking characteristics are critical in the assessment of existing and 
+planned facilities to determine their ability to accommodate forecast increases in passenger and operational 
+activity throughout the study period. The objective of developing peak period forecasts is to ensure planned 
+facilities are neither underutilized nor overcrowded too often. Exhibit 2.2.10 illustrates a distribution of active 
+hours at a specific airport ranked from busiest to quietest over a period of one year. Typically, the selected 
+design hour will not be the absolute busiest hour, but rather some measure of a typical peak that covers most 
+of the year while excluding the extreme busy periods. The outcome of a peak period selection will result on a 
+design rate and not a specific period of time. Therefore, the use of design rate is used to represent that traffic 
+level. 
+EDITION 12 - MAY 2022 51 
+=====PDF_PAGE 71=====
+SS Sy 
+IATA Airport Development Reference Manual 
+Exhibit 2.2.10: Hourly Passenger Demand Ranked in Decreasing Order Over the Year 
+iest Hour 
+Typical Busy Hour 
+Source: Airport Research Center 
+Passenger peak period forecasts will usually cover the design rates for total, arriving, and departing 
+Passengers, as well as other elements of traffic mix (e.g., domestic, international, transfer). This is necessary 
+because of the different facility requirements associated with each of these traffic elements. The different 
+design rates should be analyzed separately in accordance with the methodology described in the following 
+subsection for each specific traffic segment. Therefore, ranking of the hours of the year should be conducted 
+for each of the traffic segments that will be required as part of the planning exercise. 
+To determine the current representative design rate, it is necessary to evaluate historical design rate activity 
+for each required segment. Historical data should be obtained covering the annual traffic and the traffic during 
+the representative design rate. It is recommended that the dataset has several data points from multiple years 
+and all the passenger segments driving facilities’ requirements. 
+The departure design rate determines requirements for facilities such as check-in, security screening, and 
+gate hold rooms. Arriving peaks drive functional elements such as immigration, baggage claim, and greeter 
+requirements. The total peak may drive overall circulation, concessions, and restroom requirements. It is 
+important to note that these peaks can be distinct, occurring at different times of the day as a function of 
+airline scheduling practices, the role of the airport in the regional or national system, and geography. 
+Depending on the airport and scope of the forecast, further disaggregation of peak hour activity may be 
+required: 
+e By multiple terminals 
+¢ Per individual subsystems 
+ATM peak period forecasts will focus on total, arrivals, departures, international, domestic and possibly other 
+service types. In addition, planners may also require forecasts for maximum number of aircraft on the ground 
+for stand and gate planning. 
+52 EDITION 12 - MAY 2022 
+=====PDF_PAGE 456=====
+IATA Airport Simulation 
+e Resource allocation rules 
+«Operational settings 
+e Passenger, aircraft and vehicle characteristics 
+e Process flow definition (flow charts or textual descriptions) 
+It is recommended to base a simulation on a flight schedule as the main traffic demand input. Often, a 
+24-hour schedule reflecting a “Typical Busy Day” or “Design Day” is used. This is the most realistic approach 
+to model airport processes with the interaction and interdependencies of flight-driven events taking place at 
+the airport and to capture all the peaks in the different airport facilities. Such a schedule is also referred to 
+as the DDFS. (see 2.2.10.3 Design Day Flight Schedules for more information). 
+If a past situation is to be modelled, it is recommended that the Airport Operations Data Base (AODB) or 
+tower log for the last traffic year be analyzed to identify typical busy days that are suitable to be used for the 
+simulation and its objective. !f a past situation is to be re-investigated, allocation (i.e., check-in, gate, stands, 
+reclaim belts) and staffing information for the day to be simulated must be obtained for that specific flight 
+schedule as well. (see 2.2.10 Peak Period Forecast for the selection of a past reference flight schedule and a 
+representative busy hour rate). 
+If a future situation is to be modelled and no forecast flight schedule is available, one or more flight schedule 
+scenarios can be created as a baseline for the analysis. For this, historic flight schedules can be analyzed 
+regarding their peak structures and characteristics of arriving, departing and transfer peak hours, which might 
+occur during different periods. An assumption model for the airlines serving the airport, their fleet mixes, load 
+factors and possible additional movements during peak times can be set-up. Based on these assumptions, an 
+example scenario flight schedule can be prepared, discussed and agreed upon by the airport stakeholders. 
+Sometimes, only peak hour numbers are given as traffic demand input for a simulation. Therefore, it is 
+tecommended to build a realistic demand structure from arriving and departing movements that can be used 
+as artificial traffic scenarios in the simulation. For certain very specific questions, a simulation can be 
+conducted based on synthetic flows (e.g., continuous inflow to a security check-point). 
+Process times describe the time spent in different activities required to be performed by a mobile element or 
+flow object and, consequently, how long they are transacting there expressed in seconds or minutes per 
+passenger. Throughput rates are measured in number of passengers per time interval (e.g., number of 
+passengers per hour per security lane) can depend on the processor times, which in turn depend on the user 
+characteristics (e.g., checking a resident passport is usually faster than checking a non-resident passport). 
+When measuring process times, it is helpful to understand how the relevant process is modelled in the 
+simulation so that the data collected includes the independent variables that lead to the processing time 
+measurement. For example: 
+e Are idle times of counters while waiting for a passenger walking from the common queue to the counter, 
+included in the specified process time or modelled explicitly? 
+*8 Many airports in the world operate across midnight as the busiest period of the day. Therefore, in those cases, it may be useful to 
+consider a three day schedule, where the day of interest is the second day, thereby ensuring that the initial and ending conditions for 
+the day of interest are correct. 
+EDITION 12 - MAY 2022 437 
+=====PDF_PAGE 691=====
+we iil IATA Airport Development Reference Manual 
+For pier/finger-type terminals, where aircraft can park on both sides of the pier, sizing of the gate lounges will 
+determine the length and depth of the pier and aircraft parking requirements. The pier's depth must provide 
+for: 
+¢ The required depth of gate lounges (on both sides of the pier) 
+* Concessions along the pier 
+* Circulation corridors, which sometimes also include assisted moving devices 
+¢ Adequate space for any potential additional security measures that may be imposed at gates, meaning 
+enough space for equipment, queues and questioning or interview areas 
+For the purpose of sizing a gate hold room, the largest aircraft is the one that offers the biggest seating 
+capacity. When multiple aircraft can be accommodated on a stand (MARS), the highest seating requirement 
+may be generated by two smaller aircraft parked at the same time, rather than one large aircraft. The planner 
+must verify which configuration requires more seating capacity. 
+Consideration must also be given to the aircraft boarding process, where passengers are called forward to 
+present their documentation for final checks against the airline DCS. Airlines may wish to differentiate by 
+aircraft class for their premium passengers. Sufficient space must be provided for queuing and the processing 
+equipment at the head of the gate hold room. 
+Exhibit 3.3.5.8.1a: Incheon Airport, Self-boarding and Document Check 
+Source: Incheon Airport 
+672 EDITION 12 - MAY 2022 

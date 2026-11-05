@@ -57,6 +57,13 @@ namespace AirportPlanning.Core.Diagnostics
                               " expected " + row.Expected +
                               ", processed " + row.Processed +
                               " (warm-up " + row.WarmUpProcessed + ")");
+
+                    if (row.BagDrop != null && row.BagDrop.Active)
+                    {
+                        lines.Add("      bag drop: expected " + row.BagDrop.Expected +
+                                  ", recorded " + row.BagDrop.Recorded +
+                                  ", missing " + row.BagDrop.Missing);
+                    }
                 }
             }
 
@@ -128,6 +135,17 @@ namespace AirportPlanning.Core.Diagnostics
 
                 if (row.MissingPassengerIds.Count > 0)
                     text += "; first IDs " + string.Join(", ", row.MissingPassengerIds.Take(5));
+
+                string channelNote = row.Notes?.FirstOrDefault(n =>
+                    n != null && n.Contains("expected record(s) were not processed"));
+
+                if (!string.IsNullOrWhiteSpace(channelNote))
+                    text += "; " + channelNote;
+
+                if (row.BagDrop != null && row.BagDrop.Active)
+                {
+                    text += "; bag drop " + row.BagDrop.Missing + " missing";
+                }
 
                 lines.Add(text);
             }
@@ -232,7 +250,120 @@ namespace AirportPlanning.Core.Diagnostics
                     lines.Add("  " + row.Label + ": " + note);
             }
 
+            foreach (DiagnosticsServiceRow row in report.Services
+                .Where(r => r.Kind == DiagnosticsServiceKind.CheckIn ||
+                            r.Kind == DiagnosticsServiceKind.BagDrop))
+            {
+                string breakdown = CreateCheckInBreakdownLines(row);
+                if (!string.IsNullOrWhiteSpace(breakdown))
+                {
+                    lines.Add(string.Empty);
+                    lines.Add(breakdown);
+                }
+            }
+
             return lines;
+        }
+
+        /// <summary>
+        /// Compact, aggregate view of a physical departure stage row. Detail
+        /// arrays keep the passenger IDs; this text only shows counts so a
+        /// panel stays readable.
+        /// </summary>
+        private static string CreateCheckInBreakdownLines(DiagnosticsServiceRow row)
+        {
+            StringBuilder builder = new StringBuilder();
+
+            string header = row.Kind == DiagnosticsServiceKind.BagDrop
+                ? "BAG DROP BREAKDOWN"
+                : "CHECK-IN BREAKDOWN";
+
+            builder.AppendLine(header + " - " + row.Label);
+
+            DiagnosticsBagDropBreakdown bagDrop = row.BagDrop;
+
+            string stageLabel = row.Kind == DiagnosticsServiceKind.BagDrop
+                ? "Bag Drop"
+                : "Check-In";
+
+            if (bagDrop != null && bagDrop.Active)
+            {
+                builder.AppendLine(
+                    "  Bag drop: expected " + bagDrop.Expected +
+                    ", recorded " + bagDrop.Recorded +
+                    ", missing " + bagDrop.Missing +
+                    ", late " + bagDrop.LateBypassed);
+
+                AppendBreakdown(builder, "Bag drop by primary channel", bagDrop.Channels, false);
+                AppendBreakdown(builder, "Bag drop missing by primary channel",
+                    bagDrop.MissingChannels, true);
+                AppendBreakdown(builder, "Bag drop missing by passenger mix",
+                    bagDrop.MissingMix, true);
+                AppendBreakdown(builder, "Bag drop missing by departure type",
+                    bagDrop.MissingDepartureTypes, true);
+                AppendBreakdown(builder, "Bag drop missing by journey",
+                    bagDrop.MissingJourneys, true);
+            }
+
+            AppendBreakdown(builder, stageLabel + " expected by channel", row.Channels, false);
+            AppendBreakdown(builder, stageLabel + " missing by channel", row.Channels, true);
+            AppendBreakdown(builder, stageLabel + " expected by passenger mix",
+                row.PassengerMix, false);
+            AppendBreakdown(builder, stageLabel + " missing by passenger mix",
+                row.PassengerMix, true);
+            AppendBreakdown(builder, stageLabel + " expected by departure type",
+                row.DepartureTypes, false);
+            AppendBreakdown(builder, stageLabel + " expected by journey",
+                row.Journeys, false);
+
+            List<DiagnosticsBreakdownRow> exceptions = (row.Exceptions ??
+                new List<DiagnosticsBreakdownRow>())
+                .Where(r => r != null && r.Count > 0)
+                .ToList();
+
+            if (exceptions.Count > 0)
+            {
+                builder.AppendLine("  Excluded by rule:");
+                foreach (DiagnosticsBreakdownRow exception in exceptions)
+                    builder.AppendLine("    " + exception.Label + ": " + exception.Count);
+            }
+
+            return builder.ToString().TrimEnd();
+        }
+
+        private static void AppendBreakdown(
+            StringBuilder builder,
+            string title,
+            List<DiagnosticsBreakdownRow> rows,
+            bool missingOnly)
+        {
+            if (rows == null || rows.Count == 0)
+                return;
+
+            List<DiagnosticsBreakdownRow> selected = rows
+                .Where(row => row != null && (!missingOnly || row.Missing > 0))
+                .ToList();
+
+            if (selected.Count == 0)
+                return;
+
+            builder.AppendLine("  " + title + ":");
+            foreach (DiagnosticsBreakdownRow row in selected)
+            {
+                builder.Append("    " + Pad(row.Label, 34));
+
+                if (row.Count > 0 && row.Expected == row.Count && row.Processed == 0)
+                {
+                    builder.AppendLine(row.Count.ToString(CultureInfo.InvariantCulture));
+                }
+                else
+                {
+                    builder.AppendLine(
+                        "expected " + row.Expected +
+                        ", processed " + row.Processed +
+                        ", missing " + row.Missing);
+                }
+            }
         }
 
         public static List<string> CreateTransferTableLines(DiagnosticsReport report)
@@ -334,9 +465,8 @@ namespace AirportPlanning.Core.Diagnostics
 
             lines.Add(string.Empty);
             lines.Add("  Processed counts transfer records carrying this facility's history. " +
-                      "Bag Drop served through");
-            lines.Add("  the Check-In BagDrop channel is included. NoRules records keep normal " +
-                      "passenger behaviour.");
+                      "Bag Drop history is written by the standalone Bag Drop stage.");
+            lines.Add("  NoRules records keep normal passenger behaviour.");
 
             foreach (DiagnosticsTransferServiceRow row in report.TransferServices
                 .Where(r => r.Notes != null && r.Notes.Count > 0))
@@ -592,6 +722,36 @@ namespace AirportPlanning.Core.Diagnostics
                         -row.MissingHistory, "records", string.Empty,
                         "Processed records without facility history.");
                 }
+
+                if (row.BagDrop != null && row.BagDrop.Active)
+                {
+                    AppendCsv(builder, "BagDrop", row.Label + " / bag drop expected",
+                        "SVC-BAGDROP-EXPECTED", row.Status.ToDisplayLabel(), string.Empty,
+                        row.BagDrop.Expected, row.BagDrop.Recorded,
+                        row.BagDrop.Recorded - row.BagDrop.Expected,
+                        "passengers", JoinCsvIds(row.BagDrop.MissingPassengerIds),
+                        "late " + row.BagDrop.LateBypassed);
+
+                    AppendBreakdownCsv(builder, row.Label + " / bag drop missing",
+                        "SVC-BAGDROP-CHANNEL", row.BagDrop.MissingChannels);
+                    AppendBreakdownCsv(builder, row.Label + " / bag drop missing mix",
+                        "SVC-BAGDROP-MIX", row.BagDrop.MissingMix);
+                    AppendBreakdownCsv(builder, row.Label + " / bag drop missing departure",
+                        "SVC-BAGDROP-DEPT", row.BagDrop.MissingDepartureTypes);
+                    AppendBreakdownCsv(builder, row.Label + " / bag drop missing journey",
+                        "SVC-BAGDROP-JOURNEY", row.BagDrop.MissingJourneys);
+                }
+
+                AppendBreakdownCsv(builder, row.Label + " / channel",
+                    "SVC-CHANNEL", row.Channels);
+                AppendBreakdownCsv(builder, row.Label + " / passenger mix",
+                    "SVC-MIX", row.PassengerMix);
+                AppendBreakdownCsv(builder, row.Label + " / departure type",
+                    "SVC-DEPT", row.DepartureTypes);
+                AppendBreakdownCsv(builder, row.Label + " / journey",
+                    "SVC-JOURNEY", row.Journeys);
+                AppendBreakdownCsv(builder, row.Label + " / exception",
+                    "SVC-EXCEPTION", row.Exceptions);
             }
 
             foreach (DiagnosticsTransferRow row in report.Transfers)
@@ -714,6 +874,40 @@ namespace AirportPlanning.Core.Diagnostics
                 return string.Empty;
 
             return string.Join(" ", ids);
+        }
+
+        private static void AppendBreakdownCsv(
+            StringBuilder builder,
+            string itemPrefix,
+            string code,
+            List<DiagnosticsBreakdownRow> rows)
+        {
+            if (rows == null || rows.Count == 0)
+                return;
+
+            foreach (DiagnosticsBreakdownRow row in rows)
+            {
+                if (row == null)
+                    continue;
+
+                bool countOnly = row.Expected == row.Count && row.Processed == 0;
+
+                AppendCsv(
+                    builder,
+                    "CheckIn",
+                    itemPrefix + " / " + row.Label,
+                    code,
+                    row.Missing > 0 ? "FAIL" : "PASS",
+                    row.Missing > 0 ? "Error" : string.Empty,
+                    countOnly ? row.Count : row.Expected,
+                    countOnly ? null : (double?)row.Processed,
+                    countOnly ? null : (double?)-row.Missing,
+                    "passengers",
+                    JoinCsvIds(row.PassengerIds),
+                    countOnly
+                        ? "Records in this slice."
+                        : "Missing " + row.Missing + " of " + row.Expected + ".");
+            }
         }
 
         private static string Escape(string value)

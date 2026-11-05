@@ -68,8 +68,11 @@ namespace AirportPlanning.Tests
                 "Every served passenger records a terminal-entry visit");
 
             Check(queue.ProcessedPassengers.All(p =>
-                    Math.Abs(p.ArrivalTime - (p.EndServiceTime + 2.0)) < 1e-9),
-                "Entry service is followed by the entry-to-check-in walk");
+                    Math.Abs(p.ArrivalTime - p.EndServiceTime) < 1e-9),
+                "Entry service ends exactly where check-in begins: no hidden walk fold-in");
+
+            Check(queue.ProcessedPassengers.All(p => Math.Abs(p.WalkingTime - 2.0) < 1e-9),
+                "The entry-to-check-in walk is kept as visible data on the passenger");
 
             Check(queue.ProcessedPassengers.All(p =>
                     string.Equals(p.Channel, "Counter", StringComparison.OrdinalIgnoreCase)),
@@ -154,8 +157,10 @@ namespace AirportPlanning.Tests
                 .First(p => p.Id == departure.Id);
             Check(served.StartServiceTime >= 100.0,
                 $"Queueing starts at the terminal-entry time ({Math.Round(served.StartServiceTime, 2)})");
-            Check(Math.Abs(served.ArrivalTime - (served.EndServiceTime + 5.0)) < 1e-9,
-                "The post-entry clock includes the entry-to-check-in walk");
+            Check(Math.Abs(served.ArrivalTime - served.EndServiceTime) < 1e-9,
+                "The post-entry clock is strictly sequential: no hidden walk");
+            Check(Math.Abs(served.WalkingTime - 5.0) < 1e-9,
+                "The walk remains available as visible passenger data");
             Check(!served.ArrivedBeforeCheckInOpen,
                 "The advanced clock updates the check-in opening flag");
 

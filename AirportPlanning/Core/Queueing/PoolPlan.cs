@@ -12,6 +12,16 @@ namespace AirportPlanning.Core.Queueing
     /// </summary>
     public class PoolPlan
     {
+        /// <summary>
+        /// Optional facility this plan belongs to, e.g. "Emigration" or
+        /// "Security". Blank means the plan applies to any facility, which
+        /// keeps the legacy single-facility lists working. A facility-specific
+        /// plan wins over a blank one with the same identity, so the same
+        /// identity (for example "EGate") can carry different values at two
+        /// facilities.
+        /// </summary>
+        public string Facility { get; set; }
+
         /// <summary>Channel/pool this plan serves. Null or empty marks the shared pool.</summary>
         public string Channel { get; set; }
 
@@ -66,6 +76,9 @@ namespace AirportPlanning.Core.Queueing
             string identity = string.IsNullOrWhiteSpace(Channel)
                 ? "shared"
                 : (!string.IsNullOrWhiteSpace(PoolKey) ? $"{Channel}|{PoolKey}" : Channel);
+
+            if (!string.IsNullOrWhiteSpace(Facility))
+                identity = $"{Facility}:{identity}";
 
             return string.Format(
                 CultureInfo.InvariantCulture,

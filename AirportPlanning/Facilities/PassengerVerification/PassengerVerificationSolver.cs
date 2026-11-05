@@ -11,8 +11,33 @@ namespace AirportPlanning.Facilities.PassengerVerification
 {
     public class PassengerVerificationSolver
     {
+        /// <summary>Pool identity stamped on every passenger this stage serves.</summary>
+        public const string PoolIdentity = "Verification";
+
+        /// <summary>Warnings from the most recent Solve.</summary>
+        public List<string> Warnings { get; } = new List<string>();
+
         public PassengerVerificationResults Solve(PassengerVerificationInputs input)
         {
+            Warnings.Clear();
+
+            if (input?.Passengers == null || input.Passengers.Count == 0)
+            {
+                Warnings.Add(
+                    "Verification received no passengers: the component is unwired or fed from a " +
+                    "branch that excludes this population. Check the Passengers wire.");
+
+                return new PassengerVerificationResults
+                {
+                    Passengers = new List<Passenger>(),
+                    EligiblePassengers = 0,
+                    RequiredGates = 0,
+                    BaselineProcessorCount = 0,
+                    Utilization = input?.DesignUtilization ?? 0,
+                    GateCapacity = input?.ThroughputPerGate ?? 0
+                };
+            }
+
             double eligiblePct = input.EligiblePercentage > 1.0 ? input.EligiblePercentage / 100.0 : input.EligiblePercentage;
             double utilization = input.DesignUtilization > 1.0 ? input.DesignUtilization / 100.0 : input.DesignUtilization;
 
@@ -39,6 +64,7 @@ namespace AirportPlanning.Facilities.PassengerVerification
                 p.EndServiceTime = p.StartServiceTime + p.ServiceTime;
                 p.WaitTime = 0.0;
                 p.AssignedCounter = 0;
+                p.AssignedPool = PoolIdentity;
 
                 p.History[FacilityType.PassengerVerification] = new FacilityRecord
                 {
@@ -46,10 +72,11 @@ namespace AirportPlanning.Facilities.PassengerVerification
                     StartServiceTime = p.StartServiceTime,
                     EndServiceTime = p.EndServiceTime,
                     WaitTime = p.WaitTime,
-                    AssignedResource = p.AssignedCounter
+                    AssignedResource = p.AssignedCounter,
+                    PoolName = PoolIdentity
                 };
 
-                p.ArrivalTime = p.EndServiceTime + p.WalkingTime;
+                p.ArrivalTime = p.EndServiceTime;
                 p.QueueArrivalTime = p.ArrivalTime;
             }
 

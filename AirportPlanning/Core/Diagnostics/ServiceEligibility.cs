@@ -125,15 +125,19 @@ namespace AirportPlanning.Core.Diagnostics
                         return ServiceExpectation.Bypass(
                             ServiceEligibilityReason.NoCheckedBag,
                             "Passenger has no checked bag.");
-                    if (UsesTransferService(passenger, TransferService.BagDrop))
+                    if (passenger.RequiresSeparateBagDrop)
                         return ServiceExpectation.Eligible();
                     if (IsTransferRuleBypass(passenger, TransferService.BagDrop))
                         return ServiceExpectation.Bypass(
                             ServiceEligibilityReason.RuleBypass,
                             "Transfer scenario rule does not require bag drop.");
+                    if (passenger.HasCheckedBag)
+                        return ServiceExpectation.Bypass(
+                            ServiceEligibilityReason.OtherBypass,
+                            "The bag is accepted at the staffed check-in counter.");
                     return ServiceExpectation.Bypass(
                         ServiceEligibilityReason.OtherBypass,
-                        "Passenger does not require bag drop.");
+                        "Passenger does not require the separate Bag Drop stage.");
 
                 case DiagnosticsServiceKind.Security:
                     if (!departure)
@@ -219,40 +223,25 @@ namespace AirportPlanning.Core.Diagnostics
             bool needsCheckIn =
                 TransferServiceUsageCalculator.UsesService(passenger, TransferService.CheckIn);
 
-            bool bagDropChannel = IsBagDropChannel(passenger.Channel);
-            bool needsBagDropHere =
-                bagDropChannel &&
-                TransferServiceUsageCalculator.UsesService(passenger, TransferService.BagDrop);
-
-            if (needsCheckIn || needsBagDropHere)
+            // Check-In owns the check-in visit only. Bag Drop is a separate
+            // facility stage: a counter accepts the bag at the desk, while Web
+            // and Kiosk passengers continue to Bag Drop afterwards.
+            if (needsCheckIn)
                 return ServiceExpectation.Eligible();
 
             if (passenger.Journey == PassengerJourney.Transfer &&
-                passenger.TransferProcessing != null)
+                passenger.TransferProcessing != null &&
+                TransferServiceUsageCalculator.IsBypassed(passenger, TransferService.CheckIn))
             {
-                bool checkInBypassed =
-                    TransferServiceUsageCalculator.IsBypassed(passenger, TransferService.CheckIn);
-                bool bagDropBypassed =
-                    !bagDropChannel ||
-                    TransferServiceUsageCalculator.IsBypassed(passenger, TransferService.BagDrop);
-
-                if (checkInBypassed && bagDropBypassed)
-                {
-                    return ServiceExpectation.Bypass(
-                        ServiceEligibilityReason.RuleBypass,
-                        "Transfer scenario rule does not require check-in or bag drop.");
-                }
+                return ServiceExpectation.Bypass(
+                    ServiceEligibilityReason.RuleBypass,
+                    "Transfer scenario rule does not require check-in.");
             }
 
-            if (passenger.UsesOnlineCheckIn)
+            if (DefaultChannelAssigner.IsWebChannel(passenger.Channel))
                 return ServiceExpectation.Bypass(
                     ServiceEligibilityReason.OnlineCheckIn,
-                    "Passenger checked in online and has no bag-drop requirement at check-in.");
-
-            if (!passenger.HasCheckedBag)
-                return ServiceExpectation.Bypass(
-                    ServiceEligibilityReason.NoCheckedBag,
-                    "Passenger has no checked bag and does not require check-in.");
+                    "Passenger checked in online and has no physical Check-In visit.");
 
             return ServiceExpectation.Bypass(
                 ServiceEligibilityReason.OtherBypass,
@@ -264,11 +253,6 @@ namespace AirportPlanning.Core.Diagnostics
             return passenger.Journey == PassengerJourney.Transfer &&
                    passenger.TransferProcessing != null &&
                    passenger.TransferProcessing.RequiresBagDrop;
-        }
-
-        private static bool UsesTransferService(Passenger passenger, TransferService service)
-        {
-            return TransferServiceUsageCalculator.UsesService(passenger, service);
         }
 
         private static bool IsTransferRuleBypass(Passenger passenger, TransferService service)
@@ -296,19 +280,12 @@ namespace AirportPlanning.Core.Diagnostics
         }
 
         /// <summary>
-        /// Matches the Check-In solver's BagDrop channel convention (for
-        /// example "BagDrop", "Bag Drop", "bag-drop").
+        /// Legacy helper retained for callers that only have a channel label.
+        /// Prefer <see cref="DefaultChannelAssigner.IsBagDropChannel"/>.
         /// </summary>
         public static bool IsBagDropChannel(string channel)
         {
-            if (string.IsNullOrWhiteSpace(channel))
-                return false;
-
-            string normalized = new string(channel
-                .Where(char.IsLetterOrDigit)
-                .ToArray());
-
-            return string.Equals(normalized, "BagDrop", StringComparison.OrdinalIgnoreCase);
+            return DefaultChannelAssigner.IsBagDropChannel(channel);
         }
     }
 }

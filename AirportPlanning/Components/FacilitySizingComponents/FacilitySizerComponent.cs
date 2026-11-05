@@ -251,8 +251,16 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                     byChannel[entry.Key] = entry.Value.PeakQueueLength;
             }
 
-            if (metricBasis == 2 && queueResults.PoolResults != null)
+            if (queueResults.PoolResults != null)
             {
+                // Per-pool metrics come from the pool results at every metric
+                // basis. Pool identities such as
+                // "BagDrop|DomesticDeparture|Domestic Economy" are split by a
+                // demand class, not by the passenger's channel, so a
+                // channel-keyed lookup can never find them; without the pool
+                // results the sizing would fall back to the facility peak and
+                // over-size the pool's waiting area. The pool peak is the
+                // pool's whole-run maximum, which covers the design step.
                 foreach (QueuePoolResult pool in queueResults.PoolResults)
                 {
                     if (pool != null && !string.IsNullOrWhiteSpace(pool.Name))

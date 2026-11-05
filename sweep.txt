@@ -1,0 +1,104 @@
+=== show up ===
+  29355: necessary. For terminal processes, for example, it is often sufficient to describe the passenger “show up” at 
+  41456: passengers show up to the subsystem in question and how long they dwell in the area. Using the DHR 
+  41462: will be underestimated for subsystems where passengers show up during a very short time span (e.g., 
+  41553: (f) Early morning flights (passengers for early morning flights tend to show up closer to the scheduled 
+  43255: Step 1: Obtain the demand specifically corresponding to the self-service kiosks (see 3.3.4.9 Demand￾Capacity Assessment for the detailed explanation) based on t
+  43257: Relevant information required to complete the show up profiles may be obtained from bespoke passenger 
+  43363: Assessment for the detailed explanation) based on the design day schedules and show up profiles. 
+  ...
+
+=== walking speed ===
+  7800: e Walking speed to Immigration 
+  32340: of the processor becomes an independent variable that depends on the walking speed and the 
+  53471: points. Simple direct routes are preferred, with adequate width for passengers to move freely. Walking speeds 
+
+=== walk speed ===
+
+=== deterministic ===
+  28577: e 2D and 3D deterministic design simulations, such as those that allow operators and planners to set the 
+  28587: e Deterministic and stochastic simulations with a lesser visual component, but which reflect future 
+  29096: peaks), deterministic or stochastic, limited range or infinite range. Therefore, mathematical formulation is extremely difficult and 
+
+=== simulation ===
+  293: 2.11 Airport Simulation... 
+  1280: Airport Simulation 
+  2132: Airport Simulation covers the latest trends throughout all the life cycle phases of an airport in order to fully 
+  2134: benefit from the many advantages of dynamic simulation modelling, while finally Planning for Collaborative 
+  2359: 2.1.1.7 Simulation 
+  2361: Simulation studies are useful for all aspects of airport planning, including airspace, runway, apron, baggage, 
+  2363: and landside access. Specifically, for passenger terminals, simulation studies can be used as a more detailed 
+  ...
+
+=== percentile ===
+  29556: e Passenger waiting times (max, average, top 95 percentile, during peak hour, during day) 
+  29619: max, min, median, percentiles)? 
+  29623: such as max, min, median, percentiles)? 
+  30583: percentiles of the queuing time and waiting time distributions (quantifying the passenger shares who waited 
+  40673: planning busy period or as a percentile target. (i.e., 90% of the design Peak Hour, or total busy day 
+
+=== W95 ===
+
+=== 95th ===
+
+=== common use ===
+  5094: The more common use approaches use either the 30" or the 40" highest hour of passenger flow. To 
+  16435: 2.4.7.2.1. Common Use Systems and Infrastructure 
+  16437: Airports increasingly utilize common use systems and shared terminal equipment for efficiency and ease of 
+  16456: Passenger-processing platforms, such as Common User Terminal Equipment (CUTE), Common User 
+  16458: Passenger Processing System (CUPPS) and Common User Self-Service (CUSS) provide shared passenger 
+  18653: A. Common Use Passenger Processing Systems 
+  18655: Common use passenger systems have been an essential element of airport technology for many years: 
+  ...
+
+=== dedicated counter ===
+
+=== premium ===
+  20018: considered. For example, if there are likely to be a significant number of premium passengers at the airport, 
+  20020: think through the operational outcomes they will experience. Premium check-in and security facilities will offer 
+  20022: a short queue time and allow passengers to access airside facilities faster, while premium passenger lounges 
+  20097: Premium facility requirements Level of Service 
+  20268: * How will the service be differentiated between various types of passengers, both in terms of access and performance? For instance, how will the Level of Servi
+  20325: © Will direct lounge boarding be available to premium passengers? 
+  36365: is limited (and at a premium). Annual airport fuel throughputs range from less than a few million gallons to 
+  ...
+
+=== fast track ===
+  43735: jurisdictions, the provision of a fast track dedicated area is allowed for premium passengers. Noting that the 
+
+=== dwell time ===
+  5521: sequences and dwell times of aircraft and passengers play a significant role (e.g., disposition-dependent 
+  7739: * Vehicle dwell time on forecourt 
+  7764: ¢ Dwell time for escorts 
+  7784: e Dwell time post-security 
+  7839: ¢ Dwell time on concourse (pax/meeter) 
+  8747: * Dwell times on the forecourt 
+  14992: or perimeter bay bus stops may be the most appropriate, allowing buses to reduce dwell time and use less 
+  ...
+
+=== gross-up ===
+
+=== circulation ===
+  4940: requirements. The total peak may drive overall circulation, concessions, and restroom requirements. It is 
+  7782: e Peak occupancy by type of facility (retail/catering/seating/circulation/ete.) 
+  7841: * Peak occupancy by type of facility (retail/catering/seating/circulation/etc.) 
+  8085: An inventory of access systems to/from/on the airport needs to be taken, including access/circulation/service toads, parking, and forecourt. This should cover a
+  10788: Fit-Out az 1,039 1,873 circulation cores (VCC), PBBs. 
+  21756: e Vehicular circulation within the airport boundaries 
+  23376: ¢ No (or minimal) recirculation: If full closing of the recirculation air is not possible for adequate comfort, 
+  ...
+
+=== transfer ===
+  283: 2.10 Planning for Operational Readiness and Airport Transfer ..........ccccccsssscsessssesecessesesssssesscesesesseveese 375 
+  382: 3.3.7 Transfers Processes and Facilities .............:ssesseceesesesseersssnenneneenesssensssesnssunesnssnnsensenesey® 
+  2126: Operational Readiness and Airport Transfer (ORAT) describes the methodical preparation required to 
+  2953: * National and international economies (especially at major transfer hubs); and 
+  3105: 2.2.2.3 Transfer Traffic 
+  3107: Unlike origin/destination traffic, transfer traffic has little relevance to the catchment area and its dynamic. The 
+  3109: factors that influence the number of transfer passengers at an airport will differ from those affecting the 
+  ...
+
+=== departing market ===
+
+=== arriving peak ===
+  4938: gate hold rooms. Arriving peaks drive functional elements such as immigration, baggage claim, and greeter 

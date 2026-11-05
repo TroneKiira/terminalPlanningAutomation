@@ -38,6 +38,15 @@ namespace AirportPlanning.Components.Object_Creation
                 "Service Profiles", "SP",
                 "Service profile for each key (same length as Keys).",
                 GH_ParamAccess.list);
+
+            pManager.AddTextParameter(
+                "Facilities", "FAC",
+                "Optional facility tag per row, e.g. 'Security' or 'Emigration'. " +
+                "A tagged row is only used by that facility, so the same key " +
+                "(for example 'EGate') can carry a different service time at two " +
+                "facilities. Leave blank to apply to any facility.",
+                GH_ParamAccess.list);
+            pManager[3].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -53,11 +62,13 @@ namespace AirportPlanning.Components.Object_Creation
             ServiceProfile defaultProfile = null;
             List<string> keys = new List<string>();
             List<ServiceProfile> profiles = new List<ServiceProfile>();
+            List<string> facilities = new List<string>();
 
             DA.GetData(0, ref defaultProfile);
 
             if (!DA.GetDataList(1, keys)) return;
             if (!DA.GetDataList(2, profiles)) return;
+            DA.GetDataList(3, facilities);
 
             ServiceTimeMap map = new ServiceTimeMap { Default = defaultProfile };
 
@@ -66,6 +77,14 @@ namespace AirportPlanning.Components.Object_Creation
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Warning,
                     "Keys and Service Profiles should be the same length.");
+            }
+
+            if (facilities.Count > 1 && facilities.Count != keys.Count)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"{facilities.Count} facility tag(s) were given but {keys.Count} keys are listed; " +
+                    "tags are read in row order.");
             }
 
             int count = Math.Min(keys.Count, profiles.Count);
@@ -77,9 +96,17 @@ namespace AirportPlanning.Components.Object_Creation
                 if (key.Length == 0 || profiles[i] == null)
                     continue;
 
+                // A single tag broadcasts to every row; otherwise row order.
+                int facilitySlot = facilities.Count == 1 ? 0 : i;
+
                 map.Entries.Add(new ServiceTimeEntry
                 {
                     Key = key,
+                    Facility = facilitySlot < facilities.Count
+                        ? (string.IsNullOrWhiteSpace(facilities[facilitySlot])
+                            ? null
+                            : facilities[facilitySlot].Trim())
+                        : null,
                     Profile = profiles[i]
                 });
             }

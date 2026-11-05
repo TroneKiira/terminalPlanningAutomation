@@ -245,6 +245,127 @@ namespace AirportPlanning.Core.Diagnostics
         public List<int> MissingPassengerIds { get; set; } = new List<int>();
 
         public List<int> ExtraPassengerIds { get; set; } = new List<int>();
+
+        /// <summary>
+        /// Expected records grouped by channel, with the missing subset. Only
+        /// populated for stages where the channel mix explains the result.
+        /// </summary>
+        public List<DiagnosticsBreakdownRow> Channels { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
+
+        /// <summary>Expected records grouped by online/offline and bag flags.</summary>
+        public List<DiagnosticsBreakdownRow> PassengerMix { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
+
+        /// <summary>Expected records grouped by departure type.</summary>
+        public List<DiagnosticsBreakdownRow> DepartureTypes { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
+
+        /// <summary>Expected records grouped by origin/transfer journey.</summary>
+        public List<DiagnosticsBreakdownRow> Journeys { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
+
+        /// <summary>
+        /// Records deliberately excluded from the expected set, such as late
+        /// check-ins and explicit transfer-rule bypasses.
+        /// </summary>
+        public List<DiagnosticsBreakdownRow> Exceptions { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
+
+        /// <summary>
+        /// Bag Drop stage breakdown, or null for other stages.
+        /// </summary>
+        public DiagnosticsBagDropBreakdown BagDrop { get; set; }
+    }
+
+    /// <summary>
+    /// One slice of a service row: a channel, passenger mix, departure type or
+    /// journey. Expected is the population slice; Missing is the part of it the
+    /// stage did not process. PassengerIds stays empty unless the slice is a
+    /// missing subset, which keeps the aggregate rows short.
+    /// </summary>
+    public class DiagnosticsBreakdownRow
+    {
+        public string Label { get; set; } = string.Empty;
+
+        /// <summary>Records in this slice when it is a plain count, not an expected set.</summary>
+        public int Count { get; set; }
+
+        /// <summary>Expected records in this slice.</summary>
+        public int Expected { get; set; }
+
+        /// <summary>Expected records in this slice that were processed.</summary>
+        public int Processed { get; set; }
+
+        /// <summary>Expected records in this slice that were not processed.</summary>
+        public int Missing { get; set; }
+
+        /// <summary>Processed records in this slice that carry the service history.</summary>
+        public int Recorded { get; set; }
+
+        /// <summary>Expected records in this slice on a channel that cannot serve them.</summary>
+        public int RoutingMismatch { get; set; }
+
+        public List<int> PassengerIds { get; set; } = new List<int>();
+    }
+
+    /// <summary>
+    /// Bag Drop is a standalone stage. These counts reconcile the separate
+    /// bag-drop requirement (Web/Kiosk bag carriers and rule-required
+    /// transfers) with the Bag Drop history the stage writes.
+    /// </summary>
+    public class DiagnosticsBagDropBreakdown
+    {
+        /// <summary>True when at least one record requires bag drop or carries its history.</summary>
+        public bool Active { get; set; }
+
+        /// <summary>Expected Bag Drop records.</summary>
+        public int Expected { get; set; }
+
+        /// <summary>Eligible Bag Drop records. Every eligible record is correctly placed.</summary>
+        public int OnChannel { get; set; }
+
+        /// <summary>Expected Bag Drop records carrying a Bag Drop history record.</summary>
+        public int Recorded { get; set; }
+
+        /// <summary>Expected Bag Drop records without a Bag Drop history record.</summary>
+        public int Missing { get; set; }
+
+        /// <summary>Always zero: Bag Drop no longer depends on the primary channel.</summary>
+        public int RoutingMismatch { get; set; }
+
+        /// <summary>Bag-drop records excluded because they were late for Check-In.</summary>
+        public int LateBypassed { get; set; }
+
+        public List<int> MissingPassengerIds { get; set; } = new List<int>();
+
+        public List<int> RecordedPassengerIds { get; set; } = new List<int>();
+
+        public List<int> RoutingMismatchPassengerIds { get; set; } = new List<int>();
+
+        /// <summary>Expected bag-drop records by channel.</summary>
+        public List<DiagnosticsBreakdownRow> Channels { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
+
+        /// <summary>Routing-mismatch records by channel.</summary>
+        public List<DiagnosticsBreakdownRow> RoutingMismatchChannels { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
+
+        /// <summary>Missing bag-drop records by channel.</summary>
+        public List<DiagnosticsBreakdownRow> MissingChannels { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
+
+        /// <summary>Missing bag-drop records by online/offline and bag flags.</summary>
+        public List<DiagnosticsBreakdownRow> MissingMix { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
+
+        /// <summary>Missing bag-drop records by departure type.</summary>
+        public List<DiagnosticsBreakdownRow> MissingDepartureTypes { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
+
+        /// <summary>Missing bag-drop records by origin/transfer journey.</summary>
+        public List<DiagnosticsBreakdownRow> MissingJourneys { get; set; } =
+            new List<DiagnosticsBreakdownRow>();
     }
 
     /// <summary>
@@ -759,6 +880,10 @@ namespace AirportPlanning.Core.Diagnostics
                     return FacilityType.DepartureLounge;
                 case DiagnosticsServiceKind.Boarding:
                     return FacilityType.Boarding;
+                case DiagnosticsServiceKind.TransferDesk:
+                    return FacilityType.TransferDesk;
+                case DiagnosticsServiceKind.BaggageRecheck:
+                    return FacilityType.BaggageRecheck;
                 default:
                     return null;
             }

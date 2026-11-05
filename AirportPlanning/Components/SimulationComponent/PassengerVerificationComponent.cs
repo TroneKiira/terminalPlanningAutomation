@@ -75,6 +75,9 @@ namespace AirportPlanning.Components.SimulationComponent
             PassengerVerificationSolver solver = new PassengerVerificationSolver();
             PassengerVerificationResults results = solver.Solve(input);
 
+            foreach (string warning in solver.Warnings)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, warning);
+
             DA.SetDataList(0, results.Passengers); // Output the passengers!
             DA.SetData(1, results);
             DA.SetData(2, results.RequiredGates);

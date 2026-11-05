@@ -30,7 +30,10 @@ namespace AirportPlanning.Components.Object_Creation
             pManager.AddTextParameter(
                 "Pool Identities", "ID",
                 "One row per pool: 'Channel' or 'Channel|PoolKey' (e.g. " +
-                "'Counter|DomesticDeparture|Economy'). Use 'Shared' for one facility-wide pool.",
+                "'Counter|DomesticDeparture|Economy'). Use 'Shared' for one facility-wide pool. " +
+                "Bag Drop pools must be keyed 'BagDrop' or 'BagDrop|DHPType|ProfileName' — the " +
+                "key selects a segment of the bag-drop population and is never matched against " +
+                "a passenger's primary check-in channel.",
                 GH_ParamAccess.list);
 
             pManager.AddNumberParameter(
@@ -51,6 +54,16 @@ namespace AirportPlanning.Components.Object_Creation
                 GH_ParamAccess.list);
 
             pManager[3].Optional = true;
+
+            pManager.AddTextParameter(
+                "Facilities", "FAC",
+                "Optional facility tag per row, e.g. 'Security' or 'Emigration'. " +
+                "A tagged row is only used by that facility, so the same identity " +
+                "(for example 'EGate') can carry different values at two facilities. " +
+                "Leave blank to apply to any facility.",
+                GH_ParamAccess.list);
+
+            pManager[4].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -67,11 +80,13 @@ namespace AirportPlanning.Components.Object_Creation
             List<double> nominal = new List<double>();
             List<double> targets = new List<double>();
             List<Interval> domains = new List<Interval>();
+            List<string> facilities = new List<string>();
 
             if (!DA.GetDataList(0, identities)) return;
             DA.GetDataList(1, nominal);
             DA.GetDataList(2, targets);
             DA.GetDataList(3, domains);
+            DA.GetDataList(4, facilities);
 
             if (identities.Count == 0)
                 return;
@@ -79,6 +94,7 @@ namespace AirportPlanning.Components.Object_Creation
             WarnIfMismatched(nominal, identities.Count, "Nominal Resources");
             WarnIfMismatched(targets, identities.Count, "Target Wait");
             WarnIfMismatched(domains, identities.Count, "Resource Domains");
+            WarnIfMismatched(facilities, identities.Count, "Facilities");
 
             List<PoolPlan> plans = new List<PoolPlan>(identities.Count);
 
@@ -91,6 +107,7 @@ namespace AirportPlanning.Components.Object_Creation
 
                 PoolPlan plan = new PoolPlan
                 {
+                    Facility = PickString(facilities, i),
                     PhysicalResources = PickInt(nominal, i),
                     TargetWait95 = PickDouble(targets, i),
                     Range = PickDomain(domains, i)
@@ -146,6 +163,18 @@ namespace AirportPlanning.Components.Object_Creation
 
             int slot = values.Count == 1 ? 0 : Math.Min(index, values.Count - 1);
             return Math.Max(1, (int)Math.Round(values[slot]));
+        }
+
+        private static string PickString(IList<string> values, int index)
+        {
+            if (values == null || values.Count == 0)
+                return null;
+
+            int slot = values.Count == 1 ? 0 : Math.Min(index, values.Count - 1);
+
+            string value = values[slot];
+
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
 
         private static double PickDouble(IList<double> values, int index)

@@ -190,7 +190,8 @@ namespace AirportPlanning.Core.Generation
                 result.TransferDemand = TransferPassengerTagger.ApplySchedule(
                     result.Passengers,
                     schedule,
-                    transferDemand);
+                    transferDemand,
+                    channelAssigner);
 
                 foreach (string transferWarning in result.TransferDemand.Warnings)
                     AddWarning(result, warned, warn, transferWarning);

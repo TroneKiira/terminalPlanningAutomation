@@ -1,0 +1,154 @@
+=====PDF_PAGE 607=====
+Se a | CO 
+IATA 4 Airport Development Reference Manual 
+3.3.4 Terminal Capacity and the Level of Service 
+The concept of Level of Service (LoS), as applied to airport terminal design, was originally developed by 
+Transport Canada in the mid to late 1970s as the prevailing definitions of “capacity” were considered 
+inadequate. In 1981, the Airport Associations Coordinating Council (AACC)-the precursor to ACI and IATA 
+jointly published a study on airport capacity that resulted in the first edition of the Guidelines for Airport 
+Capacity/Demand Management, which contained a tabular presentation of LoS guidelines by airport 
+processing area, based on the Transport Canada concept. This guidance was further updated in 1990 and 
+1996, after which it was incorporated into IATA's ADRM and remained largely unchanged through the 
+9th edition (published in 2004). 
+Over this period, the concept of LoS was applied in various ways for the design of new facilities, the 
+expansion and monitoring of existing facilities, and as a benchmark that determines whether the contractual 
+obligations of airport owners, operators and/or third party service providers are being met. It was also 
+highlighted that the importance of the previous airport LoS guidelines was perceived to be higher in 
+correlation with other key quantitative (e.g., waiting times, process rates) and qualitative (e.g., perceived 
+service quality, information flow, wayfinding, walking distances) characteristics. These alternative key 
+performance indicators are used in the industry, but often not with the same consistency as LoS guidelines. 
+Taking some of these considerations into account, the LoS references were reviewed and refined in a way 
+that incorporated waiting time aspects in addition to the spatial requirements. In this way, it is possible to 
+determine a balanced LoS that neither under provides nor over provides and responds to a realistic design 
+horizon for facility planning. This updated LoS methodology was released in the ADRM 10th edition and is 
+now widely used. 
+Terminal design and LoS should reflect the operating environment as well as the volume of passengers and 
+baggage to be handled. Managing terminal capacity and designing with LoS in mind are key requirements in 
+the development of cost-effective airports. These factors have long-term financial and operational implications 
+for passenger facilities. 
+Planners and decision makers must keep in mind that passengers visit an airport for one primary reason: to 
+catch a flight. Passengers’ expectations and needs should be at the very heart of the planning process. The 
+mark of a successful airport is its natural and unobstructed passenger flow between objectives, easy 
+navigation through the terminal, simplicity and cost-effectiveness. 
+It is important to understand and quantify the LoS currently being provided in order to establish an appropriate 
+new LoS requirement. Existing LoS must be taken into account to ensure that the “stretch” to improve LoS is 
+not as difficult or extreme as to discourage those tasked with making and managing the service 
+improvements. 
+588 EDITION 12 - MAY 2022 
+=====PDF_PAGE 617=====
+we IATA i Airport Development Reference Manual 
+Several factors influence airport terminal Capacity. For processing facilities, capacity is influenced by three 
+main components: 
+* The passenger demand 
+¢ The processing time (i.e., the time it takes to perform a transaction or other process for a particular 
+passenger at a particular resource) 
+These factors will have different values depending on the type of airport, its size and configuration. Passenger 
+characteristics also vary according to the region they come from, the purpose of their travel and their flight 
+destination. For example, a business traveler may travel with fewer bags and may arrive at the airport later 
+than a leisure traveler. These two factors (amount of baggage and arrival time) will affect the space 
+requirements for departure processes. Applying general rules-of-thumb (capacity formulas) for assessing 
+capacity is an accepted method to estimate requirements. These methods are also useful in the preliminary 
+planning phase to establish a rough order of magnitude for various facilities. Detailed design should make use 
+of simulation modeling techniques to refine the space requirements and to assist with detailed LoS analysis. 
+Demand also varies by the year, season, month, week and even by the time of day. Defining demand for the 
+purpose of planning/designing airport subsystems is a complex exercise. It not only involves estimating the 
+number of passengers who will need to complete a given process, but it must also address interdependencies 
+between subsystems and how they affect the flow of passengers across the airport terminal facilities as a 
+whole. See 2.2.10 Peak Period Forecasts for more information. 
+3.3.4.6 Level of Service Concept 
+The concept of Level of Service (LoS) is an aggregated framework for the design and expansion of facilities 
+as well as for the monitoring of existing facilities. For processing facilities, both queueing time and space 
+requirements must be considered together to provide a balanced LoS. For holding and circulation facilities, 
+queueing time is not applicable and can be replaced by other service considerations, such as seat ratios. The 
+general objective is to allow for a realistic design horizon for passenger facilities without over or 
+underproviding. 
+LoS is used to help determine facility requirements for a given design demand. Plans developed for a forecast 
+busy hour will provide facilities that operate according to an optimum LoS aligned to an agreed future 
+throughput. Until the airport reaches that forecast level of activity, the facilities will function at a higher LoS, 
+falling in the Over-Design. Furthermore, because demand varies over time, the LoS will also vary. Planners 
+should, therefore, consider targeting an optimum LoS in the knowledge that, during the busiest/peak traffic 
+periods, the optimum LoS may not be achieved. Balancing investment decisions with LoS is a complex 
+management and policy decision. 
+598 EDITION 12 - MAY 2022 
+=====PDF_PAGE 618=====
+a 
+Soa z 
+IATA Passenger Terminal 
+The LoS framework is designed to reflect the dynamic nature of terminal operations, traffic demand and actual 
+throughput capacity. It is based on three LoS parameters defined as follows: 
+Exhibit 3.3.4.6: Levels of Service Parameters 
+Over-Design Excessive or empty space. Overprovision of resources. 
+Optimum Sufficient space to accommodate the Acceptable queueing times. 
+necessary functions in a comfortable 
+environment. 
+Sub-Optimum Crowded and uncomfortable. Unacceptable queueing times. 
+Source: IATA 
+Facilities designed for a planning horizon that will be substantially busier than currently will operate at a higher 
+LoS in the immediate/short term. Therefore, the interpretation of the above table must take into account the 
+planning horizon and the time at which a LoS evaluation is being conducted. When assessing the current LoS 
+situation of facilities planned for a future traffic throughput falling in the Over-Design category could also be 
+interpreted as having spare capacity. 
+3.3.4.6.1. Space and Time Variables for Level of Service Concepts 
+When planning/designing for processing facilities and corresponding queuing areas, two important variables 
+jointly define the LoS: 
+*® Queuing space; and 
+* Queueing time 
+The Space-Time concept is used in Exhibit 3.3.4.6.1a (below) to define the prevailing LoS during a capacity 
+assessment exercise for processing facilities and corresponding waiting areas. The space axis defines the 
+amount of space available per occupant, while the time axis denotes the maximum passenger queuing time. 
+Both axes are required to define the resulting LoS of the analyzed terminal processing system. 
+EDITION 12 - MAY 2022 599 
+=====PDF_PAGE 622=====
+& TATA. ntl Passenger Terminal 
+3.3.4.7. Level of Service Guidelines 
+Exhibit 3.3.4.7 provides the LoS guidelines for each airport terminal facility/subsystem. The table provides 
+guidelines to be used when undertaking capacity and LoS analyses. Guidelines have been supplemented to 
+include facilities involving self-service processing and customs control. 
+The LoS guidelines have been adjusted to better reflect the current global aviation market. It is recognized, 
+however, that different regions, countries and markets require adjustments to the airport environment to better 
+equate with their service needs. The revised LoS benchmarks now include a range of values for space and 
+time to better enable an airport to tailor its service level to the market and region it serves. 
+The table below summarizes the main processing and holding facilities common to almost all airports globally. 
+In some jurisdictions, other processes may be required (i.e., health checks, landside security). Careful 
+consultation between airport authorities, planners and the users of the airport should be established to define 
+the applicable LoS standards for those facilities. 
+EDITION 12 - MAY 2022 603 
+=====PDF_PAGE 623=====
+x lil ye 
+IATA Airport Development Reference Manual 
+Impact of COVID-19 on the Level of Service Guidelines 
+See 1.8 COVID19 Green Pages for additional information 
+From the very early stages of the pandemic, one of the key protective measures that have been implemented 
+across almost every country is a requirement to maintain a physical distance that reduces the risk of 
+transmission. Physical distancing is an effective measure to limit transmission of SARS-CoV-2 and should be 
+part of a comprehensive package of measures to limit the spread of COVID-19. 
+However, one of the key challenges of the pandemic has been the lack of consistent application of the health￾related measures globally. In particular, where requirements have been applied different recommendations in 
+terms of physical distancing have been proposed ranging between 1 and 2 meters. 
+In an attempt to propose a harmonized approach to physical distancing both the WHO and ICAO established 
+a recommendation to keep a distance of at least 1m which, in combination with other health related 
+regulations (use of face masks, vaccination certificates, optimizing passenger flows etc), should provide the 
+means for a safe and healthy journey. 
+While there are different interpretations on how to measure the physical distance and how to apply it to 
+queuing and holding areas of terminal buildings, it appears to be clear that the objective is to avoid potential 
+droplets/aerosols from the nose and mouth of one passenger teaching the passengers standing immediately 
+next to them. Therefore, it is fair to make the interpretation that a direct linear separation between two 
+Passengers should suffice in order to comply with a physical distancing requirement of 1 meter. 
+With all of this in mind, the current Level of Service Guidelines are perfectly able to accommodate those 
+minimum requirements without any changes. Only minor adjustments to the layouts of queueing or seating 
+areas should be required to accommodate the minimum requirements set by the WHO and ICAO. 
+It should also be noted that while we recognize that regulatory mandates vary across different countries and 
+regions imposing more stringent separation requirements than the minimum, it is IATA's view that these 
+measures are likely to be temporary and will be lifted once the vaccination rates are high and consistent 
+globally. This is also consistent with what has been observed in those countries with high vaccination rates 
+and low number of infections where physical distancing requirements have been lifted in other public 
+buildings, modes of transport and interior spaces. 
+In addition, the Level of Service guidelines also address queueing times and seating availability. Both of these 
+areas have also been impacted by some of the health-related restrictions (see Impact of COVID-19 on 
+Terminal Capacity). While it is recognized that during times with additional processes or extra processing 
+times the queueing objective defined in the LOS framework may not be achievable, the temporary nature of 
+those restrictions should not have an impact on queueing requirements defined in the Level of Service 
+guidelines. Similarly, current seating design makes it impossible to maintain the separation distances, but it 
+should also be seen as temporary measure. Advancements in self check in and security screening will 
+increase queuing efficiency. Other technologies exist or are being developed to flatten peaks using virtual 
+queuing.” 
+604 EDITION 12 - MAY 2022 

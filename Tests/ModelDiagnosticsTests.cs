@@ -21,6 +21,7 @@ namespace AirportPlanning.Tests
             RunDiagnosticsMissingHistory();
             RunDiagnosticsTransferShortfall();
             RunDiagnosticsTransferServiceRules();
+            RunDiagnosticsTransferLateRequired();
             RunDiagnosticsVerification();
             RunDiagnosticsGatesAndSizing();
             RunDiagnosticsChannelCoverage();
@@ -267,6 +268,54 @@ namespace AirportPlanning.Tests
                 "TRF-SVC-002 reports the served-but-bypassed service");
         }
 
+        private static void RunDiagnosticsTransferLateRequired()
+        {
+            // A rule-required transfer that reaches check-in after the
+            // flight's last-admission time is not served by the facility and
+            // cannot carry CheckIn history. The audit applies the same
+            // late-exclusion policy as the Check-In stage and names the
+            // record instead of failing it.
+            Passenger lateRequired = DiagTransferPassenger(
+                4002, DHPType.DomesticDeparture, PassengerType.Domestic,
+                TransferScenario.DomesticToDomestic, DiagRules(checkIn: true), 600.0);
+            lateRequired.IsLateForCheckIn = true;
+
+            DiagnosticsReport report = DiagnosticsCalculator.Calculate(new DiagnosticsInput
+            {
+                Passengers = new List<Passenger> { lateRequired.Clone() },
+                Services = new List<DiagnosticsServiceInput>
+                {
+                    new DiagnosticsServiceInput
+                    {
+                        Kind = DiagnosticsServiceKind.CheckIn,
+                        Label = "Check-In",
+                        Queue = DiagQueue(new List<Passenger>(), new List<Passenger>(), 0)
+                    }
+                }
+            });
+
+            DiagnosticsTransferServiceRow row = report.TransferServices
+                .Single(r => r.Service == "Check-in");
+
+            Check(row.Required == 1,
+                "The late transfer still counts as rule-required");
+            Check(row.Processed == 0 && row.MissingRequired == 0,
+                $"The late required transfer is not counted as missing ({row.Processed}/{row.MissingRequired})");
+            Check(row.Status == DiagnosticStatus.Pass,
+                "A late required transfer does not fail the service row");
+            Check(row.Notes != null && row.Notes.Any(n => n.Contains("late for check-in") ||
+                    n.Contains("last-admission")),
+                "The row note names the late-exclusion");
+            Check(!report.Findings.Any(f => f.Code == "TRF-SVC-001"),
+                "TRF-SVC-001 does not fire for a late required transfer");
+            Check(report.PassengerIssues.Any(p => p.PassengerId == 4002 &&
+                    p.Code == "PAX-TRF-002" && p.Severity == DiagnosticSeverity.Info),
+                "PAX-TRF-002 names the late required transfer as an info issue");
+            Check(report.Services.All(s => s.Kind != DiagnosticsServiceKind.CheckIn ||
+                    s.Status != DiagnosticStatus.Fail),
+                "The Check-In stage does not fail for a late passenger");
+        }
+
         // -------------------------------------------------------------
         // Verification, gates and sizing
         // -------------------------------------------------------------
@@ -350,6 +399,10 @@ namespace AirportPlanning.Tests
                 "GATE-004 reports the stand bucket mismatch");
             Check(report.Findings.Any(f => f.Code == "GATE-003"),
                 "GATE-003 reports the lounge area mismatch");
+            Check(report.GateRows.Any(r =>
+                    r.Label.StartsWith("Bus gates", StringComparison.Ordinal) &&
+                    r.Status == DiagnosticStatus.Fail),
+                "PHP mode: a bus-gate group mismatch is still flagged");
 
             DiagnosticsSizingRow sizing = report.SizingRows.Single();
 
@@ -359,6 +412,77 @@ namespace AirportPlanning.Tests
                 "SIZE-001 explains the missing processors");
             Check(report.Findings.Any(f => f.Code == "SIZE-002"),
                 "SIZE-002 reports gross area below net area");
+
+            // Schedule mode: the non-contact stands are remote stands; bus
+            // gates are derived facility-wide from the ratio.
+            GateSizingResult scheduleGates = new GateSizingResult
+            {
+                ScheduleMode = true,
+                ActiveTotal = 4,
+                ContactTotal = 0,
+                BusTotal = 2,
+                RemoteActive = 4,
+                MaxStands = 4,
+                NetRemote = 4,
+                Buckets = new List<GateBucketStands>
+                {
+                    new GateBucketStands { Bucket = "Domestic", Active = 2, Contact = 0, Bus = 2, Remote = 2 },
+                    new GateBucketStands { Bucket = "Swing", Active = 2, Contact = 0, Bus = 2, Remote = 2 }
+                },
+                Lounges = new List<GateLounge>(),
+                NetArea = 0
+            };
+
+            DiagnosticsReport scheduleReport = DiagnosticsCalculator.Calculate(new DiagnosticsInput
+            {
+                GateResults = new List<GateSizingResult> { scheduleGates }
+            });
+
+            Check(scheduleReport.GateRows.Any(r =>
+                    r.Label.StartsWith("Remote stands", StringComparison.Ordinal) &&
+                    r.Status == DiagnosticStatus.Pass),
+                "Schedule mode: remote stands reconcile across the groups");
+            Check(!scheduleReport.GateRows.Any(r =>
+                    r.Label.StartsWith("Bus gates", StringComparison.Ordinal)),
+                "Schedule mode: bus gates are a facility total and are not checked per group");
+            Check(!scheduleReport.GateRows.Any(r =>
+                    r.Label.StartsWith("Bus stands", StringComparison.Ordinal)),
+                "The old bus-stand row is replaced by the bus-gates row");
+            Check(!scheduleReport.Findings.Any(f => f.Code == "GATE-005"),
+                "Schedule mode: no false gate-count failure");
+
+            // PHP mode: every non-contact stand is itself a bus gate.
+            GateSizingResult phpGates = new GateSizingResult
+            {
+                ActiveTotal = 4,
+                ContactTotal = 2,
+                BusTotal = 2,
+                RemoteActive = 4,
+                MaxStands = 5,
+                NetRemote = 3,
+                Buckets = new List<GateBucketStands>
+                {
+                    new GateBucketStands { Bucket = "Domestic", Active = 2, Contact = 1, Bus = 1, Remote = 1 },
+                    new GateBucketStands { Bucket = "International", Active = 2, Contact = 1, Bus = 1, Remote = 1 }
+                },
+                Lounges = new List<GateLounge>(),
+                NetArea = 0
+            };
+
+            DiagnosticsReport phpReport = DiagnosticsCalculator.Calculate(new DiagnosticsInput
+            {
+                GateResults = new List<GateSizingResult> { phpGates }
+            });
+
+            Check(phpReport.GateRows.Any(r =>
+                    r.Label.StartsWith("Bus gates", StringComparison.Ordinal) &&
+                    r.Status == DiagnosticStatus.Pass),
+                "PHP mode: bus gates reconcile across the groups");
+            Check(!phpReport.GateRows.Any(r =>
+                    r.Label.StartsWith("Remote stands", StringComparison.Ordinal)),
+                "PHP mode: remote stands are a facility-derived total without a group check");
+            Check(!phpReport.Findings.Any(f => f.Code == "GATE-005"),
+                "PHP mode: no false gate-count failure");
         }
 
         // -------------------------------------------------------------
@@ -414,18 +538,11 @@ namespace AirportPlanning.Tests
         {
             List<Passenger> passengers = DiagOriginPassengers(3);
 
-            // All three need bag drop (online + checked bag), but the result's
-            // only pool serves the BagDrop channel.
-            for (int i = 0; i < passengers.Count; i++)
-            {
-                passengers[i].UsesOnlineCheckIn = true;
-                passengers[i].HasCheckedBag = true;
-                passengers[i].Channel = i == 0 ? "BagDrop" : "Counter";
-            }
-
+            // All three are Counter passengers. The result's only pool serves
+            // Counter, but two expected records were not processed.
             List<Passenger> processed = new List<Passenger>
             {
-                DiagWithHistory(passengers[0], FacilityType.BagDrop)
+                DiagWithHistory(passengers[0], FacilityType.CheckIn)
             };
 
             QueueResults queue = new QueueResults
@@ -442,7 +559,7 @@ namespace AirportPlanning.Tests
                 {
                     new ProcessorPoolInfo
                     {
-                        Name = "BagDrop",
+                        Name = "Kiosk",
                         ResourceCount = 1,
                         PhysicalResourceCount = 1,
                         FirstResourceIndex = 0,
@@ -453,8 +570,8 @@ namespace AirportPlanning.Tests
                 {
                     new QueuePoolResult
                     {
-                        Name = "BagDrop",
-                        Channel = "BagDrop",
+                        Name = "Kiosk",
+                        Channel = "Kiosk",
                         IsShared = false,
                         PhysicalResources = 1,
                         ActiveResources = 1,
@@ -470,8 +587,8 @@ namespace AirportPlanning.Tests
                 {
                     new DiagnosticsServiceInput
                     {
-                        Kind = DiagnosticsServiceKind.BagDrop,
-                        Label = "Bag Drop",
+                        Kind = DiagnosticsServiceKind.CheckIn,
+                        Label = "Check-In",
                         Queue = queue
                     }
                 }
@@ -481,7 +598,7 @@ namespace AirportPlanning.Tests
 
             Check(row.MissingExpected == 2,
                 $"Two bag-drop records are outside the planned pool ({row.MissingExpected})");
-            Check(report.Findings.Any(f => f.Code == "SVC-011" && f.ServiceLabel == "Bag Drop"),
+            Check(report.Findings.Any(f => f.Code == "SVC-011" && f.ServiceLabel == "Check-In"),
                 "SVC-011 reports expected records outside every planned pool");
             Check(report.Findings
                     .Where(f => f.Code == "SVC-011")
@@ -551,40 +668,31 @@ namespace AirportPlanning.Tests
         }
 
         /// <summary>
-        /// Bag Drop is a channel inside Check-In. Its history is written on
-        /// Check-In's processed clones, so the Bag Drop row must find those
-        /// visits even when the wired population is the original generated list
-        /// and no separate Bag Drop result exists.
+        /// Bag Drop is its own stage. Counter passengers have their bag
+        /// accepted at check-in, while Web and Kiosk bag carriers use Bag Drop.
+        /// Each stage owns its own service row and history.
         /// </summary>
         private static void RunDiagnosticsIntegratedBagDrop()
         {
-            List<Passenger> passengers = DiagOriginPassengers(4);
+            List<Passenger> passengers = DiagOriginPassengers(5);
 
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < 3; i++)
             {
-                passengers[i].Channel = "BagDrop";
+                passengers[i].Channel = "Web";
                 passengers[i].UsesOnlineCheckIn = true;
                 passengers[i].HasCheckedBag = true;
             }
 
-            List<Passenger> processed = new List<Passenger>();
-
-            foreach (Passenger passenger in passengers)
+            List<Passenger> checkInProcessed = new List<Passenger>
             {
-                Passenger clone = DiagWithHistory(passenger, FacilityType.CheckIn);
+                DiagWithHistory(passengers[3], FacilityType.CheckIn),
+                DiagWithHistory(passengers[4], FacilityType.CheckIn)
+            };
 
-                if (passenger.Channel == "BagDrop" && passenger.HasCheckedBag)
-                    clone.History[FacilityType.BagDrop] = new FacilityRecord
-                    {
-                        ArrivalTime = clone.ArrivalTime,
-                        StartServiceTime = clone.ArrivalTime,
-                        EndServiceTime = clone.ArrivalTime + 1.0,
-                        WaitTime = 0.0,
-                        AssignedResource = 0
-                    };
+            List<Passenger> bagDropProcessed = new List<Passenger>();
 
-                processed.Add(clone);
-            }
+            for (int i = 0; i < 3; i++)
+                bagDropProcessed.Add(DiagWithHistory(passengers[i], FacilityType.BagDrop));
 
             DiagnosticsReport report = DiagnosticsCalculator.Calculate(new DiagnosticsInput
             {
@@ -595,12 +703,13 @@ namespace AirportPlanning.Tests
                     {
                         Kind = DiagnosticsServiceKind.CheckIn,
                         Label = "Check-In",
-                        Queue = DiagQueue(passengers, processed, 2)
+                        Queue = DiagQueue(passengers, checkInProcessed, 2)
                     },
                     new DiagnosticsServiceInput
                     {
                         Kind = DiagnosticsServiceKind.BagDrop,
-                        Label = "Bag Drop"
+                        Label = "Bag Drop",
+                        Queue = DiagQueue(passengers, bagDropProcessed, 3)
                     }
                 }
             });
@@ -610,18 +719,74 @@ namespace AirportPlanning.Tests
             DiagnosticsServiceRow bagDrop = report.Services
                 .Single(s => s.Kind == DiagnosticsServiceKind.BagDrop);
 
+            Check(report.Services.Count == 2,
+                "Check-In and Bag Drop are reported as two separate service rows");
+            Check(checkIn.Expected == 2 && checkIn.Processed == 2,
+                $"Check-In serves Counter passengers only ({checkIn.Expected}/{checkIn.Processed})");
+            Check(checkIn.BagDrop == null,
+                "The Check-In row no longer carries a Bag Drop subset");
             Check(checkIn.Status == DiagnosticStatus.Pass,
-                "Check-In stays PASS with the integrated BagDrop channel");
-            Check(bagDrop.Expected == 2 && bagDrop.Processed == 2,
-                $"Bag Drop reads history from Check-In's clones ({bagDrop.Expected}/{bagDrop.Processed})");
-            Check(bagDrop.Status == DiagnosticStatus.Pass,
-                "Bag Drop is PASS when every expected visit carries history");
-            Check(bagDrop.Notes.Any(n => n.Contains("channel inside Check-In")),
-                "The Bag Drop row explains that it is served inside Check-In");
+                "Check-In passes when its Counter records are served");
+            Check(bagDrop.Expected == 3 && bagDrop.Processed == 3,
+                $"Bag Drop serves the Web bag carriers ({bagDrop.Expected}/{bagDrop.Processed})");
+            Check(bagDrop.BagDrop != null &&
+                  bagDrop.BagDrop.Expected == 3 &&
+                  bagDrop.BagDrop.Recorded == 3 &&
+                  bagDrop.BagDrop.Missing == 0,
+                "The Bag Drop row reports 3 expected, 3 recorded and no missing visit");
+            Check(bagDrop.BagDrop.Channels.Any(c => c.Label == "Web" && c.Expected == 3),
+                "The Bag Drop breakdown names the Web primary channel");
+            Check(!report.Findings.Any(f => f.Code == "SVC-013" || f.Code == "SVC-014"),
+                "Routing findings are no longer raised because Bag Drop is not routed");
+            Check(bagDrop.PassengerMix.Any(m => m.Label == "Online + bag" && m.Expected == 3),
+                "The Bag Drop mix reports online passengers with a checked bag");
+            Check(checkIn.PassengerMix.Any(m => m.Label == "Offline + bag" && m.Expected == 2),
+                "The Check-In mix reports offline passengers with a checked bag");
+            Check(checkIn.Exceptions.Count == 0,
+                "No late or transfer-rule exception is invented for the fixture");
 
-            List<Passenger> incomplete = processed
+            // Bag Drop can be audited from history alone, without a queue.
+            DiagnosticsReport historySource = DiagnosticsCalculator.Calculate(
+                new DiagnosticsInput
+                {
+                    Passengers = passengers,
+                    Services = new List<DiagnosticsServiceInput>
+                    {
+                        new DiagnosticsServiceInput
+                        {
+                            Kind = DiagnosticsServiceKind.CheckIn,
+                            Label = "Check-In",
+                            Queue = DiagQueue(passengers, checkInProcessed, 2)
+                        },
+                        new DiagnosticsServiceInput
+                        {
+                            Kind = DiagnosticsServiceKind.BagDrop,
+                            Label = "Bag Drop",
+                            Passengers = bagDropProcessed
+                        }
+                    }
+                });
+
+            DiagnosticsServiceRow historyBagDrop = historySource.Services
+                .Single(s => s.Kind == DiagnosticsServiceKind.BagDrop);
+
+            Check(historyBagDrop.Processed == 3 &&
+                  historyBagDrop.BagDrop.Recorded == 3,
+                "Bag Drop history alone proves the standalone visits");
+            Check(historyBagDrop.Notes.Any(n =>
+                    n.Contains("history", StringComparison.OrdinalIgnoreCase)),
+                "The history-derived row explains its source");
+
+            // A processed Bag Drop record without Bag Drop history is missing.
+            List<Passenger> brokenBagDrop = bagDropProcessed
                 .Where(p => p.Id != passengers[1].Id)
                 .ToList();
+
+            Passenger servedClone = bagDropProcessed
+                .Single(p => p.Id == passengers[1].Id)
+                .Clone();
+            servedClone.History.Remove(FacilityType.BagDrop);
+            brokenBagDrop.Add(servedClone);
 
             DiagnosticsReport broken = DiagnosticsCalculator.Calculate(new DiagnosticsInput
             {
@@ -630,28 +795,33 @@ namespace AirportPlanning.Tests
                 {
                     new DiagnosticsServiceInput
                     {
-                        Kind = DiagnosticsServiceKind.CheckIn,
-                        Label = "Check-In",
-                        Queue = DiagQueue(passengers, incomplete, 2)
-                    },
-                    new DiagnosticsServiceInput
-                    {
                         Kind = DiagnosticsServiceKind.BagDrop,
-                        Label = "Bag Drop"
+                        Label = "Bag Drop",
+                        Queue = DiagQueue(passengers, brokenBagDrop, 3)
                     }
                 }
             });
 
-            DiagnosticsServiceRow brokenBagDrop = broken.Services
+            DiagnosticsServiceRow brokenBagDropRow = broken.Services
                 .Single(s => s.Kind == DiagnosticsServiceKind.BagDrop);
 
-            Check(brokenBagDrop.Expected == 2 && brokenBagDrop.MissingExpected == 1,
-                $"A missing BagDrop history is still reported ({brokenBagDrop.Expected}/{brokenBagDrop.MissingExpected})");
-            Check(brokenBagDrop.Status == DiagnosticStatus.Fail,
-                "A missing BagDrop history still fails the Bag Drop row");
-            Check(broken.Findings.Any(f => f.Code == "SVC-001" &&
+            Check(brokenBagDropRow.Expected == 3 && brokenBagDropRow.Processed == 3,
+                "The broken fixture still serves every Bag Drop record");
+            Check(brokenBagDropRow.BagDrop.Expected == 3 &&
+                  brokenBagDropRow.BagDrop.Missing == 1,
+                $"A record without Bag Drop history is missing ({brokenBagDropRow.BagDrop.Expected}/{brokenBagDropRow.BagDrop.Missing})");
+            Check(brokenBagDropRow.BagDrop.MissingMix.Any(m =>
+                    m.Label == "Online + bag" && m.Count == 1),
+                "The Bag Drop mix explains the missing visit");
+            Check(brokenBagDropRow.Status == DiagnosticStatus.Fail,
+                "A missing Bag Drop history fails the Bag Drop row");
+            Check(broken.Findings.Any(f => f.Code == "SVC-014" &&
                     f.ServiceLabel == "Bag Drop"),
-                "SVC-001 names the missing Bag Drop record");
+                "SVC-014 names the processed Bag Drop record without history");
+            Check(broken.PassengerIssues.Any(p =>
+                    p.PassengerId == passengers[1].Id &&
+                    p.Code == "PAX-SVC-014"),
+                "PAX-SVC-014 keeps the missing Bag Drop passenger ID");
         }
 
         // -------------------------------------------------------------

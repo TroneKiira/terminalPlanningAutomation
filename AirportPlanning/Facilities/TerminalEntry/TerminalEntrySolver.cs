@@ -121,7 +121,7 @@ namespace AirportPlanning.Facilities.TerminalEntry
             AdvancePassengers(solve.Processed);
             AdvancePastEntryWalk(solve.Processed);
 
-            PoolPlanResolver.WarnOnEmptyPools(plans, solve.PoolResults, Warnings.Add);
+            PoolPlanResolver.WarnOnEmptyPools(plans, solve.PoolResults, workingPassengers, Warnings.Add);
             if (!plans.Any(p => p.IsSharedPool))
                 PoolPlanResolver.WarnOnUncoveredChannels(plans, EntryRoutes, Warnings.Add);
 
@@ -153,7 +153,7 @@ namespace AirportPlanning.Facilities.TerminalEntry
                 new ResourceSearchRange(1, ChannelResourcePlanResolver.DefaultMaxResources);
 
             List<ChannelResourcePlan> plans = PoolPlanResolver.Resolve(
-                input.PoolPlans, domain, Warnings.Add);
+                input.PoolPlans, domain, Warnings.Add, FacilityScopes.TerminalEntry);
 
             if (plans != null)
                 return plans;
@@ -184,7 +184,9 @@ namespace AirportPlanning.Facilities.TerminalEntry
         {
             IServiceTimeProvider provider = ResolveServiceTimeProvider(
                 input.ServiceTimeProvider,
-                input.ServiceProfile);
+                input.ServiceProfile,
+                FacilityScopes.TerminalEntry,
+                Warnings.Add);
 
             if (provider != null)
                 return provider;
@@ -313,6 +315,10 @@ namespace AirportPlanning.Facilities.TerminalEntry
 
         private static void AdvancePastEntryWalk(IEnumerable<Passenger> passengers)
         {
+            // The walk is DATA, not hidden time: the chain stays strictly
+            // sequential (a stage starts when the previous one ends), and the
+            // walk duration stays on the passenger (WalkingTime /
+            // TerminalEntryWalkMinutes) so Passenger Details can show it.
             foreach (Passenger passenger in passengers)
             {
                 if (passenger == null)
@@ -324,7 +330,9 @@ namespace AirportPlanning.Facilities.TerminalEntry
                         ? Math.Max(0.0, passenger.TerminalEntryWalkMinutes)
                         : 0.0;
 
-                passenger.ArrivalTime = passenger.EndServiceTime + walkMinutes;
+                passenger.WalkingTime = walkMinutes;
+
+                passenger.ArrivalTime = passenger.EndServiceTime;
                 passenger.QueueArrivalTime = passenger.ArrivalTime;
 
                 if (!double.IsNaN(passenger.CheckInOpenTime))

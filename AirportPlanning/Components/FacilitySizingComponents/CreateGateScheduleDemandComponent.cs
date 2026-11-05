@@ -91,10 +91,11 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             List<string> peaks = (demand.Codes ?? new List<GateScheduleCodeDemand>())
                 .Select(c => string.Format(
                     CultureInfo.InvariantCulture,
-                    "{0}: domestic {1}, international {2}, combined {3}, mixed {4}, swing {5}, dedicated {6}/{7}{8}",
+                    "{0}: domestic {1}, international {2}, sector sum {3}, combined {4}, mixed {5}, swing {6}, dedicated {7}/{8}{9}",
                     c.Code,
                     c.DomesticPeak,
                     c.InternationalPeak,
+                    c.SectorSum,
                     c.CombinedPeak,
                     c.MixedPeak,
                     c.Swing,

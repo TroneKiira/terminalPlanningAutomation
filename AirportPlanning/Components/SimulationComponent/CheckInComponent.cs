@@ -41,7 +41,7 @@ namespace AirportPlanning.Components.SimulationComponent
 
             pManager.AddNumberParameter("Random Seed", "S", "Random number seed.", GH_ParamAccess.item, 1);
 
-            pManager.AddTextParameter("Channels", "CH", "Optional physical-channel allowlist. If empty and Channel Routing is wired, channels are taken directly from CHR and virtual routes such as Web are skipped automatically. BagDrop is treated as a regular physical channel alongside Counter.", GH_ParamAccess.list);
+            pManager.AddTextParameter("Channels", "CH", "Optional physical-channel allowlist. If empty and Channel Routing is wired, channels are taken directly from CHR. Web is virtual and has no queue; Bag Drop is a separate facility stage, so neither can be a Check-In pool.", GH_ParamAccess.list);
             pManager[7].Optional = true;
 
             pManager.AddGenericParameter("Service Profiles", "SP-MAP", "Optional per-passenger service-time map (Service Time Map). Supersedes Service Profile when wired. Keys may use 'Channel|DHPType|ProfileName' (same as a Pool Plan identity), a profile name, a channel name, or 'profile|channel'.", GH_ParamAccess.item);

@@ -1,0 +1,142 @@
+=====PDF_PAGE 596=====
+=a ml . 
+IATA * Passenger Terminal 
+Concourses spanning long lengths 
+from the central terminal area may 
+result in long walking distances if not 
+limited in expansion. 
+Walking Distances e Acceptable walking distances for 
+most passengers to/from their gate 
+if concourse length is limited or 
+with use of moving walkways, etc. 
+Orientation ‘ A e Simple signage and easy 
+wayfinding 
+iranistet e Permits short Minimum Connecting 
+Time within the main 
+concourse/terminal area 
+Amenities a F 
+e Amenities can be located in close 
+proximity to the main processing 
+area and departure lounges 
+e Food & beverage and retail 
+concessions can be centrally 
+located in the main processing 
+hub, increasing potential traffic 
+Source: HOK 
+3.3.3.4.2 Pier/Finger Terminal Concept 
+The pier/finger terminal concept consists of a centralized passenger terminal for processing passengers and 
+linked piers (airside concourses) in single or multiple pier configurations. In large examples of this type, the 
+main processor may consist of several semi-centralized areas such as passenger processing or baggage 
+claim, sharing a common departures/arrivals forecourt. The geometry of pier/finger concourses vary and 
+configurations can accommodate aircraft parking positions on one or both sides of the concourse. 
+All originating and departing passengers and baggage flow through the central processing area and circulate 
+to and from the departure lounges and aircraft parking positions located along the piers. In large terminals of 
+this type, secondary baggage sorting areas may be located in the piers to facilitate processing and connection 
+times. 
+Subsets of this configuration include X-Type, Y-Type and H-Type. The possible advantages and 
+disadvantages of the pier/finger passenger terminal design concept are summarized in the following table. 
+EDITION 12 - MAY 2022 577 
+=====PDF_PAGE 597=====
+an 
+Ss = IATA iit Airport Development Reference Manual 
+Exhibit 3.3.3.4.2: Pier/Finger Pros and Cons Summary 
+Airport/Airline Operations 
+Landside 
+Centralized terminal 
+simplifies landside access 
+Centralized terminal may experience 
+forecourt congestion during peak hours. 
+Depending on demand, multiple traffic 
+and parking lanes and multiple passenger 
+islands may be required 
+Moderate initial costs 
+Airside Aircraft parking on both ° Airside areas between adjacent piers can 
+sides of the pier/concourse be congested or impacted by limited 
+increases efficiency of space access and aircraft maneuvering area 
+e Multiple pier configurations can result in 
+lengthy taxi routes and increased taxi 
+times 
+e Long apron cul-de-sacs between 
+concourses can increase congestion and 
+impact push-back times 
+Terminal Can accommodate many * Requirements to segregate arriving and 
+Passengers under one roof departing passengers may require 
+Centralizes . ean secondary circulation routes within piers, airline and or multiple levels 
+government inspection 
+service operations e Extending piers can increase walking 
+oe A distances and negatively impact 
+oo signage and connection times 
+ao . e Expansion of hub operations to multiple social seen ae piers can result in increased airline 
+different sectors without operating complexity 
+terminal-wide impacts 
+Piers can be extended 
+incrementally with little 
+impact to operations and at 
+relatively low cost. 
+Financial 
+Initial Capital 
+Operating/Maintenance 
+Low operational and 
+maintenance costs 
+Passenger Convenience 
+Processing 
+Simplified passenger 
+processing. 
+Walking Distances 
+Moderate walking distances 
+from departure forecourt to 
+gate and from arrival gate to 
+forecourt 
+Adding or extending piers increases 
+complexity and walking distances and 
+may trigger a requirement for moving 
+walkways 
+Orientation 
+Pier configuration simplifies 
+signage requirements 
+578 EDITION 12 - MAY 2022 
+=====PDF_PAGE 600=====
+wie 
+IATA i Passenger Terminal 
+Passenger Convenience 
+Processing Normally provides for the 
+centralization of airline and 
+government inspection 
+services staff 
+Early processing (check-in) and close-out 
+times 
+Walking Distances Short walking distances 
+(to/from APM) 
+Orientation Permits a relatively simple 
+FIDS 
+Multiple level changes required 
+Passengers must learn the APM system 
+Transfer Permits short Minimum 
+Connecting Time within 
+individual satellites 
+Minimum Connecting Time between 
+flights in different satellites are increased 
+due to distance and the need to locate, 
+wait for and use the APM system, 
+Passengers can be required to be 
+processed through the central processor, 
+which increases connection time 
+Amenities Permits centralization of 
+major concession outlets (i.e. 
+food & beverage, duty-free, 
+etc.) 
+Requires secondary concession outlets 
+in satellites 
+Commercial revenue can be impacted by 
+the perceived passenger journey time to 
+satellites where outlets are not in the 
+same volume 
+Source: HOK 
+3.3.3.5 Terminal Layouts 
+3.3.3.5.1 Centralized vs. Decentralized Facilities 
+A centralized facility is one that provides for processing of all passengers, and baggage where applicable, 
+within the same facility, regardless of airline. Centralized facilities inherently provide many benefits to the 
+operator, airlines and passengers, minimizing confusion and putting all service offerings together in one place. 
+New airlines entering the airport market for the first time can be collocated with their alliance partners without 
+the need to displace or move other airlines to other terminal facilities. 
+EDITION 12 - MAY 2022 581 

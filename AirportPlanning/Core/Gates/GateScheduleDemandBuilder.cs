@@ -226,24 +226,8 @@ namespace AirportPlanning.Core.Gates
                 }
             }
 
-            int impliedSwing = domesticPeak + internationalPeak - combinedPeak;
-            int dedicatedDomestic;
-            int dedicatedInternational;
-            int swing;
-            bool mixedFloor = impliedSwing < mixedPeak;
-
-            if (!mixedFloor)
-            {
-                swing = Math.Max(0, impliedSwing);
-                dedicatedDomestic = Math.Max(0, combinedPeak - internationalPeak);
-                dedicatedInternational = Math.Max(0, combinedPeak - domesticPeak);
-            }
-            else
-            {
-                dedicatedDomestic = Math.Max(0, domesticPeak - mixedPeak);
-                dedicatedInternational = Math.Max(0, internationalPeak - mixedPeak);
-                swing = Math.Max(0, combinedPeak - dedicatedDomestic - dedicatedInternational);
-            }
+            SectorSharing.Result sharing = SectorSharing.Calculate(
+                domesticPeak, internationalPeak, combinedPeak, mixedPeak);
 
             return new GateScheduleCodeDemand
             {
@@ -253,10 +237,12 @@ namespace AirportPlanning.Core.Gates
                 CombinedPeak = combinedPeak,
                 MixedPeak = mixedPeak,
                 PeakSlot = peakSlot,
-                Swing = swing,
-                DedicatedDomestic = dedicatedDomestic,
-                DedicatedInternational = dedicatedInternational,
-                MixedFloor = mixedFloor
+                Swing = sharing.Swing,
+                DedicatedDomestic = sharing.DedicatedDomestic,
+                DedicatedInternational = sharing.DedicatedInternational,
+                MixedFloor = sharing.MixedFloor,
+                SectorSum = sharing.SectorSum,
+                ConcurrentFloorMet = sharing.ConcurrentFloorMet
             };
         }
 

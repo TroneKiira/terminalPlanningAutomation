@@ -217,15 +217,28 @@ namespace AirportPlanning.Components.FacilitySizingComponents
             {
                 foreach (GateCodeStands code in bucket.Codes)
                 {
-                    lines.Add(string.Format(
-                        CultureInfo.InvariantCulture,
-                        "{0} {1}: {2} active ({3} contact, {4} bus){5}",
-                        bucket.Bucket,
-                        code.Code,
-                        code.Rounded,
-                        code.Contact,
-                        code.Bus,
-                        code.Swing > 0 ? " [swing]" : string.Empty));
+                    // In schedule mode the non-contact stands are remote
+                    // stands and the bus gates are derived per group, so the
+                    // detail line names the quantity it actually holds.
+                    lines.Add(result.ScheduleMode
+                        ? string.Format(
+                            CultureInfo.InvariantCulture,
+                            "{0} {1}: {2} active ({3} contact, {4} remote){5}",
+                            bucket.Bucket,
+                            code.Code,
+                            code.Rounded,
+                            code.Contact,
+                            code.Bus,
+                            code.Swing > 0 ? " [swing]" : string.Empty)
+                        : string.Format(
+                            CultureInfo.InvariantCulture,
+                            "{0} {1}: {2} active ({3} contact, {4} bus){5}",
+                            bucket.Bucket,
+                            code.Code,
+                            code.Rounded,
+                            code.Contact,
+                            code.Bus,
+                            code.Swing > 0 ? " [swing]" : string.Empty));
                 }
 
                 if (bucket.SplitExtra != 0)
@@ -239,15 +252,35 @@ namespace AirportPlanning.Components.FacilitySizingComponents
                 }
             }
 
-            lines.Add(string.Format(
-                CultureInfo.InvariantCulture,
-                "Active {0} = {1} contact + {2} bus; remote {3}; max {4}; net remote {5}",
-                result.ActiveTotal,
-                result.ContactTotal,
-                result.BusTotal,
-                result.RemoteActive,
-                result.MaxStands,
-                result.NetRemote));
+            lines.Add(result.ScheduleMode
+                ? string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Active {0} = {1} contact + {2} remote stands ({3} bus gates); max {4}; net remote {5}",
+                    result.ActiveTotal,
+                    result.ContactTotal,
+                    result.RemoteActive,
+                    result.BusTotal,
+                    result.MaxStands,
+                    result.NetRemote)
+                : string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Active {0} = {1} contact + {2} bus; remote {3}; max {4}; net remote {5}",
+                    result.ActiveTotal,
+                    result.ContactTotal,
+                    result.BusTotal,
+                    result.RemoteActive,
+                    result.MaxStands,
+                    result.NetRemote));
+
+            if (result.ScheduleMode)
+            {
+                lines.Add(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Sector sharing: concurrent peak {0} (sized) vs sector sum {1} (dedicated-terminal comparison); concurrent floor {2}",
+                    result.ConcurrentPeakTotal,
+                    result.SectorSumTotal,
+                    result.ActiveTotal >= result.ConcurrentPeakTotal ? "met" : "NOT met"));
+            }
 
             return lines;
         }

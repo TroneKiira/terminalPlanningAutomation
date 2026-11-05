@@ -127,9 +127,17 @@ namespace AirportPlanning.Core.Gates
             int nonContact = domBucket.Bus + swingBucket.Bus + intlBucket.Bus;
             double remotePerBusGate = Math.Max(0.0, standards.RemoteStandsPerBusGate);
 
+            GateBucketStands[] bucketList = { domBucket, swingBucket, intlBucket };
+
             if (scheduleDemand != null)
             {
-                // Schedule mode measures remote stands and derives bus gates.
+                // Schedule mode: the non-contact stands are remote stands, and
+                // the bus gates are derived facility-wide from the ratio. The
+                // group split carries the remote stands; the bus gates are a
+                // facility total.
+                foreach (GateBucketStands bucket in bucketList)
+                    bucket.Remote = bucket.Bus;
+
                 result.RemoteActive = nonContact;
                 result.BusTotal = remotePerBusGate > 0.0
                     ? (int)Math.Ceiling(nonContact / remotePerBusGate - 1e-9)
@@ -137,6 +145,11 @@ namespace AirportPlanning.Core.Gates
             }
             else
             {
+                // PHP mode: every non-contact stand is itself a bus gate; the
+                // remote stands follow from the ratio at facility level.
+                foreach (GateBucketStands bucket in bucketList)
+                    bucket.Remote = bucket.Bus;
+
                 result.BusTotal = nonContact;
                 result.RemoteActive = (int)Math.Ceiling(result.BusTotal * remotePerBusGate - 1e-9);
             }
@@ -145,6 +158,17 @@ namespace AirportPlanning.Core.Gates
                 result.ActiveTotal * (scheduleDemand != null ? 1.0 : Math.Max(0.0, standards.MaxStandsRatio)) - 1e-9);
 
             result.NetRemote = Math.Max(0, result.MaxStands - result.ContactTotal);
+
+            if (scheduleDemand?.Codes != null)
+            {
+                result.SectorSumTotal = scheduleDemand.Codes
+                    .Where(c => c != null)
+                    .Sum(c => Math.Max(0, c.SectorSum));
+
+                result.ConcurrentPeakTotal = scheduleDemand.Codes
+                    .Where(c => c != null)
+                    .Sum(c => Math.Max(0, c.CombinedPeak));
+            }
 
             // ---- lounges ----
             BuildLounges(

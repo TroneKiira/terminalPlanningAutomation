@@ -1,4 +1,5 @@
-﻿using AirportPlanning.Core.Models;
+﻿using AirportPlanning.Core.Analysis;
+using AirportPlanning.Core.Models;
 using AirportPlanning.Core.Inputs;
 using AirportPlanning.Core.Generation;
 using Grasshopper.Kernel;
@@ -34,6 +35,11 @@ namespace AirportPlanning.Components.PassengerAnalysis
                 "Optional: Enter facility index to view history (0=CheckIn, 1=BagDrop, 2=Security, 3=Emigration, 4=Verification, 5=Departure Lounge, 6=Boarding, 7=Terminal Entry). If empty, shows latest data.",
                 GH_ParamAccess.item);
             pManager[1].Optional = true; // Make it optional
+
+            pManager.AddBooleanParameter("Blank When No History", "BWH",
+                "When on, passengers WITHOUT this facility's history output NaN instead of the stale previous-facility values, so a journey narrative cannot read a skipped stage as a visit.",
+                GH_ParamAccess.item, false);
+            pManager[2].Optional = true;
         }
 
         /// <summary>
@@ -67,6 +73,18 @@ namespace AirportPlanning.Components.PassengerAnalysis
             pManager.AddBooleanParameter("Transfer Rules Applied", "TRULE", "True when the passenger carries explicit scenario processing rules. False means normal passenger behaviour, not a bypass.", GH_ParamAccess.list);
             pManager.AddTextParameter("Bypassed Services", "TBYP", "Services explicitly bypassed by this passenger's scenario rules.", GH_ParamAccess.list);
             pManager.AddTextParameter("Bypass Reason", "TWHY", "Why each service is bypassed. Empty when no service is explicitly bypassed.", GH_ParamAccess.list);
+
+            pManager.AddTextParameter("Security Entry Route", "SEGR", "Security series mode: the entry e-gate pool the passenger used, for example 'EGate' or 'EGate|DomesticDeparture'. Empty outside series mode.", GH_ParamAccess.list);
+            pManager.AddTextParameter("Security Screening Route", "SGSR", "Security series mode: the ATRS screening pool the passenger used, for example 'ATRS|InternationalDeparture'. Empty outside series mode.", GH_ParamAccess.list);
+            pManager.AddNumberParameter("Security Entry Wait", "SGEW", "Security series mode: queue wait at the entry e-gate stage, minutes.", GH_ParamAccess.list);
+            pManager.AddNumberParameter("Security Screening Wait", "SGSW", "Security series mode: queue wait at the ATRS screening stage, minutes.", GH_ParamAccess.list);
+            pManager.AddNumberParameter("Security Entry Start", "SGES", "Security series mode: e-gate service start time from the Security history.", GH_ParamAccess.list);
+            pManager.AddNumberParameter("Security Entry End", "SGEE", "Security series mode: e-gate service end time from the Security history.", GH_ParamAccess.list);
+
+            pManager.AddBooleanParameter("Has History", "HIST", "True when the passenger carries the viewed facility's history record. Wire this into the narrative to skip stages the passenger never visited.", GH_ParamAccess.list);
+            pManager.AddNumberParameter("Walking Minutes", "WMIN", "Walk minutes the passenger carries from the generator and the terminal-entry stage (visible data, no longer folded into the next stage's arrival).", GH_ParamAccess.list);
+
+            pManager.AddTextParameter("Journey Narration", "NARR", "Process-by-process journey narration built from each passenger's History only. Visited stages show pool, route, resource, wait, service and start/end times; a stage without history reads 'not visited', so a skipped stage can never quote another stage's times.", GH_ParamAccess.list);
         }
 
         /// <summary>
@@ -82,14 +100,29 @@ namespace AirportPlanning.Components.PassengerAnalysis
             bool useHistory = DA.GetData(1, ref facilityIndex);
             FacilityType facType = (FacilityType)facilityIndex;
 
+            bool blankWhenNoHistory = false;
+            DA.GetData(2, ref blankWhenNoHistory);
+
             DA.SetDataList(0, passengers.Select(p => p.Id));
 
             // NEW: Use History if a Facility Index was provided, otherwise use latest state
-            DA.SetDataList(1, passengers.Select(p => useHistory && p.History.ContainsKey(facType) ? p.History[facType].ArrivalTime : p.ArrivalTime));
+            DA.SetDataList(1, passengers.Select(p =>
+                useHistory && p.History.ContainsKey(facType)
+                    ? p.History[facType].ArrivalTime
+                    : (useHistory && blankWhenNoHistory ? double.NaN : p.ArrivalTime)));
             DA.SetDataList(2, passengers.Select(p => p.ServiceTime)); // Service time is mostly fixed, but you can add it to FacilityRecord if needed
-            DA.SetDataList(3, passengers.Select(p => useHistory && p.History.ContainsKey(facType) ? p.History[facType].StartServiceTime : p.StartServiceTime));
-            DA.SetDataList(4, passengers.Select(p => useHistory && p.History.ContainsKey(facType) ? p.History[facType].EndServiceTime : p.EndServiceTime));
-            DA.SetDataList(5, passengers.Select(p => useHistory && p.History.ContainsKey(facType) ? p.History[facType].WaitTime : p.WaitTime));
+            DA.SetDataList(3, passengers.Select(p =>
+                useHistory && p.History.ContainsKey(facType)
+                    ? p.History[facType].StartServiceTime
+                    : (useHistory && blankWhenNoHistory ? double.NaN : p.StartServiceTime)));
+            DA.SetDataList(4, passengers.Select(p =>
+                useHistory && p.History.ContainsKey(facType)
+                    ? p.History[facType].EndServiceTime
+                    : (useHistory && blankWhenNoHistory ? double.NaN : p.EndServiceTime)));
+            DA.SetDataList(5, passengers.Select(p =>
+                useHistory && p.History.ContainsKey(facType)
+                    ? p.History[facType].WaitTime
+                    : (useHistory && blankWhenNoHistory ? double.NaN : p.WaitTime)));
             DA.SetDataList(6, passengers.Select(p => useHistory && p.History.ContainsKey(facType) ? p.History[facType].AssignedResource.ToString() : p.AssignedCounter.ToString()));
 
             DA.SetDataList(7, passengers.Select(p => p.WalkingSpeed));
@@ -120,6 +153,45 @@ namespace AirportPlanning.Components.PassengerAnalysis
                 TransferServiceUsageCalculator.GetBypassedServices(p).Count > 0
                     ? "Scenario rule"
                     : string.Empty));
+
+            // Security series mode: both checkpoint stages, so a narrative can
+            // show the e-gate queue and the screening queue separately. The
+            // Security history record carries the e-gate stage in its entry
+            // fields and the screening stage in its main fields.
+            DA.SetDataList(26, passengers.Select(p => p.SecurityEntryRoute ?? string.Empty));
+            DA.SetDataList(27, passengers.Select(p => p.SecurityScreeningRoute ?? string.Empty));
+            DA.SetDataList(28, passengers.Select(p => p.SecurityEntryWait));
+            DA.SetDataList(29, passengers.Select(p => p.SecurityScreeningWait));
+            DA.SetDataList(30, passengers.Select(p =>
+                p.History.TryGetValue(FacilityType.Security, out FacilityRecord record) && record.HasEntryStage
+                    ? record.EntryStartServiceTime
+                    : double.NaN));
+            DA.SetDataList(31, passengers.Select(p =>
+                p.History.TryGetValue(FacilityType.Security, out FacilityRecord record) && record.HasEntryStage
+                    ? record.EntryEndServiceTime
+                    : double.NaN));
+
+            DA.SetDataList(32, passengers.Select(p =>
+                useHistory
+                    ? (object)p.History.ContainsKey(facType)
+                    : (object)true));
+            DA.SetDataList(33, passengers.Select(p =>
+            {
+                double walk = p.WalkingTime;
+
+                if (!double.IsNaN(p.TerminalEntryWalkMinutes) &&
+                    !double.IsInfinity(p.TerminalEntryWalkMinutes))
+                {
+                    walk = Math.Max(walk, Math.Max(0.0, p.TerminalEntryWalkMinutes));
+                }
+
+                return walk;
+            }));
+
+            // The tested narration path: every visit comes from the passenger's
+            // History, in chronological order, with unvisited stages marked
+            // "not visited" instead of showing stale state.
+            DA.SetDataList(34, passengers.Select(p => PassengerNarrativeBuilder.ToText(p)));
         }
 
         /// <summary>

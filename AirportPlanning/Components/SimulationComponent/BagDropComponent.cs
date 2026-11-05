@@ -25,7 +25,7 @@ namespace AirportPlanning.Components.SimulationComponent
             pManager.AddGenericParameter("Service Profile", "SP", "Fallback service-time profile, used only when no Service Time Map is wired.", GH_ParamAccess.item);
             pManager[1].Optional = true;
 
-            pManager.AddNumberParameter("Bag Drop Counters", "C", "Physical bag-drop counters. One value per channel (a single value broadcasts). Used when Optimize Counters is off.", GH_ParamAccess.list, 8);
+            pManager.AddNumberParameter("Bag Drop Counters", "C", "Physical bag-drop counters. With no Pool Plans this sizes the single shared queue (a single value applies). With keyed BagDrop pool plans the first value sizes the shared fallback pool for uncovered segments.", GH_ParamAccess.list, 8);
 
             pManager.AddBooleanParameter("Optimize Counters", "O", "Automatically determine required counters.", GH_ParamAccess.item, false);
 
@@ -35,7 +35,7 @@ namespace AirportPlanning.Components.SimulationComponent
 
             pManager.AddNumberParameter("Random Seed", "S", "Random number seed.", GH_ParamAccess.item, 1);
 
-            pManager.AddTextParameter("Channels", "CH", "Optional channels. Empty keeps one shared pool; otherwise each channel gets its own dedicated pool sized independently.", GH_ParamAccess.list);
+            pManager.AddTextParameter("Channels", "CH", "Legacy input. Bag Drop selects passengers by their separate bag-drop requirement, not by primary channel, and uses one shared facility queue.", GH_ParamAccess.list);
             pManager[7].Optional = true;
 
             pManager.AddGenericParameter("Service Profiles", "SP-MAP", "Optional per-passenger service-time map (Service Time Map). Supersedes Service Profile when wired. Keys may use 'Channel|DHPType|ProfileName' (same as a Pool Plan identity), a profile name, a channel name, or 'profile|channel'.", GH_ParamAccess.item);
@@ -44,7 +44,7 @@ namespace AirportPlanning.Components.SimulationComponent
             pManager.AddIntervalParameter("Resource Domain", "RD", "Inclusive bounds for the optimizer's physical-counter search, broadcast to every channel. Default 1 to 1200.", GH_ParamAccess.item, new Interval(1, ChannelResourcePlanResolver.DefaultMaxResources));
             pManager[9].Optional = true;
 
-            pManager.AddGenericParameter("Pool Plans", "PP", "Optional keyed pool plans (Pool Plans component). When wired, they define each pool's nominal resources, target wait and resource domain.", GH_ParamAccess.list);
+            pManager.AddGenericParameter("Pool Plans", "PP", "Optional keyed pool plans (Pool Plans component). Unwired: one shared facility queue. Wired: rows must be keyed 'BagDrop' or 'BagDrop|DHPType|ProfileName' — each pool serves its own segment of the bag-drop population (Web and Kiosk bag carriers of that profile), and any uncovered segment falls back to a shared pool.", GH_ParamAccess.list);
             pManager[10].Optional = true;
         }
 

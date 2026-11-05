@@ -8,9 +8,10 @@ using AirportPlanning.Core.Inputs;
 namespace AirportPlanning.Components.Object_Creation
 {
     /// <summary>
-    /// Builds a per-profile channel share table. Three parallel flat lists are
-    /// zipped by row: the passenger-profile key, the channel, and the share.
-    /// Shares for a profile should sum to 100%. Channels are user-defined names.
+    /// Builds a per-profile PRIMARY channel share table. Three parallel flat
+    /// lists are zipped by row: the passenger-profile key, the channel, and the
+    /// share. Shares for a profile should sum to 1.0 (100%). Bag Drop is a
+    /// separate service stage; do not add it as a primary share.
     /// </summary>
     public class CreateChannelRouting : GH_Component
     {
@@ -30,12 +31,12 @@ namespace AirportPlanning.Components.Object_Creation
 
             pManager.AddTextParameter(
                 "Channels", "CH",
-                "Channel name for each row (e.g. Counter, Kiosk, Web, BagDrop).",
+                "Primary channel name for each row (Counter, Kiosk or Web). Bag Drop is a separate facility stage.",
                 GH_ParamAccess.list);
 
             pManager.AddNumberParameter(
                 "Shares", "S",
-                "Share for each row. Shares for a profile should sum to 1 (or 100).",
+                "Share for each row. Shares for a profile should sum to 1.0 (100%).",
                 GH_ParamAccess.list);
 
             pManager.AddTextParameter(

@@ -121,11 +121,31 @@ namespace AirportPlanning.Core.Queueing
             int evaluations = 0;
             var trace = new List<SearchTracePoint>();
 
+            if (target <= 0.0)
+            {
+                // No wait target: keep the plan's nominal capacity instead of
+                // driving the search to the domain maximum. The nominal is still
+                // clamped into the declared domain so it stays a legal capacity.
+                int nominal = Math.Max(range.Min, Math.Min(range.Max, plan.PhysicalResources));
+
+                double waitAtNominal = evaluate(plan, nominal);
+                evaluations++;
+                trace.Add(new SearchTracePoint { Capacity = nominal, Wait95 = waitAtNominal });
+
+                stopwatch.Stop();
+
+                ResourceSearchOutcome kept = BuildOutcome(
+                    plan, staffingPercentage, nominal, waitAtNominal, evaluations, true);
+                kept.SearchTrace = trace;
+
+                return kept;
+            }
+
             double waitAtMax = evaluate(plan, range.Max);
             evaluations++;
             trace.Add(new SearchTracePoint { Capacity = range.Max, Wait95 = waitAtMax });
 
-            if (target <= 0.0 || waitAtMax > target)
+            if (waitAtMax > target)
             {
                 stopwatch.Stop();
 

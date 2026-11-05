@@ -71,7 +71,18 @@ namespace AirportPlanning.Core.Generation
             // routing and consumes no RNG, so existing numbers are untouched.
             IChannelAssigner assigner = channelAssigner ?? DefaultChannelAssigner.Instance;
             Random assignRnd = channelRnd ?? rnd;
-            passenger.Channel = assigner.AssignChannel(passenger, assignRnd);
+            passenger.Channel = DefaultChannelAssigner.NormalizePrimaryChannel(
+                assigner.AssignChannel(passenger, assignRnd));
+
+            // When a channel-routing map is wired it is the source of truth for
+            // the primary method. Web is the online-check-in route; Counter and
+            // Kiosk are physical. Do not draw OCI a second time and allow the
+            // profile share and the online flag to disagree.
+            if (channelAssigner != null)
+            {
+                passenger.UsesOnlineCheckIn =
+                    DefaultChannelAssigner.IsWebChannel(passenger.Channel);
+            }
 
             return passenger;
         }

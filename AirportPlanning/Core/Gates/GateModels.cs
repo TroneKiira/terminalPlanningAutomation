@@ -143,6 +143,19 @@ namespace AirportPlanning.Core.Gates
         public int DedicatedDomestic { get; set; }
         public int DedicatedInternational { get; set; }
         public bool MixedFloor { get; set; }
+
+        /// <summary>
+        /// Sum of the two sector peaks (domestic + international). What a
+        /// sector-dedicated terminal would build; reported for comparison, never
+        /// used to size, because stands serve both sectors at different times.
+        /// </summary>
+        public int SectorSum { get; set; }
+
+        /// <summary>
+        /// True when the sized total meets the concurrent (combined) peak: the
+        /// concurrent floor holds.
+        /// </summary>
+        public bool ConcurrentFloorMet { get; set; }
     }
 
     /// <summary>Schedule-derived stand demand for one terminal or the airport.</summary>
@@ -182,7 +195,8 @@ namespace AirportPlanning.Core.Gates
         /// <summary>Stands of this code with a bridge attached.</summary>
         public int Contact { get; set; }
 
-        /// <summary>Stands of this code served by a bus gate.</summary>
+        /// <summary>Non-contact stands of this code. In schedule mode these
+        /// are remote stands; in PHP mode they are bus gates.</summary>
         public int Bus { get; set; }
     }
 
@@ -201,6 +215,13 @@ namespace AirportPlanning.Core.Gates
 
         /// <summary>Stands served by a bus gate.</summary>
         public int Bus { get; set; }
+
+        /// <summary>
+        /// Non-contact stands of this group. In schedule mode these are remote
+        /// stands and <see cref="Bus"/> holds the derived bus gates; in PHP
+        /// mode the non-contact stands are themselves bus gates.
+        /// </summary>
+        public int Remote { get; set; }
 
         /// <summary>
         /// The sector requirement rounded once over the sum of its codes,
@@ -284,6 +305,21 @@ namespace AirportPlanning.Core.Gates
 
         /// <summary>Max stands less the contact stands.</summary>
         public int NetRemote { get; set; }
+
+        /// <summary>
+        /// Sum of the per-code sector peaks (domestic + international) in
+        /// schedule mode. What a sector-dedicated terminal would build; the
+        /// sized <see cref="ActiveTotal"/> shares stands across sectors
+        /// instead. Zero outside schedule mode.
+        /// </summary>
+        public int SectorSumTotal { get; set; }
+
+        /// <summary>
+        /// The concurrent floor: the busiest simultaneous stand count in
+        /// schedule mode. Equals <see cref="ActiveTotal"/> when the floor holds.
+        /// Zero outside schedule mode.
+        /// </summary>
+        public int ConcurrentPeakTotal { get; set; }
 
         /// <summary>The lounges.</summary>
         public List<GateLounge> Lounges { get; set; } = new List<GateLounge>();

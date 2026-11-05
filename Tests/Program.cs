@@ -32,6 +32,7 @@ namespace AirportPlanning.Tests
         {
             RunTransferDemandTests();
             RunTransferRoutingTests();
+            RunTransferFacilityTests();
             RunTransferServiceConsistencyTests();
             RunCountsAndWarmUp();
             RunWaveOffRespectsShowUp();
@@ -49,8 +50,13 @@ namespace AirportPlanning.Tests
             RunResourceDomainBounds();
             RunPerChannelPools();
             RunCheckInRoutedPoolSegregation();
-            RunCheckInMergedBagDropChannel();
+            RunCheckInSeparateBagDropChannel();
+            RunBagDropSegmentPools();
             RunPoolPlanArchitecture();
+            RunFacilityScoping();
+            RunServiceTimeKeyLevels();
+            RunFacilityTagScoping();
+            RunSecuritySeries();
             RunProcessorTimeline();
             RunFacilityArea();
             RunFacilityAreaWiring();
@@ -96,6 +102,12 @@ namespace AirportPlanning.Tests
             RunTerminalEntryPoolPlans();
             RunTerminalEntrySizing();
             RunModelDiagnosticsTests();
+            RunPassengerFilterSegregationTests();
+            RunGhxJourneyIntegrationTests();
+            RunJourneyNarrativeTests();
+            RunJourneyDeterminismTests();
+            RunJourneyCongestedSecurityTests();
+            RunGhxDefinitionContractTests();
 
             Console.WriteLine();
             Console.WriteLine(_failures == 0
@@ -402,8 +414,10 @@ namespace AirportPlanning.Tests
                     new List<PassengerProfile> { MakeProfile("D", 100.0, 60.0, 150.0, 1.0, 1.0) },
                     new List<PassengerProfile>()), 5, null);
 
-            Check(rBag.Passengers.All(p => p.Channel == DefaultChannelAssigner.BagDropChannel),
-                "Default routing: online + bag -> BagDrop");
+            Check(rBag.Passengers.All(p => p.Channel == DefaultChannelAssigner.WebChannel),
+                "Default routing: online + bag -> Web, with Bag Drop as a separate stage");
+            Check(rBag.Passengers.All(p => !p.RequiresCheckIn && p.RequiresSeparateBagDrop),
+                "An online bag carrier has no Check-In queue but does use the separate Bag Drop stage");
 
             PassengerGenerationResult rWeb = GenerateWithProfiles(
                 BuildGroupsWithProfiles(1000, 1, new[] { 100.0 }, 0, 100.0, 100.0,
@@ -436,6 +450,80 @@ namespace AirportPlanning.Tests
 
             Check(counter + kiosk == total, "Every passenger gets a mapped channel");
             Check(Math.Abs(counterShare - 0.6) < 0.05, $"Counter share {Math.Round(counterShare, 3)} ~ 0.60");
+
+            // A legacy BagDrop share no longer creates a physical primary
+            // channel: it is normalised to Web. The separate Bag Drop stage is
+            // derived from the checked-bag flag instead.
+            ProfileChannelMap bagMap = new ProfileChannelMap();
+            bagMap.Entries.Add(new ProfileChannelEntry
+            {
+                ProfileName = "D",
+                Shares = new List<ChannelShare>
+                {
+                    new ChannelShare { Channel = "Counter", Share = 0.6 },
+                    new ChannelShare { Channel = "Kiosk", Share = 0.4 },
+                    new ChannelShare { Channel = "Bag-Drop", Share = 0.2 }
+                }
+            });
+
+            Check(bagMap.BagDropRoutingChannel == "Bag-Drop",
+                "The legacy bag-drop name is still discoverable");
+            Check(bagMap.GetChannels().Contains("Web") &&
+                  !bagMap.GetChannels().Contains("Bag-Drop"),
+                "A legacy BagDrop share is exposed as Web to the facilities");
+
+            PassengerGenerationResult rBagEnforced = GenerateWithProfiles(
+                BuildGroupsWithProfiles(1000, 1, new[] { 100.0 }, 0, 100.0, 100.0,
+                    new List<PassengerProfile> { MakeProfile("D", 100.0, 60.0, 150.0, 1.0, 1.0) },
+                    new List<PassengerProfile>()), 13, bagMap);
+
+            Check(rBagEnforced.Passengers.All(p => p.Channel != "Bag-Drop"),
+                "No passenger is assigned Bag Drop as a primary channel");
+            Check(rBagEnforced.Passengers.All(p =>
+                    p.Channel == "Counter" || p.Channel == "Kiosk" || p.Channel == "Web"),
+                "Every passenger keeps a Counter, Kiosk or Web primary channel");
+            Check(rBagEnforced.Passengers
+                    .Where(p => p.Channel == "Web")
+                    .All(p => p.RequiresSeparateBagDrop),
+                "A Web-routed bag carrier is eligible for the separate Bag Drop stage");
+
+            // A transfer rule requiring bag drop marks the separate stage but
+            // must not overwrite the primary channel.
+            Passenger transferBag = new Passenger
+            {
+                ProfileName = "D",
+                DHPType = DHPType.DomesticDeparture,
+                Journey = PassengerJourney.Transfer,
+                UsesOnlineCheckIn = false,
+                HasCheckedBag = false,
+                TransferProcessing = new TransferScenarioRules
+                {
+                    Scenario = TransferScenario.DomesticToDomestic,
+                    HasProcessingRules = true,
+                    RequiresCheckIn = true,
+                    RequiresBagDrop = true
+                }
+            };
+            string transferChannel = bagMap.AssignChannel(transferBag, new Random(1));
+            Check(transferChannel == "Counter" ||
+                  transferChannel == "Kiosk" ||
+                  transferChannel == "Web",
+                $"A transfer rule requiring bag drop keeps a primary channel ({transferChannel})");
+            Check(bagMap.AssignChannel(transferBag, new Random(1)) == transferChannel,
+                "Share-driven assignment is stable for the same seed");
+            transferBag.Channel = transferChannel;
+            Check(transferBag.RequiresSeparateBagDrop,
+                "A transfer rule requiring bag drop uses the separate Bag Drop stage");
+
+            // Disabling the legacy enforcement changes nothing now.
+            bagMap.EnforceBagDropRouting = false;
+            PassengerGenerationResult rBagByShares = GenerateWithProfiles(
+                BuildGroupsWithProfiles(1000, 1, new[] { 100.0 }, 0, 100.0, 100.0,
+                    new List<PassengerProfile> { MakeProfile("D", 100.0, 60.0, 150.0, 1.0, 1.0) },
+                    new List<PassengerProfile>()), 13, bagMap);
+            Check(!rBagByShares.Passengers.Any(p => p.Channel == "Bag-Drop"),
+                "The legacy enforcement flag never creates a BagDrop primary channel");
+            bagMap.EnforceBagDropRouting = true;
         }
 
         // -------------------------------------------------------------
@@ -1168,7 +1256,7 @@ namespace AirportPlanning.Tests
             AddPassengers("Counter", DHPType.InternationalDeparture, "Economy", 6, 0.0);
             AddPassengers("Counter", DHPType.InternationalDeparture, "Business", 5, 0.0);
             AddPassengers("Kiosk", DHPType.DomesticDeparture, "Economy", 4, 0.0);
-            AddPassengers("BagDrop", DHPType.InternationalDeparture, "Economy", 3, 0.0, online: true, bag: true);
+            AddPassengers("Kiosk", DHPType.InternationalDeparture, "Economy", 3, 0.0, online: false, bag: true);
             AddPassengers("Counter", DHPType.DomesticArrival, "Economy", 2, 0.0);
             AddPassengers("Web", DHPType.DomesticDeparture, "Economy", 2, 0.0);
 
@@ -1202,21 +1290,16 @@ namespace AirportPlanning.Tests
                 Key = "Kiosk",
                 Profile = new ServiceProfile { MeanServiceTime = 0.5, StandardDeviation = 0.0 }
             });
-            serviceTimes.Entries.Add(new ServiceTimeEntry
-            {
-                Key = "BagDrop",
-                Profile = new ServiceProfile { MeanServiceTime = 0.75, StandardDeviation = 0.0 }
-            });
 
             CheckInResults result = new CheckInSolver().Solve(new CheckInInputs
             {
                 Passengers = passengers,
                 ServiceTimeProvider = serviceTimes,
-                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
-                PoolPhysicalResources = new List<int> { 2, 3, 4, 5, 6, 7 },
-                PoolTargetWait95 = new List<double> { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 },
-                PoolMinimumResources = new List<int> { 1, 2, 3, 4, 5, 6 },
-                PoolMaximumResources = new List<int> { 8, 9, 10, 11, 12, 13 },
+                Channels = new List<string> { "Counter", "Kiosk" },
+                PoolPhysicalResources = new List<int> { 2, 3, 4, 5, 6 },
+                PoolTargetWait95 = new List<double> { 1.0, 2.0, 3.0, 4.0, 5.0 },
+                PoolMinimumResources = new List<int> { 1, 2, 3, 4, 5 },
+                PoolMaximumResources = new List<int> { 8, 9, 10, 11, 12 },
                 OptimizeResources = false,
                 Seed = 41,
                 StaffingPercentage = 100.0
@@ -1228,23 +1311,22 @@ namespace AirportPlanning.Tests
                 "Counter|DomesticDeparture|Economy",
                 "Counter|InternationalDeparture|Business",
                 "Counter|InternationalDeparture|Economy",
-                "Kiosk",
-                "BagDrop"
+                "Kiosk"
             };
 
             Check(result.PoolNames.SequenceEqual(expectedPoolNames),
-                "Four counter pools plus separate Kiosk and BagDrop channel pools are reported");
-            Check(result.PhysicalPerChannel.SequenceEqual(new[] { 2, 3, 4, 5, 6, 7 }),
+                "Four counter pools plus a separate Kiosk channel pool are reported");
+            Check(result.PhysicalPerChannel.SequenceEqual(new[] { 2, 3, 4, 5, 6 }),
                 "Nominal resources are independently assigned in expanded pool order");
-            Check(result.PhysicalCounters == 27,
-                $"Total physical resources equal the sum across all routed pools ({result.PhysicalCounters} == 27)");
-            Check(result.ChannelNames.SequenceEqual(new[] { "Counter", "Kiosk", "BagDrop" }) &&
-                  result.PhysicalPerChannelTotal.SequenceEqual(new[] { 14, 6, 7 }),
+            Check(result.PhysicalCounters == 20,
+                $"Total physical resources equal the sum across all routed pools ({result.PhysicalCounters} == 20)");
+            Check(result.ChannelNames.SequenceEqual(new[] { "Counter", "Kiosk" }) &&
+                  result.PhysicalPerChannelTotal.SequenceEqual(new[] { 14, 6 }),
                 "Channel resource totals aggregate Counter sub-pools and retain other channel totals");
 
             List<Passenger> processed = result.QueueResults.ProcessedPassengers;
             Check(processed.Count == 33,
-                $"All routed departures are served, including online BagDrop passengers ({processed.Count} == 33)");
+                $"All routed departures are served, including Kiosk bag carriers ({processed.Count} == 33)");
             Check(processed.All(p => p.Channel != "Web" && p.DHPType != DHPType.DomesticArrival),
                 "Unconfigured Web and arrival passengers are excluded from physical Check-In pools");
 
@@ -1254,8 +1336,7 @@ namespace AirportPlanning.Tests
                 ["Counter|DomesticDeparture|Business"] = 3.0,
                 ["Counter|InternationalDeparture|Economy"] = 4.0,
                 ["Counter|InternationalDeparture|Business"] = 5.0,
-                ["Kiosk"] = 0.5,
-                ["BagDrop"] = 0.75
+                ["Kiosk"] = 0.5
             };
 
             for (int i = 0; i < expectedPoolNames.Count; i++)
@@ -1266,7 +1347,7 @@ namespace AirportPlanning.Tests
                     $"Pool '{expectedPoolNames[i]}' uses its own service-time mapping");
             }
 
-            Check(result.Wait95PerChannel.Keys.Count == 6,
+            Check(result.Wait95PerChannel.Keys.Count == 5,
                 "Wait95 is reported independently for every expanded pool");
 
             List<PassengerProfile> classes = new List<PassengerProfile>
@@ -1324,19 +1405,19 @@ namespace AirportPlanning.Tests
             {
                 Passengers = passengers.Select(p => p.Clone()).ToList(),
                 ServiceTimeProvider = serviceTimes,
-                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
-                PoolTargetWait95 = new List<double> { 1, 2, 3, 4, 5, 6 },
-                PoolMinimumResources = new List<int> { 2, 3, 4, 5, 6, 7 },
-                PoolMaximumResources = new List<int> { 4, 5, 6, 7, 8, 9 },
+                Channels = new List<string> { "Counter", "Kiosk" },
+                PoolTargetWait95 = new List<double> { 1, 2, 3, 4, 5 },
+                PoolMinimumResources = new List<int> { 2, 3, 4, 5, 6 },
+                PoolMaximumResources = new List<int> { 4, 5, 6, 7, 8 },
                 OptimizeResources = true,
                 Seed = 41,
                 StaffingPercentage = 100.0
             });
 
-            Check(optimized.SearchOutcomes.Count == 6,
+            Check(optimized.SearchOutcomes.Count == 5,
                 "Optimizer searches each routed channel/sub-pool independently");
 
-            bool eachPoolUsesOwnSettings = optimized.SearchOutcomes.Count == 6 &&
+            bool eachPoolUsesOwnSettings = optimized.SearchOutcomes.Count == 5 &&
                 optimized.SearchOutcomes.Select((outcome, index) =>
                     outcome.Plan.TargetWait95 == index + 1 &&
                     outcome.Plan.Range.Min == index + 2 &&
@@ -1373,7 +1454,7 @@ namespace AirportPlanning.Tests
             Check(queuePools.All(p => p.ActiveResources > 0),
                 "Every pool records its staffed processor count");
 
-            Check(queuePools.Select(p => p.TargetWait95).SequenceEqual(new double[] { 1, 2, 3, 4, 5, 6 }),
+            Check(queuePools.Select(p => p.TargetWait95).SequenceEqual(new double[] { 1, 2, 3, 4, 5 }),
                 "Per-pool targets survive the merge in pool order");
 
             Check(queuePools.All(p =>
@@ -1404,7 +1485,7 @@ namespace AirportPlanning.Tests
             Check(ChartText.SelectPools(queuePools, "Counter|DomesticDeparture|Economy").Count == 1,
                 "A full pool identity selects exactly one pool");
 
-            Check(ChartText.SelectPools(queuePools, "Kiosk,BagDrop").Count == 2,
+            Check(ChartText.SelectPools(queuePools, "Kiosk,Counter|DomesticDeparture|Economy").Count == 2,
                 "A comma-separated filter selects several pools");
 
             Check(ChartText.SelectPools(queuePools, "Nope").Count == 0,
@@ -1437,11 +1518,11 @@ namespace AirportPlanning.Tests
         }
 
         // -------------------------------------------------------------
-        // Check-In: BagDrop is a physical channel driven by Channel Routing
+        // Check-In: Counter/Kiosk are physical; Bag Drop is a separate stage
         // -------------------------------------------------------------
-        private static void RunCheckInMergedBagDropChannel()
+        private static void RunCheckInSeparateBagDropChannel()
         {
-            Console.WriteLine("== Check-In merged BagDrop channel ==");
+            Console.WriteLine("== Check-In and separate Bag Drop ==");
 
             ProfileChannelMap routing = new ProfileChannelMap { DefaultChannel = "Counter" };
             routing.Entries.Add(new ProfileChannelEntry
@@ -1468,7 +1549,7 @@ namespace AirportPlanning.Tests
 
             serviceTimes.Entries.Add(new ServiceTimeEntry
             {
-                Key = "BagDrop",
+                Key = "Web",
                 Profile = new ServiceProfile { MeanServiceTime = 0.5, StandardDeviation = 0.0 }
             });
 
@@ -1497,59 +1578,16 @@ namespace AirportPlanning.Tests
             };
 
             addPassengers("Counter", 8, false, false);
-            addPassengers("BagDrop", 6, true, true);
+            addPassengers("Web", 6, true, true);
             addPassengers("Web", 5, true, false);
 
             CheckInSolver solver = new CheckInSolver();
 
-            CheckInResults merged = solver.Solve(new CheckInInputs
+            CheckInResults checkIn = solver.Solve(new CheckInInputs
             {
                 Passengers = passengers,
                 ChannelRouting = routing,
                 ServiceTimeProvider = serviceTimes,
-                PhysicalResources = new List<int> { 2, 2 },
-                OptimizeResources = false,
-                TargetWait95 = new List<double> { 10.0, 10.0 },
-                Seed = 9,
-                StaffingPercentage = 100.0
-            });
-
-            Check(merged.ChannelNames.SequenceEqual(new[] { "Counter", "BagDrop" }),
-                "CHR-derived physical channels are Counter and BagDrop; virtual Web is excluded");
-            Check(merged.PoolNames.SequenceEqual(new[] { "Counter", "BagDrop" }),
-                "Check-In exposes BagDrop as its own routed processor pool");
-            Check(merged.PhysicalCounters == 4,
-                $"Physical counters sum the Counter and BagDrop pools ({merged.PhysicalCounters} == 4)");
-            Check(merged.Wait95PerChannel.ContainsKey("BagDrop") &&
-                  !merged.Wait95PerChannel.ContainsKey("Web"),
-                "Wait95 is reported for BagDrop and never for virtual Web");
-
-            List<Passenger> processed = merged.QueueResults.ProcessedPassengers;
-
-            Check(processed.Count == 14,
-                $"Check-In serves both Counter and BagDrop passengers exactly once ({processed.Count} == 14)");
-            Check(processed.All(p => p.Channel != "Web"),
-                "Web passengers bypass physical Check-In processors");
-            Check(processed
-                    .Where(p => p.Channel == "BagDrop")
-                    .All(p => p.History.ContainsKey(FacilityType.CheckIn) &&
-                              p.History.ContainsKey(FacilityType.BagDrop)),
-                "BagDrop passengers carry both Check-In and Bag Drop history");
-
-            int bagDropPool = merged.PoolNames.IndexOf("BagDrop");
-            double bagDropMean = merged.PoolResults[bagDropPool].ProcessedPassengers
-                .Average(p => p.ServiceTime);
-
-            Check(Math.Abs(bagDropMean - 0.5) < 1e-9,
-                $"BagDrop uses its own service-time mapping ({bagDropMean} == 0.5)");
-            Check(solver.Warnings.Any(w => w.Contains("Web") && w.Contains("Virtual")),
-                "The skipped virtual route is reported as a warning");
-
-            BagDropResults separate = new BagDropSolver().Solve(new BagDropInputs
-            {
-                Passengers = merged.QueueResults.Passengers,
-                ServiceTimeProvider = serviceTimes,
-                Channels = new List<string> { "BagDrop" },
                 PhysicalResources = new List<int> { 2 },
                 OptimizeResources = false,
                 TargetWait95 = new List<double> { 10.0 },
@@ -1557,8 +1595,253 @@ namespace AirportPlanning.Tests
                 StaffingPercentage = 100.0
             });
 
-            Check(separate.QueueResults.ProcessedPassengers.Count == 0,
-                "A separate Bag Drop stage skips passengers already served by the Check-In BagDrop channel");
+            Check(checkIn.ChannelNames.SequenceEqual(new[] { "Counter" }),
+                "CHR-derived Check-In channels are physical only; legacy BagDrop becomes Web and is excluded");
+            Check(checkIn.PoolNames.SequenceEqual(new[] { "Counter" }),
+                "Check-In exposes only the Counter pool");
+            Check(checkIn.PhysicalCounters == 2,
+                $"Physical counters count only the Check-In pools ({checkIn.PhysicalCounters} == 2)");
+            Check(!checkIn.Wait95PerChannel.ContainsKey("Web") &&
+                  !checkIn.Wait95PerChannel.ContainsKey("BagDrop"),
+                "Wait95 is never reported for Web or Bag Drop at Check-In");
+
+            List<Passenger> processed = checkIn.QueueResults.ProcessedPassengers;
+
+            Check(processed.Count == 8,
+                $"Check-In serves Counter passengers only ({processed.Count} == 8)");
+            Check(processed.All(p => p.Channel == "Counter"),
+                "Check-In never serves a Web or Bag Drop record");
+            Check(processed.All(p => p.History.ContainsKey(FacilityType.CheckIn)),
+                "Every Check-In passenger carries Check-In history");
+
+            int counterPool = checkIn.PoolNames.IndexOf("Counter");
+            double counterMean = checkIn.PoolResults[counterPool].ProcessedPassengers
+                .Average(p => p.ServiceTime);
+
+            Check(Math.Abs(counterMean - 2.0) < 1e-9,
+                $"Counter uses its own service-time mapping ({counterMean} == 2.0)");
+
+            BagDropResults bagDrop = new BagDropSolver().Solve(new BagDropInputs
+            {
+                Passengers = checkIn.QueueResults.Passengers,
+                ServiceTimeProvider = serviceTimes,
+                PhysicalResources = new List<int> { 2 },
+                OptimizeResources = false,
+                TargetWait95 = new List<double> { 10.0 },
+                Seed = 9,
+                StaffingPercentage = 100.0
+            });
+
+            List<Passenger> dropped = bagDrop.QueueResults.ProcessedPassengers;
+
+            Check(dropped.Count == 6,
+                $"Bag Drop serves only the Web passengers with a checked bag ({dropped.Count} == 6)");
+            Check(dropped.All(p => p.Channel == "Web" && p.HasCheckedBag),
+                "Bag Drop takes Web bag carriers, not Counter passengers or Web hand-baggage");
+            Check(dropped.All(p => p.History.ContainsKey(FacilityType.BagDrop)),
+                "Every Bag Drop passenger carries Bag Drop history");
+            Check(!dropped.Any(p => p.History.ContainsKey(FacilityType.CheckIn)),
+                "Bag Drop does not fabricate a Check-In visit");
+
+            int bagDropPool = bagDrop.PoolNames.IndexOf("Shared");
+            double bagDropMean = bagDrop.PoolResults[bagDropPool].ProcessedPassengers
+                .Average(p => p.ServiceTime);
+
+            Check(Math.Abs(bagDropMean - 0.5) < 1e-9,
+                $"Bag Drop uses the Web service-time mapping through the shared queue ({bagDropMean} == 0.5)");
+        }
+
+        // -------------------------------------------------------------
+        // Bag Drop: keyed BagDrop| segment pools with a shared fallback
+        // -------------------------------------------------------------
+        private static void RunBagDropSegmentPools()
+        {
+            Console.WriteLine("== Bag Drop keyed segment pools ==");
+
+            List<Passenger> passengers = new List<Passenger>();
+            int id = 1;
+
+            void AddPassenger(string channel, DHPType dhp, string profile, int count, bool bag)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    passengers.Add(new Passenger
+                    {
+                        Id = id++,
+                        Channel = channel,
+                        DHPType = dhp,
+                        ProfileName = profile,
+                        PassengerType = dhp == DHPType.InternationalDeparture
+                            ? PassengerType.International
+                            : PassengerType.Domestic,
+                        ArrivalTime = id * 0.01,
+                        QueueArrivalTime = id * 0.01,
+                        UsesOnlineCheckIn = channel == "Web",
+                        HasCheckedBag = bag
+                    });
+                }
+            }
+
+            // Web and Kiosk bag carriers are the Bag Drop population.
+            AddPassenger("Web", DHPType.DomesticDeparture, "Domestic Economy", 6, true);
+            AddPassenger("Web", DHPType.DomesticDeparture, "Domestic Business", 4, true);
+            AddPassenger("Kiosk", DHPType.InternationalDeparture, "International Economy", 5, true);
+            // Web hand-baggage: not in any bag-drop pool.
+            AddPassenger("Web", DHPType.DomesticDeparture, "Domestic Economy", 3, false);
+            // Counter bag carriers: bag accepted at the desk, never at Bag Drop.
+            AddPassenger("Counter", DHPType.DomesticDeparture, "Domestic Economy", 4, true);
+            // An uncovered segment to exercise the shared fallback pool.
+            AddPassenger("Web", DHPType.InternationalDeparture, "International Business", 2, true);
+
+            ServiceProfile service = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 };
+
+            // ---------------------------------------------------------
+            // Keyed segment pools: BagDrop|DHPType|Profile identities
+            // ---------------------------------------------------------
+            BagDropSolver keyedSolver = new BagDropSolver();
+
+            BagDropResults keyed = keyedSolver.Solve(new BagDropInputs
+            {
+                Passengers = passengers,
+                ServiceProfile = service,
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan { Channel = "BagDrop", PoolKey = "DomesticDeparture|Domestic Economy", PhysicalResources = 2, TargetWait95 = 5.0, Range = new ResourceSearchRange(1, 8) },
+                    new PoolPlan { Channel = "BagDrop", PoolKey = "DomesticDeparture|Domestic Business", PhysicalResources = 2, TargetWait95 = 5.0, Range = new ResourceSearchRange(1, 8) },
+                    new PoolPlan { Channel = "BagDrop", PoolKey = "InternationalDeparture|International Economy", PhysicalResources = 2, TargetWait95 = 5.0, Range = new ResourceSearchRange(1, 8) }
+                },
+                PhysicalResources = new List<int> { 3 },
+                TargetWait95 = new List<double> { 10.0 },
+                OptimizeResources = false,
+                Seed = 21,
+                StaffingPercentage = 100.0
+            });
+
+            Check(keyedSolver.Warnings.Any(w =>
+                    w.Contains("match no keyed Bag Drop pool plan") &&
+                    w.Contains("InternationalDeparture|International Business 2")),
+                "The uncovered segment is reported and routed to a shared fallback pool");
+
+            Check(keyed.PoolNames.SequenceEqual(new[]
+                {
+                    "BagDrop|DomesticDeparture|Domestic Economy",
+                    "BagDrop|DomesticDeparture|Domestic Business",
+                    "BagDrop|InternationalDeparture|International Economy",
+                    "Shared"
+                }),
+                $"Keyed BagDrop pools plus the shared fallback are reported ({string.Join(", ", keyed.PoolNames)})");
+
+            Check(keyed.PhysicalCounters == 9,
+                $"Physical counters sum the three segment pools plus the fallback ({keyed.PhysicalCounters} == 9)");
+
+            List<Passenger> dropped = keyed.QueueResults.ProcessedPassengers;
+
+            Check(dropped.Count == 17,
+                $"Bag Drop serves 6 + 4 + 5 segment passengers plus 2 fallback ({dropped.Count} == 17)");
+            Check(dropped.All(p => p.Channel != "Counter"),
+                "Counter bag carriers never enter a keyed or fallback Bag Drop pool");
+            Check(dropped.All(p => p.HasCheckedBag),
+                "Web hand-baggage passengers are not served at Bag Drop");
+            Check(dropped.All(p => p.History.ContainsKey(FacilityType.BagDrop)),
+                "Every served passenger carries Bag Drop history");
+
+            int domEconPool = keyed.PoolNames.IndexOf("BagDrop|DomesticDeparture|Domestic Economy");
+            Check(keyed.PoolResults[domEconPool].ProcessedPassengers.Count == 6 &&
+                  keyed.PoolResults[domEconPool].ProcessedPassengers
+                      .All(p => p.ProfileName == "Domestic Economy" &&
+                                p.DHPType == DHPType.DomesticDeparture),
+                "The Domestic Economy pool takes only its own profile slice");
+
+            int fallbackPool = keyed.PoolNames.IndexOf("Shared");
+            Check(keyed.PoolResults[fallbackPool].ProcessedPassengers.Count == 2 &&
+                  keyed.PoolResults[fallbackPool].ProcessedPassengers
+                      .All(p => p.ProfileName == "International Business"),
+                "The shared fallback pool takes only the uncovered segment");
+
+            // ---------------------------------------------------------
+            // Facility-wide BagDrop plan: covers everything, segment rows
+            // alongside it are rejected
+            // ---------------------------------------------------------
+            BagDropSolver wideSolver = new BagDropSolver();
+
+            BagDropResults wide = wideSolver.Solve(new BagDropInputs
+            {
+                Passengers = passengers,
+                ServiceProfile = service,
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan { Channel = "BagDrop", PhysicalResources = 5, TargetWait95 = 8.0, Range = new ResourceSearchRange(2, 12) },
+                    new PoolPlan { Channel = "BagDrop", PoolKey = "DomesticDeparture|Domestic Economy", PhysicalResources = 2, TargetWait95 = 5.0, Range = new ResourceSearchRange(1, 8) }
+                },
+                OptimizeResources = false,
+                Seed = 21,
+                StaffingPercentage = 100.0
+            });
+
+            Check(wideSolver.Warnings.Any(w =>
+                    w.Contains("ignored because the facility-wide") &&
+                    w.Contains("BagDrop")),
+                "Segment plans alongside a facility-wide BagDrop plan are reported as ignored");
+            Check(wide.PoolNames.SequenceEqual(new[] { "BagDrop" }),
+                $"A facility-wide BagDrop plan yields one pool ({string.Join(", ", wide.PoolNames)})");
+            Check(wide.PhysicalCounters == 5 &&
+                  wide.QueueResults.ProcessedPassengers.Count == 17,
+                $"The facility-wide pool serves the whole bag-drop population ({wide.PhysicalCounters} counters, {wide.QueueResults.ProcessedPassengers.Count} served)");
+
+            // ---------------------------------------------------------
+            // Invalid channel prefix: a legacy Web| key is rejected
+            // ---------------------------------------------------------
+            BagDropSolver invalidSolver = new BagDropSolver();
+
+            BagDropResults invalid = invalidSolver.Solve(new BagDropInputs
+            {
+                Passengers = passengers,
+                ServiceProfile = service,
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan { Channel = "Web", PoolKey = "DomesticDeparture|Domestic Economy", PhysicalResources = 2, TargetWait95 = 5.0, Range = new ResourceSearchRange(1, 8) }
+                },
+                OptimizeResources = false,
+                Seed = 21,
+                StaffingPercentage = 100.0
+            });
+
+            Check(invalidSolver.Warnings.Any(w =>
+                    w.Contains("'Web|DomesticDeparture|Domestic Economy'") &&
+                    w.Contains("BagDrop|DHPType|ProfileName")),
+                "A Web-keyed Bag Drop plan is rejected with an explicit message");
+            Check(invalid.PoolNames.SequenceEqual(new[] { "Shared" }) &&
+                  invalid.QueueResults.ProcessedPassengers.Count == 17,
+                $"With no valid plans the facility falls back to one shared pool serving everyone ({invalid.QueueResults.ProcessedPassengers.Count} == 17)");
+
+            // ---------------------------------------------------------
+            // Optimizer honours each segment plan's own domain
+            // ---------------------------------------------------------
+            BagDropSolver optimized = new BagDropSolver();
+
+            BagDropResults optimizedResult = optimized.Solve(new BagDropInputs
+            {
+                Passengers = passengers,
+                ServiceProfile = service,
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan { Channel = "BagDrop", PoolKey = "DomesticDeparture|Domestic Economy", PhysicalResources = 2, TargetWait95 = 5.0, Range = new ResourceSearchRange(1, 4) },
+                    new PoolPlan { Channel = "BagDrop", PoolKey = "DomesticDeparture|Domestic Business", PhysicalResources = 2, TargetWait95 = 5.0, Range = new ResourceSearchRange(1, 4) },
+                    new PoolPlan { Channel = "BagDrop", PoolKey = "InternationalDeparture|International Economy", PhysicalResources = 2, TargetWait95 = 5.0, Range = new ResourceSearchRange(1, 4) }
+                },
+                PhysicalResources = new List<int> { 3 },
+                TargetWait95 = new List<double> { 10.0 },
+                OptimizeResources = true,
+                Seed = 21,
+                StaffingPercentage = 100.0
+            });
+
+            Check(optimizedResult.SearchOutcomes.Count == 4,
+                $"The optimizer searches every segment pool plus the fallback ({optimizedResult.SearchOutcomes.Count} == 4)");
+            Check(optimizedResult.SearchOutcomes.All(o =>
+                    o.OptimalPhysicalResources >= o.Plan.Range.Min &&
+                    o.OptimalPhysicalResources <= o.Plan.Range.Max),
+                "Every segment and fallback search stays inside its own resource domain");
         }
 
         // -------------------------------------------------------------
@@ -1657,7 +1940,7 @@ namespace AirportPlanning.Tests
             AddCheckIn("Counter", DHPType.InternationalDeparture, "Economy", 6, false, false);
             AddCheckIn("Counter", DHPType.InternationalDeparture, "Business", 5, false, false);
             AddCheckIn("Kiosk", DHPType.DomesticDeparture, "Economy", 4, false, false);
-            AddCheckIn("BagDrop", DHPType.InternationalDeparture, "Economy", 3, true, true);
+            AddCheckIn("Kiosk", DHPType.InternationalDeparture, "Economy", 3, false, true);
 
             List<PoolPlan> checkInPlans = new List<PoolPlan>
             {
@@ -1665,8 +1948,7 @@ namespace AirportPlanning.Tests
                 new PoolPlan { Channel = "Counter", PoolKey = "DomesticDeparture|Economy", PhysicalResources = 3, TargetWait95 = 10.0, Range = new ResourceSearchRange(2, 9) },
                 new PoolPlan { Channel = "Counter", PoolKey = "InternationalDeparture|Business", PhysicalResources = 4, TargetWait95 = 3.0, Range = new ResourceSearchRange(3, 10) },
                 new PoolPlan { Channel = "Counter", PoolKey = "InternationalDeparture|Economy", PhysicalResources = 5, TargetWait95 = 10.0, Range = new ResourceSearchRange(4, 11) },
-                new PoolPlan { Channel = "Kiosk", PhysicalResources = 6, TargetWait95 = 2.0, Range = new ResourceSearchRange(5, 12) },
-                new PoolPlan { Channel = "BagDrop", PhysicalResources = 7, TargetWait95 = 3.0, Range = new ResourceSearchRange(6, 13) }
+                new PoolPlan { Channel = "Kiosk", PhysicalResources = 6, TargetWait95 = 2.0, Range = new ResourceSearchRange(5, 12) }
             };
 
             CheckInSolver checkInSolver = new CheckInSolver();
@@ -1675,7 +1957,7 @@ namespace AirportPlanning.Tests
             {
                 Passengers = checkInPassengers,
                 ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
-                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
+                Channels = new List<string> { "Counter", "Kiosk" },
                 PoolPlans = checkInPlans,
                 OptimizeResources = false,
                 Seed = 7,
@@ -1688,16 +1970,15 @@ namespace AirportPlanning.Tests
                     "Counter|DomesticDeparture|Economy",
                     "Counter|InternationalDeparture|Business",
                     "Counter|InternationalDeparture|Economy",
-                    "Kiosk",
-                    "BagDrop"
+                    "Kiosk"
                 }),
-                "Keyed Check-In plans define the four counter subpools plus Kiosk and BagDrop");
-            Check(planned.PhysicalPerChannel.SequenceEqual(new[] { 2, 3, 4, 5, 6, 7 }),
+                "Keyed Check-In plans define the four counter subpools plus Kiosk");
+            Check(planned.PhysicalPerChannel.SequenceEqual(new[] { 2, 3, 4, 5, 6 }),
                 "Nominal resources come from each plan's PNR");
-            Check(planned.NominalPerChannel.SequenceEqual(new[] { 2, 3, 4, 5, 6, 7 }),
+            Check(planned.NominalPerChannel.SequenceEqual(new[] { 2, 3, 4, 5, 6 }),
                 "Nominal resources are reported separately from the simulated count");
-            Check(planned.PhysicalCounters == 27,
-                $"Physical total is the sum of the planned pools ({planned.PhysicalCounters} == 27)");
+            Check(planned.PhysicalCounters == 20,
+                $"Physical total is the sum of the planned pools ({planned.PhysicalCounters} == 20)");
             Check(!checkInSolver.Warnings.Any(w => w.Contains("received no passengers")),
                 "Every configured pool receives its routed demand");
             Check(!checkInSolver.Warnings.Any(w => w.Contains("no pool plan")),
@@ -1733,14 +2014,14 @@ namespace AirportPlanning.Tests
             {
                 Passengers = checkInPassengers.Select(p => p.Clone()).ToList(),
                 ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
-                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
+                Channels = new List<string> { "Counter", "Kiosk" },
                 PoolPlans = checkInPlans,
                 OptimizeResources = true,
                 Seed = 7,
                 StaffingPercentage = 100.0
             });
 
-            bool checkInDomainsRespected = plannedOptimized.SearchOutcomes.Count == 6;
+            bool checkInDomainsRespected = plannedOptimized.SearchOutcomes.Count == 5;
 
             for (int i = 0; i < plannedOptimized.SearchOutcomes.Count; i++)
             {
@@ -1766,7 +2047,7 @@ namespace AirportPlanning.Tests
             {
                 Passengers = checkInPassengers.Select(p => p.Clone()).ToList(),
                 ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
-                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
+                Channels = new List<string> { "Counter", "Kiosk" },
                 PoolPlans = checkInPlans.Where(p => p.Channel != "Kiosk").ToList(),
                 OptimizeResources = false,
                 Seed = 7,
@@ -1781,7 +2062,7 @@ namespace AirportPlanning.Tests
             {
                 Passengers = checkInPassengers.Where(p => p.Channel != "Kiosk").Select(p => p.Clone()).ToList(),
                 ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
-                Channels = new List<string> { "Counter", "Kiosk", "BagDrop" },
+                Channels = new List<string> { "Counter", "Kiosk" },
                 PoolPlans = checkInPlans,
                 OptimizeResources = false,
                 Seed = 7,
@@ -1842,7 +2123,7 @@ namespace AirportPlanning.Tests
                 bagPassengers.Add(new Passenger
                 {
                     Id = 2000 + i,
-                    Channel = "BagDrop",
+                    Channel = "Web",
                     DHPType = DHPType.DomesticDeparture,
                     ProfileName = "Economy",
                     ArrivalTime = i * 0.2,
@@ -1856,7 +2137,6 @@ namespace AirportPlanning.Tests
             {
                 Passengers = bagPassengers,
                 ServiceProfile = new ServiceProfile { MeanServiceTime = 1.0, StandardDeviation = 0.0 },
-                Channels = new List<string> { "BagDrop" },
                 PoolPlans = new List<PoolPlan>
                 {
                     new PoolPlan { Channel = "BagDrop", PhysicalResources = 3, TargetWait95 = 3.0, Range = new ResourceSearchRange(1, 7) }
@@ -1928,6 +2208,1194 @@ namespace AirportPlanning.Tests
             Check(emigrated.PoolResults.Count == 2 &&
                   emigrated.PoolResults.All(p => p.ProcessedPassengers.Count > 0),
                 "Both e-gate and counter pools receive passengers without an upstream EGate channel");
+        }
+
+        // -------------------------------------------------------------
+        // Facility-scoped pool plans and service times
+        // -------------------------------------------------------------
+        private static void RunFacilityScoping()
+        {
+            Console.WriteLine("== Facility scoping ==");
+
+            ResourceSearchRange fallback = new ResourceSearchRange(1, 20);
+            List<string> warnings = new List<string>();
+
+            // One shared list carrying the same identity at two facilities.
+            List<PoolPlan> scoped = new List<PoolPlan>
+            {
+                new PoolPlan
+                {
+                    Facility = "Emigration", Channel = "EGate",
+                    PhysicalResources = 4, TargetWait95 = 5.0
+                },
+                new PoolPlan
+                {
+                    Facility = "Emigration", Channel = "Counter",
+                    PhysicalResources = 12, TargetWait95 = 10.0
+                },
+                new PoolPlan
+                {
+                    Facility = "Security", Channel = "EGate",
+                    PhysicalResources = 2, TargetWait95 = 2.0
+                },
+                new PoolPlan
+                {
+                    Facility = "Security", Channel = "ATRS",
+                    PhysicalResources = 6, TargetWait95 = 3.0
+                }
+            };
+
+            List<ChannelResourcePlan> emigration =
+                PoolPlanResolver.Resolve(scoped, fallback, warnings.Add, "Emigration");
+
+            Check(emigration.Count == 2 &&
+                  emigration[0].PhysicalResources == 4 && emigration[1].PhysicalResources == 12,
+                "Facility scoping gives Emigration its own EGate/Counter values");
+
+            warnings.Clear();
+
+            List<ChannelResourcePlan> security =
+                PoolPlanResolver.Resolve(scoped, fallback, warnings.Add, "Security");
+
+            Check(security.Count == 2 &&
+                  security[0].PhysicalResources == 2 && security[1].PhysicalResources == 6 &&
+                  security[1].Channel == "ATRS",
+                "Facility scoping gives Security its own EGate/ATRS values");
+
+            Check(warnings.Count == 0,
+                "Facility-scoped rows with one identity per facility raise no duplicate warning");
+
+            warnings.Clear();
+
+            // A facility-tagged row wins over an untagged row with the same identity.
+            List<ChannelResourcePlan> preferred = PoolPlanResolver.Resolve(
+                new List<PoolPlan>
+                {
+                    new PoolPlan { Channel = "EGate", PhysicalResources = 1, TargetWait95 = 1.0 },
+                    new PoolPlan
+                    {
+                        Facility = "Security", Channel = "EGate",
+                        PhysicalResources = 3, TargetWait95 = 3.0
+                    }
+                },
+                fallback, warnings.Add, "Security");
+
+            Check(preferred.Count == 1 && preferred[0].PhysicalResources == 3,
+                "A facility-tagged plan wins over an untagged plan with the same identity");
+
+            // Foreign-facility rows are ignored, and an empty match falls back.
+            warnings.Clear();
+
+            List<ChannelResourcePlan> foreign = PoolPlanResolver.Resolve(
+                new List<PoolPlan>
+                {
+                    new PoolPlan
+                    {
+                        Facility = "Emigration", Channel = "EGate",
+                        PhysicalResources = 4, TargetWait95 = 5.0
+                    }
+                },
+                fallback, warnings.Add, "Security");
+
+            Check(foreign == null && warnings.Any(w => w.Contains("No pool plan belongs to 'Security'")),
+                "Rows tagged for another facility fall back to legacy resolution with a warning");
+
+            // Unscoped resolution still sees everything (legacy behaviour).
+            warnings.Clear();
+
+            List<ChannelResourcePlan> unscoped = PoolPlanResolver.Resolve(
+                scoped, fallback, warnings.Add);
+
+            Check(unscoped.Count == 4,
+                "Unscoped resolution keeps every plan, tagged or not");
+
+            // ---------------------------------------------------------
+            // Service-time map scoping
+            // ---------------------------------------------------------
+            ServiceTimeMap map = new ServiceTimeMap
+            {
+                Default = new ServiceProfile { MeanServiceTime = 1.0 },
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry
+                    {
+                        Key = "EGate",
+                        Facility = "Emigration",
+                        Profile = new ServiceProfile { MeanServiceTime = 25.0 / 60.0 }
+                    },
+                    new ServiceTimeEntry
+                    {
+                        Key = "EGate",
+                        Facility = "Security",
+                        Profile = new ServiceProfile { MeanServiceTime = 7.0 / 60.0 }
+                    },
+                    new ServiceTimeEntry
+                    {
+                        Key = "ATRS",
+                        Profile = new ServiceProfile { MeanServiceTime = 20.0 / 60.0 }
+                    }
+                }
+            };
+
+            Passenger emi = new Passenger { Channel = "EGate", ProfileName = "Economy" };
+
+            double emigrationSeconds =
+                map.ScopedTo("Emigration").Resolve(emi).MeanServiceTime * 60.0;
+            double securitySeconds =
+                map.ScopedTo("Security").Resolve(emi).MeanServiceTime * 60.0;
+
+            Check(Math.Abs(emigrationSeconds - 25.0) < 1e-9,
+                $"The Emigration-scoped map resolves EGate at 25 s ({emigrationSeconds})");
+            Check(Math.Abs(securitySeconds - 7.0) < 1e-9,
+                $"The Security-scoped map resolves EGate at 7 s ({securitySeconds})");
+
+            Passenger atrs = new Passenger { Channel = "ATRS", ProfileName = "Economy" };
+
+            Check(Math.Abs(map.ScopedTo("Security").Resolve(atrs).MeanServiceTime * 60.0 - 20.0) < 1e-9,
+                "An untagged key applies at every facility");
+
+            // A constant provider passes through the scoping untouched.
+            IServiceTimeProvider constant = new ConstantServiceProvider(
+                new ServiceProfile { MeanServiceTime = 2.0 });
+
+            Check(ReferenceEquals(
+                    ((FacilitySolverProbe)Activator.CreateInstance(typeof(FacilitySolverProbe)))
+                        .ProbeResolve(constant, "Security"),
+                    constant),
+                "A non-map provider is returned without scoping");
+        }
+
+        private sealed class FacilitySolverProbe : FacilitySolverBase
+        {
+            public IServiceTimeProvider ProbeResolve(IServiceTimeProvider provider, string facility)
+            {
+                return ResolveServiceTimeProvider(provider, null, facility);
+            }
+        }
+
+        // -------------------------------------------------------------
+        // Service Time Map key levels: the same segregation grammar as
+        // Pool Plans (stage-wide, sector-only, profile-only, full identity)
+        // -------------------------------------------------------------
+        private static void RunServiceTimeKeyLevels()
+        {
+            Console.WriteLine("== Service Time Map key levels ==");
+
+            ServiceProfile Profile(double seconds)
+            {
+                return new ServiceProfile { MeanServiceTime = seconds / 60.0 };
+            }
+
+            Passenger Pax(string channel, DHPType dhp, string profile)
+            {
+                return new Passenger
+                {
+                    Channel = channel,
+                    DHPType = dhp,
+                    ProfileName = profile
+                };
+            }
+
+            // ---- sector-only keys: 'Channel|DHPType' -------------------------
+            ServiceTimeMap sector = new ServiceTimeMap
+            {
+                Default = Profile(99),
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry { Key = "EGate|DomesticDeparture", Profile = Profile(7) },
+                    new ServiceTimeEntry { Key = "EGate|InternationalDeparture", Profile = Profile(8) },
+                    new ServiceTimeEntry { Key = "ATRS|DomesticDeparture", Profile = Profile(20) },
+                    new ServiceTimeEntry { Key = "ATRS|InternationalDeparture", Profile = Profile(22) }
+                }
+            };
+
+            Passenger domestic = Pax("EGate", DHPType.DomesticDeparture, "Domestic Economy");
+            Passenger intl = Pax("EGate", DHPType.InternationalDeparture, "International Economy");
+
+            Check(Math.Abs(sector.Resolve(domestic).MeanServiceTime * 60 - 7) < 1e-9,
+                "A sector-only key 'EGate|DomesticDeparture' matches any domestic profile");
+            Check(Math.Abs(sector.Resolve(intl).MeanServiceTime * 60 - 8) < 1e-9,
+                "A sector-only key 'EGate|InternationalDeparture' matches any international profile");
+            Check(Math.Abs(sector.Resolve(Pax("ATRS", DHPType.DomesticDeparture, "Domestic Economy"))
+                    .MeanServiceTime * 60 - 20) < 1e-9,
+                "The same sector-only grammar resolves the ATRS stage");
+
+            // ---- precedence: the specific key beats the stage-wide one -------
+            ServiceTimeMap precedence = new ServiceTimeMap
+            {
+                Default = Profile(99),
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry { Key = "EGate", Profile = Profile(10) },
+                    new ServiceTimeEntry { Key = "EGate|DomesticDeparture", Profile = Profile(7) }
+                }
+            };
+
+            Check(Math.Abs(precedence.Resolve(domestic).MeanServiceTime * 60 - 7) < 1e-9,
+                "A sector key outranks the stage-wide 'EGate' key");
+            Check(Math.Abs(precedence.Resolve(Pax("EGate", DHPType.InternationalDeparture, "X"))
+                    .MeanServiceTime * 60 - 10) < 1e-9,
+                "The stage-wide 'EGate' key covers sectors with no key of their own");
+
+            // ---- bare DHP key applies at every channel ------------------------
+            ServiceTimeMap bare = new ServiceTimeMap
+            {
+                Default = Profile(99),
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry { Key = "DomesticDeparture", Profile = Profile(6) }
+                }
+            };
+
+            Check(Math.Abs(bare.Resolve(Pax("EGate", DHPType.DomesticDeparture, "Domestic Economy"))
+                    .MeanServiceTime * 60 - 6) < 1e-9 &&
+                  Math.Abs(bare.Resolve(Pax("ATRS", DHPType.DomesticDeparture, "Domestic Economy"))
+                    .MeanServiceTime * 60 - 6) < 1e-9,
+                "A bare DHP key applies at every channel");
+
+            // ---- profile-only key still works ---------------------------------
+            ServiceTimeMap profileOnly = new ServiceTimeMap
+            {
+                Default = Profile(99),
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry { Key = "EGate|Domestic Economy", Profile = Profile(5) }
+                }
+            };
+
+            Check(Math.Abs(profileOnly.Resolve(domestic).MeanServiceTime * 60 - 5) < 1e-9,
+                "A 'Channel|Profile' key still resolves");
+
+            // ---- TryResolve reports the silent miss ---------------------------
+            ServiceTimeMap miss = new ServiceTimeMap
+            {
+                Default = Profile(50),
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry { Key = "Counter|DomesticDeparture|Domestic Economy", Profile = Profile(1) }
+                }
+            };
+
+            Check(!miss.TryResolve(domestic, out ServiceProfile fallback) &&
+                  ReferenceEquals(fallback, miss.Default),
+                "TryResolve reports when no key matched and hands back the Default");
+            Check(miss.TryResolve(domestic, out _) == false ||
+                  miss.Resolve(domestic) != null,
+                "Resolve still falls back to Default after a miss");
+
+            // ---- full identity still wins over sector-only --------------------
+            ServiceTimeMap full = new ServiceTimeMap
+            {
+                Default = Profile(99),
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry { Key = "EGate|DomesticDeparture", Profile = Profile(7) },
+                    new ServiceTimeEntry
+                    {
+                        Key = "EGate|DomesticDeparture|Domestic Business",
+                        Profile = Profile(4)
+                    }
+                }
+            };
+
+            Check(Math.Abs(full.Resolve(Pax("EGate", DHPType.DomesticDeparture, "Domestic Business"))
+                    .MeanServiceTime * 60 - 4) < 1e-9,
+                "The full identity outranks the sector-only key");
+            Check(Math.Abs(full.Resolve(domestic).MeanServiceTime * 60 - 7) < 1e-9,
+                "The sector-only key covers profiles without a full identity");
+        }
+
+        // -------------------------------------------------------------
+        // Facility tag scoping: lenient matching, loud failures
+        // -------------------------------------------------------------
+        private static void RunFacilityTagScoping()
+        {
+            Console.WriteLine("== Facility tag scoping ==");
+
+            // ---- canonicalization accepts the planning-table spellings -------
+            Check(FacilityName.Canonicalize("Security Check") == FacilityName.Security &&
+                  FacilityName.Canonicalize("security  check") == FacilityName.Security,
+                "'Security Check' canonicalizes to Security");
+
+            Check(FacilityName.Canonicalize("Departure Emigration") == FacilityName.Emigration &&
+                  FacilityName.Canonicalize("Arrival Immigration") == FacilityName.Immigration &&
+                  FacilityName.Canonicalize("Check-in Area") == FacilityName.CheckIn &&
+                  FacilityName.Canonicalize("Terminal Entry Gates") == FacilityName.TerminalEntry,
+                "Planning-table spellings canonicalize to their facilities");
+
+            Check(FacilityName.Canonicalize("Emmigration") == null,
+                "An unknown tag canonicalizes to nothing");
+
+            Check(FacilityName.Matches("Security Check", "Security") &&
+                  FacilityName.Matches("SECURITY", "Security") &&
+                  !FacilityName.Matches("Emigration", "Security"),
+                "Lenient tag matching separates facilities");
+
+            // ---- Pool Plans: a mistagged row is warned, not silently dropped --
+            ResourceSearchRange fallback = new ResourceSearchRange(1, 20);
+            List<string> warnings = new List<string>();
+
+            List<ChannelResourcePlan> mistagged = PoolPlanResolver.Resolve(
+                new List<PoolPlan>
+                {
+                    new PoolPlan
+                    {
+                        Facility = "Departure Emigration", Channel = "EGate",
+                        PhysicalResources = 4, TargetWait95 = 5.0
+                    }
+                },
+                fallback, warnings.Add, "Emigration");
+
+            Check(mistagged != null && mistagged.Count == 1 && mistagged[0].PhysicalResources == 4,
+                "A planning-table tag 'Departure Emigration' now resolves for Emigration");
+
+            warnings.Clear();
+
+            List<ChannelResourcePlan> unknown = PoolPlanResolver.Resolve(
+                new List<PoolPlan>
+                {
+                    new PoolPlan
+                    {
+                        Facility = "Emmigreation", Channel = "EGate",
+                        PhysicalResources = 4, TargetWait95 = 5.0
+                    }
+                },
+                fallback, warnings.Add, "Emigration");
+
+            Check(unknown == null &&
+                  warnings.Any(w => w.Contains("matches no facility") && w.Contains("Emmigreation")) &&
+                  warnings.Any(w => w.Contains("Valid facility names")),
+                "A mistagged pool plan is reported with the valid names, not silently dropped");
+
+            warnings.Clear();
+
+            List<ChannelResourcePlan> empty = PoolPlanResolver.Resolve(
+                new List<PoolPlan>
+                {
+                    new PoolPlan
+                    {
+                        Facility = "Security", Channel = "EGate",
+                        PhysicalResources = 2, TargetWait95 = 2.0
+                    }
+                },
+                fallback, warnings.Add, "Emigration");
+
+            Check(empty == null &&
+                  warnings.Any(w => w.Contains("No pool plan belongs to 'Emigration'") &&
+                                    w.Contains("Security")),
+                "A scope with no rows names the tags that exist elsewhere");
+
+            // ---- Service Time Map: the same leniency and the same warnings ----
+            ServiceProfile Profile(double seconds)
+            {
+                return new ServiceProfile { MeanServiceTime = seconds / 60.0 };
+            }
+
+            ServiceTimeMap table = new ServiceTimeMap
+            {
+                Default = Profile(10),
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry
+                    {
+                        Key = "EGate", Facility = "Departure Emigration", Profile = Profile(25)
+                    },
+                    new ServiceTimeEntry
+                    {
+                        Key = "EGate", Facility = "Security Check", Profile = Profile(7)
+                    }
+                }
+            };
+
+            Passenger emiGate = new Passenger
+            {
+                Channel = "EGate",
+                DHPType = DHPType.InternationalDeparture,
+                ProfileName = "Economy"
+            };
+
+            List<string> mapWarnings = new List<string>();
+
+            double emigrationSeconds =
+                table.ScopedTo("Emigration", mapWarnings.Add).Resolve(emiGate).MeanServiceTime * 60.0;
+
+            Check(Math.Abs(emigrationSeconds - 25.0) < 1e-9,
+                $"The planning-table tag gives Emigration its 25 s e-gate row ({emigrationSeconds})");
+
+            Check(mapWarnings.Count == 0,
+                "Correct planning-table tags raise no warning");
+
+            double securitySeconds =
+                table.ScopedTo("Security", mapWarnings.Add).Resolve(emiGate).MeanServiceTime * 60.0;
+
+            Check(Math.Abs(securitySeconds - 7.0) < 1e-9,
+                $"The same map scoped to Security resolves its own 7 s row ({securitySeconds})");
+
+            ServiceTimeMap mistaggedMap = new ServiceTimeMap
+            {
+                Default = Profile(10),
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry
+                    {
+                        Key = "EGate", Facility = "Emmigreation", Profile = Profile(25)
+                    }
+                }
+            };
+
+            mapWarnings.Clear();
+
+            double fallbackSeconds =
+                mistaggedMap.ScopedTo("Emigration", mapWarnings.Add).Resolve(emiGate).MeanServiceTime * 60.0;
+
+            Check(Math.Abs(fallbackSeconds - 10.0) < 1e-9 &&
+                  mapWarnings.Any(w => w.Contains("matches no facility")) &&
+                  mapWarnings.Any(w => w.Contains("No Service Time Map row belongs to 'Emigration'")),
+                "A mistagged map row warns and the scope falls back to Default");
+
+            // ---- a foreign untagged stage key is flagged ----------------------
+            ServiceTimeMap leaked = new ServiceTimeMap
+            {
+                Default = Profile(10),
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry
+                    {
+                        Key = "ATRS|DomesticDeparture", Profile = Profile(20)
+                    }
+                }
+            };
+
+            mapWarnings.Clear();
+
+            leaked.ScopedTo("Emigration", mapWarnings.Add);
+
+            Check(mapWarnings.Any(w =>
+                    w.Contains("ATRS|DomesticDeparture") && w.Contains("tag the row 'Security'")),
+                "An untagged Security stage key wired to Emigration is flagged before it leaks");
+        }
+
+        // -------------------------------------------------------------
+        // Security as e-gate -> ATRS queues in series
+        // -------------------------------------------------------------
+        private static void RunSecuritySeries()
+        {
+            Console.WriteLine("== Security series ==");
+
+            List<Passenger> passengers = new List<Passenger>();
+
+            // Every fourth passenger is an arrival: arrivals never use security,
+            // so the series stage must leave them untouched.
+            for (int i = 0; i < 60; i++)
+            {
+                bool arrival = i % 4 == 3;
+
+                passengers.Add(new Passenger
+                {
+                    Id = 4000 + i,
+                    Channel = "Counter",
+                    DHPType = arrival
+                        ? DHPType.InternationalArrival
+                        : DHPType.InternationalDeparture,
+                    PassengerType = PassengerType.International,
+                    ProfileName = "Economy",
+                    ArrivalTime = i * 0.2,
+                    QueueArrivalTime = i * 0.2
+                });
+            }
+
+            SecurityResults series = new SecuritySolver().Solve(new SecurityInputs
+            {
+                Passengers = passengers,
+                UseEGateSeries = true,
+                EGatePhysicalResources = 2,
+                EGateTargetWait95 = 2.0,
+                EGateServiceTimeSeconds = 7.0,
+                PhysicalResources = new List<int> { 3 },
+                ServiceProfile = new ServiceProfile
+                {
+                    MeanServiceTime = 20.0 / 60.0,
+                    StandardDeviation = 0.0
+                },
+                OptimizeResources = false,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            Check(series.IsSeries && series.EGateResults != null && series.AtrsResults != null,
+                "Series mode reports both stage results");
+
+            Check(series.PoolNames.SequenceEqual(new[] { "EGate", "ATRS" }),
+                "Series pools are named EGate and ATRS");
+
+            Check(series.EGatePhysicalCount == 2 && series.AtrsPhysicalCount == 3 &&
+                  series.PhysicalLanes == 5,
+                $"Physical counts are per stage and sum facility-wide ({series.EGatePhysicalCount}/{series.AtrsPhysicalCount}/{series.PhysicalLanes})");
+
+            List<Passenger> processed = series.QueueResults.ProcessedPassengers;
+
+            int departures = 60 - 60 / 4;
+
+            Check(processed.Count == departures,
+                $"Series mode screens departing passengers only ({processed.Count} == {departures})");
+
+            Check(processed.All(p => p.DHPType == DHPType.InternationalDeparture),
+                "Series mode never serves arrival passengers");
+
+            Check(processed.All(p => p.SecurityEntryRoute == "EGate") &&
+                  processed.All(p => p.SecurityScreeningRoute == "ATRS"),
+                "Every passenger carries both stage routes");
+
+            Check(processed.All(p => p.Channel == "Counter"),
+                "The upstream channel survives the checkpoint");
+
+            Check(processed.All(p => p.History.ContainsKey(FacilityType.Security)),
+                "The Security history is the screening stage's record");
+
+            // The Security record carries BOTH stages: main fields are the
+            // screening visit, entry fields are the e-gate visit.
+            FacilityRecord securityRecord = processed[0].History[FacilityType.Security];
+
+            Check(securityRecord.HasEntryStage &&
+                  !string.IsNullOrWhiteSpace(securityRecord.EntryPoolName) &&
+                  securityRecord.EntryEndServiceTime <= securityRecord.StartServiceTime + 1e9,
+                "The Security history carries the e-gate stage in its entry fields");
+
+            Check(Math.Abs(securityRecord.WaitTime - processed[0].SecurityScreeningWait) < 1e-9 &&
+                  Math.Abs(securityRecord.EntryWaitTime - processed[0].SecurityEntryWait) < 1e-9,
+                "History separates the screening wait (main) from the e-gate wait (entry)");
+
+            Check(!string.IsNullOrWhiteSpace(securityRecord.PoolName),
+                $"The Security history names the pool that served the visit ({securityRecord.PoolName})");
+
+            // The screening stage's arrivals must start after the e-gate stage
+            // has served: no passenger can enter ATRS before finishing a gate.
+            double firstAtrsArrival = processed.Min(p => p.ArrivalTime);
+            double firstGateFinish = series.EGateResults.ProcessedPassengers
+                .Where(p => p.ServiceTime > 0)
+                .Min(p => p.StartServiceTime + p.ServiceTime);
+
+            Check(firstAtrsArrival >= firstGateFinish - 1e-9,
+                $"No passenger reaches ATRS before clearing an e-gate ({firstAtrsArrival} >= {firstGateFinish})");
+
+            // The service chain: screening arrival = gate end (zero walk).
+            Passenger slowest = processed
+                .OrderByDescending(p => p.StartServiceTime - p.ArrivalTime)
+                .First();
+
+            Check(processed.All(p => p.WaitTime >= 0 && p.SecurityEntryWait >= 0),
+                "Both stage waits are recorded and non-negative");
+
+            // Bottleneck warning: 3 ATRS lanes at 20 s serve 9 pax/3min-window;
+            // the e-gate stage with 2 gates at 7 s is faster per pax, so ATRS
+            // should hold the larger queue.
+            Check(series.AtrsResults.PeakQueueLength >= series.EGateResults.PeakQueueLength,
+                $"The slower ATRS stage holds the larger queue ({series.AtrsResults.PeakQueueLength} >= {series.EGateResults.PeakQueueLength})");
+
+            // ---- single-stage behaviour is unchanged -------------------------
+            List<Passenger> legacyPassengers = new List<Passenger>();
+
+            for (int i = 0; i < 40; i++)
+            {
+                legacyPassengers.Add(new Passenger
+                {
+                    Id = 5000 + i,
+                    Channel = "Counter",
+                    DHPType = DHPType.InternationalDeparture,
+                    PassengerType = PassengerType.International,
+                    ProfileName = "Economy",
+                    ArrivalTime = i * 0.2,
+                    QueueArrivalTime = i * 0.2
+                });
+            }
+
+            SecurityResults single = new SecuritySolver().Solve(new SecurityInputs
+            {
+                Passengers = legacyPassengers,
+                PhysicalResources = new List<int> { 4 },
+                ServiceProfile = new ServiceProfile
+                {
+                    MeanServiceTime = 20.0 / 60.0,
+                    StandardDeviation = 0.0
+                },
+                OptimizeResources = false,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            Check(!single.IsSeries && single.EGateResults == null,
+                "Series off keeps the single-stage behaviour");
+
+            Check(single.QueueResults.ProcessedPassengers.Count == 40 &&
+                  single.PoolNames.SequenceEqual(new[] { "Shared" }),
+                "Single-stage security serves everyone through one shared pool");
+
+            // ---- series with an ATRS target and optimization -----------------
+            List<Passenger> optimized = new List<Passenger>();
+
+            for (int i = 0; i < 80; i++)
+            {
+                optimized.Add(new Passenger
+                {
+                    Id = 6000 + i,
+                    Channel = "Kiosk",
+                    DHPType = DHPType.InternationalDeparture,
+                    PassengerType = PassengerType.International,
+                    ProfileName = "Economy",
+                    ArrivalTime = i * 0.1,
+                    QueueArrivalTime = i * 0.1
+                });
+            }
+
+            SecurityResults tuned = new SecuritySolver().Solve(new SecurityInputs
+            {
+                Passengers = optimized,
+                UseEGateSeries = true,
+                EGatePhysicalResources = 2,
+                EGateTargetWait95 = 2.0,
+                EGateServiceTimeSeconds = 7.0,
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan
+                    {
+                        Facility = "Security", Channel = "ATRS",
+                        PhysicalResources = 4, TargetWait95 = 3.0,
+                        Range = new ResourceSearchRange(1, 12)
+                    }
+                },
+                ServiceProfile = new ServiceProfile
+                {
+                    MeanServiceTime = 20.0 / 60.0,
+                    StandardDeviation = 0.0
+                },
+                OptimizeResources = true,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            Check(tuned.IsSeries && tuned.AtrsPhysicalCount >= 1,
+                "Series optimization sizes the ATRS stage from its scoped plan");
+
+            Check(tuned.SearchOutcomes.Count >= 2,
+                $"Both stages report optimizer outcomes ({tuned.SearchOutcomes.Count} >= 2)");
+
+            // ---- four pools: sector split by PoolKey at both stages ----------
+            // Domestic and international passengers queue separately at the
+            // e-gate stage and at the ATRS stage: four pool identities, and
+            // Physical per Pool / Active per Pool carry four entries.
+            List<Passenger> sectorSplit = new List<Passenger>();
+
+            for (int i = 0; i < 45; i++)
+            {
+                bool domestic = i % 2 == 0;
+
+                sectorSplit.Add(new Passenger
+                {
+                    Id = 7000 + i,
+                    Channel = "Counter",
+                    DHPType = domestic
+                        ? DHPType.DomesticDeparture
+                        : DHPType.InternationalDeparture,
+                    PassengerType = domestic
+                        ? PassengerType.Domestic
+                        : PassengerType.International,
+                    ProfileName = domestic ? "Domestic Economy" : "International Economy",
+                    ArrivalTime = i * 0.2,
+                    QueueArrivalTime = i * 0.2
+                });
+            }
+
+            List<PoolPlan> splitPlans = new List<PoolPlan>();
+
+            foreach (string stage in new[] { "EGate", "ATRS" })
+            {
+                splitPlans.Add(new PoolPlan
+                {
+                    Facility = "Security",
+                    Channel = stage,
+                    PoolKey = "DomesticDeparture|Domestic Economy",
+                    PhysicalResources = 1,
+                    TargetWait95 = 3.0,
+                    Range = new ResourceSearchRange(1, 6)
+                });
+                splitPlans.Add(new PoolPlan
+                {
+                    Facility = "Security",
+                    Channel = stage,
+                    PoolKey = "InternationalDeparture|International Economy",
+                    PhysicalResources = 1,
+                    TargetWait95 = 3.0,
+                    Range = new ResourceSearchRange(1, 6)
+                });
+            }
+
+            SecurityResults split = new SecuritySolver().Solve(new SecurityInputs
+            {
+                Passengers = sectorSplit,
+                UseEGateSeries = true,
+                EGateServiceTimeSeconds = 7.0,
+                ServiceProfile = new ServiceProfile
+                {
+                    MeanServiceTime = 20.0 / 60.0,
+                    StandardDeviation = 0.0
+                },
+                PoolPlans = splitPlans,
+                OptimizeResources = false,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            Check(split.PoolNames.Count == 4,
+                $"Four sector-split pool plans produce four pools ({split.PoolNames.Count} == 4)");
+
+            Check(split.PoolNames.Count(n => n.StartsWith("EGate|", StringComparison.OrdinalIgnoreCase)) == 2 &&
+                  split.PoolNames.Count(n => n.StartsWith("ATRS|", StringComparison.OrdinalIgnoreCase)) == 2,
+                "Two pools per stage, one per sector");
+
+            Check(split.PhysicalPerChannel.Count == 4 && split.ActivePerChannel.Count == 4 &&
+                  split.Wait95PerChannel.Count == 4 &&
+                  split.NominalPerChannel.Count == 4,
+                "Physical, active, Wait95 and nominal outputs carry the four pools");
+
+            int[] expectedPoolCounts = { 23, 22, 23, 22 };
+
+            Check(split.QueueResults.ProcessedPassengers.Count == 45 &&
+                  split.QueueResults.PoolResults.Select(p => p.PassengerCount)
+                      .SequenceEqual(expectedPoolCounts),
+                $"Every sector pool serves only its own sector ({string.Join(", ", split.QueueResults.PoolResults.Select(p => p.PassengerCount))})");
+
+            Check(split.QueueResults.ProcessedPassengers.All(p =>
+                    Math.Abs(p.WaitTime - (p.SecurityEntryWait + p.SecurityScreeningWait)) < 1e-9),
+                "Checkpoint wait is the sum of both stage queues");
+
+            Check(split.QueueResults.AverageWait > 0.0,
+                $"The checkpoint queues produce waits ({split.QueueResults.AverageWait:0.###} min average)");
+
+            // ---- sizing against the RAW demand, not the throttled stream -------
+            // Arrivals every 0.05 min (1200/h) outrun a single 7 s e-gate
+            // (~514/h), so stage 1 throttles. Raw demand needs at least
+            // ceil(1200 h x 20 s / 3600) = 7 ATRS lanes just to stay stable;
+            // a smoothed (released) stream would suggest far fewer. The
+            // optimizer must therefore pick a clearly larger count than the
+            // smoothed stream would.
+            List<Passenger> rawDemand = new List<Passenger>();
+
+            for (int i = 0; i < 100; i++)
+            {
+                rawDemand.Add(new Passenger
+                {
+                    Id = 9000 + i,
+                    Channel = "Counter",
+                    DHPType = DHPType.InternationalDeparture,
+                    PassengerType = PassengerType.International,
+                    ProfileName = "International Economy",
+                    ArrivalTime = i * 0.05,
+                    QueueArrivalTime = i * 0.05
+                });
+            }
+
+            SecuritySolver rawSolver = new SecuritySolver();
+
+            SecurityResults rawSized = rawSolver.Solve(new SecurityInputs
+            {
+                Passengers = rawDemand,
+                UseEGateSeries = true,
+                EGatePhysicalResources = 1,
+                EGateTargetWait95 = 0.0,
+                EGateServiceTimeSeconds = 7.0,
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan
+                    {
+                        Facility = "Security", Channel = "ATRS",
+                        PhysicalResources = 1, TargetWait95 = 1.0,
+                        Range = new ResourceSearchRange(1, 20)
+                    }
+                },
+                ServiceProfile = new ServiceProfile
+                {
+                    MeanServiceTime = 20.0 / 60.0,
+                    StandardDeviation = 0.0
+                },
+                OptimizeResources = true,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            int atrsChosen = rawSized.AtrsPhysicalCount;
+
+            // The discriminator: sizing runs on the raw arrivals, so the chosen
+            // ATRS count must not depend on how hard the e-gate stage throttles
+            // the realized stream into the screening stage. Run the same model
+            // with an e-gate bank that never throttles (10 gates at 7 s give
+            // ~5140/h against the 1200/h demand): the ATRS search sees
+            // identical raw demand either way, so both runs size it the same.
+            SecuritySolver unthrottledSolver = new SecuritySolver();
+
+            SecurityResults unthrottled = unthrottledSolver.Solve(new SecurityInputs
+            {
+                Passengers = rawDemand,
+                UseEGateSeries = true,
+                EGatePhysicalResources = 10,
+                EGateTargetWait95 = 0.0,
+                EGateServiceTimeSeconds = 7.0,
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan
+                    {
+                        Facility = "Security", Channel = "ATRS",
+                        PhysicalResources = 1, TargetWait95 = 1.0,
+                        Range = new ResourceSearchRange(1, 20)
+                    }
+                },
+                ServiceProfile = new ServiceProfile
+                {
+                    MeanServiceTime = 20.0 / 60.0,
+                    StandardDeviation = 0.0
+                },
+                OptimizeResources = true,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            int atrsChosenUnthrottled = unthrottled.AtrsPhysicalCount;
+
+            Check(atrsChosen == atrsChosenUnthrottled,
+                $"ATRS is sized on the raw demand: {atrsChosen} lanes with a throttling e-gate vs " +
+                $"{atrsChosenUnthrottled} with an unthrottled one");
+
+            Check(rawSized.SearchOutcomes.Count >= 2,
+                $"Both stages report optimizer outcomes ({rawSized.SearchOutcomes.Count} >= 2)");
+
+            // The realized simulation still runs on the staged arrivals: no
+            // passenger reaches ATRS before clearing an e-gate.
+            List<Passenger> rawProcessed = rawSized.QueueResults.ProcessedPassengers;
+
+            double firstRawAtrsArrival = rawProcessed.Min(p => p.ArrivalTime);
+            double firstRawGateFinish = rawSized.EGateResults.ProcessedPassengers
+                .Where(p => p.ServiceTime > 0)
+                .Min(p => p.StartServiceTime + p.ServiceTime);
+
+            Check(firstRawAtrsArrival >= firstRawGateFinish - 1e-9,
+                $"The realized screening sim still follows the e-gate releases ({firstRawAtrsArrival} >= {firstRawGateFinish})");
+
+            // The wired MQT survives the sizing/realized split.
+            Check(rawSized.PoolNames.Contains("ATRS"),
+                $"The ATRS pool result keeps its identity ({string.Join(", ", rawSized.PoolNames)})");
+
+            Check(rawSized.NominalPerChannel.Contains(1),
+                "Nominal reports the wired PNR, not the optimized count");
+
+            // ---- the Service Time Map is scoped to Security in series --------
+            // Emigration also owns an 'EGate' row and it is listed first; the
+            // series stages must ignore it and use Security's own rows.
+            ServiceTimeMap stageMap = new ServiceTimeMap
+            {
+                Default = new ServiceProfile { MeanServiceTime = 20.0 / 60.0, StandardDeviation = 0.0 },
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry
+                    {
+                        Key = "EGate", Facility = "Emigration",
+                        Profile = new ServiceProfile { MeanServiceTime = 25.0 / 60.0, StandardDeviation = 0.0 }
+                    },
+                    new ServiceTimeEntry
+                    {
+                        Key = "EGate", Facility = "Security",
+                        Profile = new ServiceProfile { MeanServiceTime = 7.0 / 60.0, StandardDeviation = 0.0 }
+                    },
+                    new ServiceTimeEntry
+                    {
+                        Key = "ATRS", Facility = "Security",
+                        Profile = new ServiceProfile { MeanServiceTime = 20.0 / 60.0, StandardDeviation = 0.0 }
+                    }
+                }
+            };
+
+            List<Passenger> mapPassengers = new List<Passenger>();
+
+            for (int i = 0; i < 40; i++)
+            {
+                mapPassengers.Add(new Passenger
+                {
+                    Id = 7500 + i,
+                    Channel = "Counter",
+                    DHPType = DHPType.InternationalDeparture,
+                    PassengerType = PassengerType.International,
+                    ProfileName = "Economy",
+                    ArrivalTime = i * 0.2,
+                    QueueArrivalTime = i * 0.2
+                });
+            }
+
+            SecurityResults scoped = new SecuritySolver().Solve(new SecurityInputs
+            {
+                Passengers = mapPassengers,
+                UseEGateSeries = true,
+                ServiceTimeProvider = stageMap,
+                PhysicalResources = new List<int> { 4 },
+                OptimizeResources = false,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            double gateSeconds = scoped.EGateResults.ProcessedPassengers
+                .Average(p => p.ServiceTime) * 60.0;
+            double screeningSeconds = scoped.AtrsResults.ProcessedPassengers
+                .Average(p => p.ServiceTime) * 60.0;
+
+            Check(Math.Abs(gateSeconds - 7.0) < 0.01,
+                $"The series e-gate ignores another facility's 'EGate' map row ({gateSeconds:0.##} s == 7)");
+
+            Check(Math.Abs(screeningSeconds - 20.0) < 0.01,
+                $"The series ATRS uses its own scoped map row ({screeningSeconds:0.##} s == 20)");
+
+            // ---- sector-only map keys give the stages different times --------
+            // Keys 'EGate|DomesticDeparture' (7 s) and 'ATRS|DomesticDeparture'
+            // (20 s) resolve per sector; the miss case warns instead of
+            // silently running both stages on the Default profile.
+            ServiceTimeMap sectorMap = new ServiceTimeMap
+            {
+                Default = new ServiceProfile { MeanServiceTime = 12.0 / 60.0, StandardDeviation = 0.0 },
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry
+                    {
+                        Key = "EGate|DomesticDeparture",
+                        Profile = new ServiceProfile { MeanServiceTime = 7.0 / 60.0, StandardDeviation = 0.0 }
+                    },
+                    new ServiceTimeEntry
+                    {
+                        Key = "ATRS|DomesticDeparture",
+                        Profile = new ServiceProfile { MeanServiceTime = 20.0 / 60.0, StandardDeviation = 0.0 }
+                    }
+                }
+            };
+
+            List<Passenger> sectorMapPassengers = new List<Passenger>();
+
+            for (int i = 0; i < 40; i++)
+            {
+                sectorMapPassengers.Add(new Passenger
+                {
+                    Id = 8500 + i,
+                    Channel = "Counter",
+                    DHPType = DHPType.DomesticDeparture,
+                    PassengerType = PassengerType.Domestic,
+                    ProfileName = "Domestic Economy",
+                    ArrivalTime = i * 0.2,
+                    QueueArrivalTime = i * 0.2
+                });
+            }
+
+            SecuritySolver sectorSolver = new SecuritySolver();
+
+            SecurityResults sectorTimed = sectorSolver.Solve(new SecurityInputs
+            {
+                Passengers = sectorMapPassengers,
+                UseEGateSeries = true,
+                ServiceTimeProvider = sectorMap,
+                PhysicalResources = new List<int> { 4 },
+                OptimizeResources = false,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            double sectorGateSeconds = sectorTimed.EGateResults.ProcessedPassengers
+                .Average(p => p.ServiceTime) * 60.0;
+            double sectorScreenSeconds = sectorTimed.AtrsResults.ProcessedPassengers
+                .Average(p => p.ServiceTime) * 60.0;
+
+            Check(Math.Abs(sectorGateSeconds - 7.0) < 0.01 &&
+                  Math.Abs(sectorScreenSeconds - 20.0) < 0.01,
+                $"Sector-only map keys give each stage its own time ({sectorGateSeconds:0.##} s / {sectorScreenSeconds:0.##} s)");
+
+            Check(!sectorSolver.Warnings.Any(w =>
+                    w.Contains("No Service Time Map key matched")),
+                "Matching sector keys raise no unmatched-key warning");
+
+            ServiceTimeMap wrongMap = new ServiceTimeMap
+            {
+                Default = new ServiceProfile { MeanServiceTime = 12.0 / 60.0, StandardDeviation = 0.0 },
+                Entries = new List<ServiceTimeEntry>
+                {
+                    new ServiceTimeEntry
+                    {
+                        Key = "SecurityGate|DomesticDeparture",
+                        Profile = new ServiceProfile { MeanServiceTime = 7.0 / 60.0, StandardDeviation = 0.0 }
+                    }
+                }
+            };
+
+            SecuritySolver missSolver = new SecuritySolver();
+
+            missSolver.Solve(new SecurityInputs
+            {
+                Passengers = sectorMapPassengers,
+                UseEGateSeries = true,
+                ServiceTimeProvider = wrongMap,
+                PhysicalResources = new List<int> { 4 },
+                OptimizeResources = false,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            Check(missSolver.Warnings.Count(w =>
+                    w.Contains("No Service Time Map key matched")) == 2,
+                "A map whose keys match nothing warns per stage instead of failing silently");
+
+            // ---- a zero target keeps the plan's nominal capacity -------------
+            List<Passenger> nominalPassengers = new List<Passenger>();
+
+            for (int i = 0; i < 40; i++)
+            {
+                nominalPassengers.Add(new Passenger
+                {
+                    Id = 8000 + i,
+                    Channel = "Counter",
+                    DHPType = DHPType.InternationalDeparture,
+                    PassengerType = PassengerType.International,
+                    ProfileName = "Economy",
+                    ArrivalTime = i * 0.2,
+                    QueueArrivalTime = i * 0.2
+                });
+            }
+
+            SecurityResults nominalKept = new SecuritySolver().Solve(new SecurityInputs
+            {
+                Passengers = nominalPassengers,
+                UseEGateSeries = true,
+                EGateServiceTimeSeconds = 7.0,
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan
+                    {
+                        Facility = "Security", Channel = "EGate",
+                        PhysicalResources = 2, TargetWait95 = 2.0,
+                        Range = new ResourceSearchRange(1, 10)
+                    },
+                    new PoolPlan
+                    {
+                        Facility = "Security", Channel = "ATRS",
+                        PhysicalResources = 5, TargetWait95 = 0.0,
+                        Range = new ResourceSearchRange(1, 60)
+                    }
+                },
+                ServiceProfile = new ServiceProfile
+                {
+                    MeanServiceTime = 20.0 / 60.0,
+                    StandardDeviation = 0.0
+                },
+                OptimizeResources = true,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            Check(nominalKept.AtrsPhysicalCount == 5,
+                $"A zero target keeps the ATRS nominal capacity ({nominalKept.AtrsPhysicalCount} == 5)");
+
+            ResourceSearchOutcome atrsNominal = nominalKept.SearchOutcomes
+                .FirstOrDefault(o => o.Plan != null && o.Plan.Channel == "ATRS");
+
+            Check(atrsNominal != null && atrsNominal.Success,
+                "A zero target is not reported as an unreachable search");
+
+            // ---- the bottleneck warning works both ways ----------------------
+            // One forced e-gate against 30 pax/min makes the e-gate the slow
+            // stage; ATRS is sized on the released stream and looks quiet.
+            List<Passenger> gateBound = new List<Passenger>();
+
+            for (int i = 0; i < 600; i++)
+            {
+                gateBound.Add(new Passenger
+                {
+                    Id = 8500 + i,
+                    Channel = "Counter",
+                    DHPType = DHPType.InternationalDeparture,
+                    PassengerType = PassengerType.International,
+                    ProfileName = "Economy",
+                    ArrivalTime = i * (20.0 / 600.0),
+                    QueueArrivalTime = i * (20.0 / 600.0)
+                });
+            }
+
+            SecuritySolver gateBoundSolver = new SecuritySolver();
+
+            SecurityResults gateBoundResult = gateBoundSolver.Solve(new SecurityInputs
+            {
+                Passengers = gateBound,
+                UseEGateSeries = true,
+                EGateServiceTimeSeconds = 7.0,
+                PoolPlans = new List<PoolPlan>
+                {
+                    new PoolPlan
+                    {
+                        Facility = "Security", Channel = "EGate",
+                        PhysicalResources = 1, TargetWait95 = 2.0,
+                        Range = new ResourceSearchRange(1, 1)
+                    },
+                    new PoolPlan
+                    {
+                        Facility = "Security", Channel = "ATRS",
+                        PhysicalResources = 6, TargetWait95 = 5.0,
+                        Range = new ResourceSearchRange(1, 60)
+                    }
+                },
+                ServiceProfile = new ServiceProfile
+                {
+                    MeanServiceTime = 20.0 / 60.0,
+                    StandardDeviation = 0.0
+                },
+                OptimizeResources = true,
+                Seed = 5,
+                StaffingPercentage = 100.0
+            });
+
+            Check(gateBoundResult.EGateResults.Wait95 >
+                  gateBoundResult.AtrsResults.Wait95 * 2.0,
+                "A forced single e-gate outwaits the ATRS stage it feeds");
+
+            Check(gateBoundSolver.Warnings.Any(w =>
+                    w.IndexOf("e-gate stage", StringComparison.OrdinalIgnoreCase) >= 0),
+                "An e-gate bottleneck raises its own warning");
+
+            // ---- schedule-mode gates: sector sum and concurrent floor ---------
+            FlightScheduleResult gateSchedule = new FlightScheduleResult
+            {
+                ScheduleName = "Sector-sharing schedule",
+                Legs = new List<FlightLeg>
+                {
+                    GateTestLeg("S1-C", LegDirection.Arrival, 8 * 60, LegSector.Domestic),
+                    GateTestLeg("S1-C", LegDirection.Departure, 9 * 60, LegSector.Domestic),
+                    GateTestLeg("S2-C", LegDirection.Arrival, 8 * 60, LegSector.International),
+                    GateTestLeg("S2-C", LegDirection.Departure, 9 * 60, LegSector.International)
+                }
+            };
+
+            foreach (FlightLeg leg in gateSchedule.Legs)
+                leg.Terminal = "T2";
+
+            GateScheduleDemand sharing = GateScheduleDemandBuilder.Build(
+                gateSchedule, "T2", 5.0, 5.0, 120.0);
+
+            GateScheduleCodeDemand sharingC = sharing.Codes.First(c => c.Code == "C");
+
+            Check(sharingC.DomesticPeak == 1 && sharingC.InternationalPeak == 1 &&
+                  sharingC.CombinedPeak == 2 && sharingC.SectorSum == 2,
+                $"Sector sum is reported alongside the concurrent peak ({sharingC.SectorSum} == {sharingC.CombinedPeak})");
+
+            Check(sharingC.Swing == 0 && sharingC.ConcurrentFloorMet &&
+                  sharingC.DedicatedDomestic == 1 && sharingC.DedicatedInternational == 1,
+                "Coincident sector peaks need no swing and meet the concurrent floor");
+
+            GateSizingResult sizedSharing = GateCalculator.Calculate(
+                new List<GateCodeInput>(), new GateStandards(), sharing);
+
+            Check(sizedSharing.ScheduleMode &&
+                  sizedSharing.ConcurrentPeakTotal == 2 &&
+                  sizedSharing.SectorSumTotal == 2 &&
+                  sizedSharing.ActiveTotal >= sizedSharing.ConcurrentPeakTotal,
+                "The sizing result reports the concurrent peak and sector sum totals");
         }
 
         // -------------------------------------------------------------
@@ -3150,6 +4618,42 @@ namespace AirportPlanning.Tests
             Check(sized.LoungeCount == 2 && sized.NetArea > 0,
                 "Schedule demand reuses the per-code lounge profile and Code C bus lounge");
 
+            // The group buckets split the non-contact stands into remote stands
+            // (raw) and the facility derives bus gates from the ratio.
+            GateBucketStands domBucket = sized.Buckets.First(b => b.Bucket == "Domestic");
+            GateBucketStands swingBucket2 = sized.Buckets.First(b => b.Bucket == "Swing");
+            Check(sized.Buckets.Sum(b => b.Remote) == sized.RemoteActive,
+                $"Schedule mode: the group remote stands reconcile with the facility total ({sized.Buckets.Sum(b => b.Remote)} = {sized.RemoteActive})");
+            Check(domBucket.Remote == domBucket.Bus,
+                "Schedule mode: a group's non-contact stands are its remote stands");
+
+            // PHP mode keeps the non-contact stands as bus gates; the remote
+            // stands follow from the ratio at facility level.
+            GateSizingResult php = GateCalculator.Calculate(
+                new List<GateCodeInput>
+                {
+                    new GateCodeInput
+                    {
+                        Code = "C",
+                        DomesticAtms = 4,
+                        DomesticOccupancyMinutes = 60,
+                        InternationalAtms = 4,
+                        InternationalOccupancyMinutes = 60
+                    }
+                },
+                new GateStandards
+                {
+                    BufferMinutes = 10.0,
+                    ContactPctDomestic = 0.5,
+                    ContactPctSwing = 0.5,
+                    ContactPctInternational = 0.5,
+                    RemoteStandsPerBusGate = 2.0
+                });
+            Check(php.Buckets.Sum(b => b.Bus) == php.BusTotal,
+                $"PHP mode: bus gates reconcile across the groups ({php.BusTotal})");
+            Check(php.RemoteActive == php.BusTotal * 2,
+                $"PHP mode: remote stands follow the ratio ({php.RemoteActive} = {php.BusTotal} x 2)");
+
             GateScheduleDemand noProfile = GateScheduleDemandBuilder.Build(schedule, "T1");
             GateSizingResult standsOnly = GateCalculator.Calculate(
                 new List<GateCodeInput>(), standards, noProfile);
@@ -4203,10 +5707,10 @@ namespace AirportPlanning.Tests
                 Passengers = source,
                 ServiceProfile = map.Default,
                 ServiceTimeProvider = map,
-                Channels = new List<string> { "Counter", "Web" },
-                PhysicalResources = new List<int> { 6, 6 },
+                Channels = new List<string> { "Counter" },
+                PhysicalResources = new List<int> { 6 },
                 OptimizeResources = false,
-                TargetWait95 = new List<double> { 10.0, 10.0 },
+                TargetWait95 = new List<double> { 10.0 },
                 Seed = 4,
                 StaffingPercentage = 100.0
             });
@@ -4220,13 +5724,18 @@ namespace AirportPlanning.Tests
                 $"Population preserved ({output.Count} == {source.Count})");
 
             bool allCarriedHistory = output
-                .Where(p => p.Channel == "Counter" || p.Channel == "Web")
+                .Where(p => p.Channel == "Counter")
                 .All(p => p.History.ContainsKey(FacilityType.CheckIn));
 
-            Check(allCarriedHistory, "Served passengers carry Check-In history downstream");
+            Check(allCarriedHistory, "Served Counter passengers carry Check-In history downstream");
+
+            Check(output
+                    .Where(p => p.Channel == "Web")
+                    .All(p => !p.History.ContainsKey(FacilityType.CheckIn)),
+                "Web passengers have no physical Check-In history");
 
             bool unservedUntouched = output
-                .Where(p => !(p.Channel == "Counter" || p.Channel == "Web"))
+                .Where(p => p.Channel != "Counter")
                 .All(p => !p.History.ContainsKey(FacilityType.CheckIn));
 
             Check(unservedUntouched, "Unserved passengers are passed through untouched");

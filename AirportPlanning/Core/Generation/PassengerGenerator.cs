@@ -93,7 +93,8 @@ namespace AirportPlanning.Core.Generation
 
             result.TransferDemand = TransferPassengerTagger.ApplyAggregate(
                 result.Passengers,
-                transferDemand);
+                transferDemand,
+                channelAssigner);
 
             foreach (Passenger passenger in result.Passengers)
             {

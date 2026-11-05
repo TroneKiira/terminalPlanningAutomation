@@ -73,9 +73,10 @@ namespace AirportPlanning.Components.Analysis
 
             pManager.AddGenericParameter(
                 "Service Results", "SVC",
-                "Facility results to audit, one per stage: Check-In, Bag Drop, Security, " +
+                "Facility results to audit, one per stage: Check-In, Security, " +
                 "Emigration, Immigration, Terminal Entry, Verification or raw Queue Results. " +
-                "Dwell is audited automatically from passenger history.",
+                "Bag Drop is a Check-In channel and Dwell is audited automatically from " +
+                "passenger history; neither needs its own result.",
                 GH_ParamAccess.list);
             pManager[4].Optional = true;
 
@@ -300,12 +301,14 @@ namespace AirportPlanning.Components.Analysis
             BagDropResults bagDrop = ComponentDataHelpers.Unwrap<BagDropResults>(raw);
             if (bagDrop != null)
             {
-                return FromQueue(
-                    DiagnosticsServiceKind.BagDrop,
-                    label,
-                    bagDrop.QueueResults,
-                    bagDrop.PhysicalCounters,
-                    bagDrop.ActiveCounters);
+                // Bag Drop is a standalone stage. Its own result is audited on
+                // its own service row.
+                return new DiagnosticsServiceInput
+                {
+                    Kind = DiagnosticsServiceKind.BagDrop,
+                    Label = string.IsNullOrWhiteSpace(label) ? "Bag Drop" : label,
+                    Queue = bagDrop.QueueResults
+                };
             }
 
             SecurityResults security = ComponentDataHelpers.Unwrap<SecurityResults>(raw);
@@ -503,9 +506,7 @@ namespace AirportPlanning.Components.Analysis
             CollectHistoryKeys(population, present);
 
             // A facility served inside another stage writes its history on that
-            // stage's output. Bag Drop is a channel inside Check-In, so its
-            // history lives on Check-In's processed clones rather than on the
-            // wired population. Scan every stage output before deciding that a
+            // stage's output. Scan every stage output before deciding that a
             // facility was never used.
             if (input.Services != null)
             {
@@ -524,19 +525,14 @@ namespace AirportPlanning.Components.Analysis
             {
                 DiagnosticsServiceKind kind = DiagnosticsServiceKindParser.FromFacilityType(facility);
 
-                if (kind == DiagnosticsServiceKind.Unknown || covered.Contains(kind))
+                if (kind == DiagnosticsServiceKind.Unknown ||
+                    covered.Contains(kind))
                     continue;
 
                 List<string> notes = new List<string>
                 {
                     "Derived from passenger history; no facility result was wired for this stage."
                 };
-
-                if (facility == FacilityType.BagDrop)
-                {
-                    notes.Add("Bag Drop is served as a channel inside Check-In; visits are " +
-                              "read from BagDrop history.");
-                }
 
                 input.Services.Add(new DiagnosticsServiceInput
                 {

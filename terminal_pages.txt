@@ -1,0 +1,230 @@
+=====PDF_PAGE 665=====
+at Airport Development Reference Manual 
+Step 4: Calculate the area required for queuing people using the following equation, considering the LoS: 
+A = Quax: SP 
+In order to calculate the total area required for the facility, geometrical considerations and layout of the 
+equipment, circulation and courtesy spaces will need to be added. 
+Note: Demand can be split up for each specific traffic segment in order to compute the different number of 
+units. For example, boarding pass checks for frequent flyer travelers, economy passengers, etc. 
+3.3.5.5 Passenger Security Screening 
+An increasing number of airports are seeking to innovate within their checkpoints, not only to improve security 
+outcomes, but also to improve operational efficiency and the passenger experience. Careful planning and 
+innovative design can, therefore, support airports to effectively deliver on their vision for the future. 
+Vision: 
+The passenger security screening processes should aim to be as contactless and minimally intrusive as 
+possible, using latest technology to minimize divesting and long transaction times. Enabled by risk-based 
+screening and improved checkpoint design, the end to end security screening process will be seamless, 
+secure, and fully optimized. Passengers will pass through an “on the fly” biometric control point. Identity will 
+be verified to permit access to the security screening area and passengers will be directed to the next 
+available lane. Screening equipment will dynamically adjust so that passengers and carry-on baggage are 
+screened according to their individual risk score for that day/trip. 
+Passengers’ belongings will pass through an advanced carry-on baggage screening system to check for 
+concealed prohibited items or explosives. Electronics, liquids and other items will remain inside 
+baggage-Passenger will proceed at walking pace through a walk-through scanner (there will be no special 
+stance to adopt). The scanner will provide an instant message to operators who will advise the passenger if 
+they are clear to go or if further screening is required. 
+Policy: 
+The design of security checkpoints should facilitate the efficient management of a necessary control process, 
+with the objective to expedite clearance of persons or goods and prevent unnecessary operational delays. 
+Checkpoint design should take into consideration the evolving screening processes and procedures, 
+depending on regulatory requirements, changing risk levels and, last but not least, overall evolution of 
+passenger handling. 
+646 EDITION 12 - MAY 2022 
+=====PDF_PAGE 683=====
+ry 
+Ny eS 
+IATA Airport Development Reference Manual 
+Policy 
+Facilities should be adequately sized and include generous queue spaces including buffer or overflow queuing 
+to manage contingency operations, and should be expandable to cater to future traffic increases or 
+technological changes. 
+3.3.5.6.1 General Considerations 
+Passport or border control services (generally referred to as “Emigration” and/or “Immigration”) are provided 
+by governments in order to examine passengers and crew on arrival/departure at/from ports of entry in order 
+to establish whether they are properly documented and that they have the right to enter or exit the respective 
+territory. These government agencies will typically require a review and approval process for all design 
+solutions. On departure, the authorities track when the passenger departs the territory, and verify that the 
+passenger is not departing for reasons of law enforcement. Passengers and crew should present the required 
+travel documentation on arrival at primary inspection points. Some countries may also inspect documentation 
+on exit from the territory. 
+Emigration staff located at departure points need to have access to dedicated databases to validate the 
+identity of outbound travelers. Passengers who are improperly documented will be stopped by staff and may 
+be taken off-line for further scrutiny. 
+Where required, terminal planners should provide suitably sized departure emigration control desks/kiosks. In 
+addition to the main outbound emigration processing channels, common administration offices should also be 
+provided. 
+Departing passenger interview rooms should be provided in a landside location and should be considered as 
+secure rooms. The layout should be determined following consultation with the local emigration and 
+immigration government body. 
+Each government has its own domestic legislative provisions regarding outbound controls of passengers and 
+their baggage. Many governments, in light of perceived threats to border integrity, require routine inspection of 
+some or all baggage of departing passengers. Screening baggage for explosive material is also 
+commonplace, and permanent but flexible infrastructure should allow airlines to carry out such inspection, 
+where required. 
+3.3.5.6.2 Latest Trends in Passenger Processing 
+Recently there has been a shift toward international cooperation on emigration and immigration issues and 
+many States are moving toward a multilateral approach to passenger processing. This approach has been 
+facilitated by the increase in the use of machine-readable passports and the capture and verification of 
+biometric data. 
+Border control authorities are increasingly considering self-service solutions for passenger processing. 
+Furthermore, biometric validation may become more widely used in the future. 
+664 EDITION 12 - MAY 2022 
+=====PDF_PAGE 687=====
+we IATA i Airport Development Reference Manual 
+3.3.5.7 Departure Lounge 
+Vision 
+The departure lounge should provide a calm waiting environment with ample natural light and give 
+Passengers the opportunity to see aircraft. 
+Policy 
+It is recommended that a single, common departure lounge be provided and contain: 
+e Adequate space and seating for passengers waiting for their gate to be announced 
+¢ Biometric profiling to allow domestic and international passengers to use the same lounge area 
+e Integrated commercial offerings (“Making it Pay”) 
+e A passenger service center for dealing with irregular operations (automated self-service facilities 
+preferred) 
+e Easily identifiable direct routings to allow passengers access to the gates 
+3.3.5.7.1 General Considerations 
+After proceeding to the secured airside areas of the terminal (by passing all required government controls), 
+passengers should be provided with restful spaces to wait for their aircraft's departure. These waiting spaces 
+can be formulated differently, but usually consist of one or several departure lounges, boarding gate areas, 
+and if required, transit lounges. 
+In terms of a positive passenger experience at the airport, the departure lounge represents one of the most 
+important spaces at the airport, as passengers may have to spend substantial waiting time in it. 
+Depending on regional expectations and traffic mix, the departure lounge should also provide diverse and 
+differentiated entertainment and commercial offerings to the passengers. 
+3.3.5.7.2 Departure Lounge Layout and Functions 
+Departure lounges, gate lounges and transit lounges may occur in terminals as three separate areas or as 
+one integrated space. The design layout depends greatly on traffic characteristics, government controls and 
+airline procedures, as they apply to the three main categories of passengers who use departure lounge 
+facilities, namely: 
+¢ Originating passengers arriving from landside 
+e Transferring passengers arriving directly to the airside and transferring to another flight (who should be 
+processed on the airside) 
+668 EDITION 12 - MAY 2022 
+=====PDF_PAGE 689=====
+IATA iu Airport Development Reference Manual 
+(g) Entertainment 
+Additional entertainment offerings should be provided in order to make the passengers’ wait as enjoyable 
+as possible. The offerings should be diversified in order to satisfy frequent travelers. Entertainment 
+offerings can include: 
+e Televisions 
+¢ Cinemas 
+e¢ Quiet spaces 
+e Hotels 
+° Spas 
+e Exercise rooms 
+e Meditation rooms 
+¢ Libraries; and 
+° Gaming 
+(h Religious Facilities 
+Consideration should be given to providing quiet space facilities for passengers to rest, pray or 
+contemplate. Different religions have different facility requirements, and these need to be considered 
+carefully in conjunction with the relevant stakeholders during the planning process. 
+3.3.5.7.3 Segregated International Lounge 
+Segregated lounges may be required if domestic and international departing passengers are not allowed to 
+mix. 
+Additional customs controls or specific duty-Free arrangements can also require a segregated international 
+departure lounge. 
+Biometric controls with facial recognition technology can provide solutions to allow both domestic and 
+international passenger groups to share the same lounge. This technology can make sure that, in shared 
+domestic/international departure lounges, the person given a boarding pass is also the person that uses it, 
+and that no passenger boards the wrong flight. 
+3.3.5.7.4 Airside Circulation 
+Passengers should be provided with dedicated corridors to access the next step in their journey: the contact 
+or remote gate. Access to the dedicated airside circulation corridors should be clearly visible from the 
+departures lounge, assisted by directional signage. Airside circulation has to cater to the required passenger 
+flows, either unidirectional or bidirectional, as required. 
+670 EDITION 12 - MAY 2022 
+=====PDF_PAGE 690=====
+B= fa 
+IATA + Passenger Terminal 
+3.3.5.7.5 Considerations for Sizing the Departure Lounge Area 
+For the proper design and sizing of the departure lounge area, some important factors need to be considered. 
+The most important element defining the size, configuration and seating capacity is the number of passengers 
+present during the relevant peak periods, which directly relates to the passenger dwell times (i.e., the amount 
+of time spent by departing passengers before proceeding to the gate). The longer the dwell time in the area, 
+the bigger this space has to be. This dwell time depends on several factors, such as: 
+¢ Call to gate—In collaboration with the airlines, some airports decide to provide the gate information at a 
+later stage. Depending on the strategy selected, this could increase the dwell time for passengers in the 
+departure lounge area and the space/seating requirements 
+¢ Availability of Retail and Food & Beverage (F&B)-A significant number of passengers is not present in the 
+departure lounge area, as they dwell within the different categories of commercial areas. The availability 
+and attractiveness of this commercial offer will have an impact on the actual demand for space in the 
+departure lounge area 
+¢ Airline lounges-Premium passengers may choose to spend most of their time at the airport using airline 
+lounges, extracting themselves from any sizing requirements about the common departure lounge 
+¢ Transfer passengers-At airports with significant shares of transfer passengers, the dwell time in the 
+departure lounge can be increased, resulting in additional demand for that area. This is especially 
+relevant when long connection times are expected 
+© Contingencies, disruptions and delays—Airport planners should consider the impact that disruptions and 
+delays may have on space requirements, what operational solutions may be provided, and how to 
+safeguard space to ensure continuity of operations for the passengers on flights that are not disrupted 
+3.3.5.8 Boarding Gates 
+Vision 
+Biometrics will be used to verify passenger identity “on the fly” and enable walking pace boarding. Once 
+identity is confirmed, access to the aircraft is permitted. Agent presence will still be required at the boarding 
+gate for passengers in need of specialized assistance. Personalized, “just in time” boarding notifications will 
+facilitate walking pace boarding and provide passengers with more time to use airport services or 
+concessions. 
+3.3.5.8.1 Sizing of Boarding Gate Hold Rooms 
+The sizing of gate hold rooms areas is influenced by two main factors: 
+1. Passenger seating requirements, as they relate to the capacity of aircraft being accommodated in the 
+area; and 
+2. The areas occupied by concessions (F&B and retail). 
+EDITION 12 - MAY 2022 671 
+=====PDF_PAGE 730=====
+he IATA + Passenger Terminal 
+The Problem Bag Area (PBA), an extended version of the MCS, is where the tools available to the operator 
+are more advanced and reach further into other systems where bag information can be retrieved. 
+3.3.8.6 Hold Baggage Screening 
+It is a mandatory requirement that all bags be security screened prior to loading into the aircraft hold. The 
+ICAO, in Annex 17 ‘Safeguarding International Civil Aviation Against Acts of Unlawful Interference’, sets out 
+security standards and recommendations. The implementation of these measures is defined by national 
+governments or other responsible bodies some of which publish detailed planning guidelines, such as the US 
+Transportation Security Administration's Planning Guidelines and Design Standards for Checked Baggage 
+Inspection Systems. 
+Itis important that the relevant requirements for hold baggage screening be clearly defined and understood. 
+There may be additional requirements imposed from time-to-time, based on the security assessments of 
+national governments. In some cases, where a One-Stop Security (OSS) arrangement between two states is 
+in place, the flow of transfer passengers and bags can be expedited by eliminating the unnecessary 
+duplication of security controls at the transfer airport. These bags can be fed directly into the sortation system. 
+3.3.8.6.1 Hold Baggage Screening Technology 
+Two basic methods are used to detect explosives in hold baggage: EDS, which use X-ray technology to 
+create images of the contents of bags, and ETD, which uses such techniques as lon Mobility Spectrometry to 
+capture and analyze the microscopic particles and vapors naturally emitted by organic substances. 
+Developments in EDS technology have led to successive generations of equipment described as Standards 1, 
+2 and 3. Although a simplification, the differences between the standards are as follows: 
+e Standard 1-EDS equipment provides a view of the contents of a bag from a single angle 
+e Standard 2-provides views from multiple angles 
+e Standard 3-the latest, uses computed tomography x-ray to provide high resolution 3-D views of the 
+contents of the bag 
+The latest Hold Baggage Screening (HBS) systems are more capable and able to reduce the rate of rejected 
+bags, but they are also larger and heavier than previous generations. The space and infrastructure required 
+for these new units needs to be planned carefully with sufficient space around the screening equipment set 
+aside to support maintenance and repair. In addition, their installation often requires structural enabling works 
+and an upgraded power supply. 
+EDITION 12 - MAY 2022 711 
+=====PDF_PAGE 739=====
+Be yl 
+IATA Airport Development Reference Manual 
+Exhibit 3.3.8.9d: Individual Carrier System 
+Source: Beumer Group 
+3.3.8.10 Baggage Make-Up 
+Departing bags are delivered via a system of carousels, chutes, or laterals to baggage make-up positions 
+where they are loaded into baggage carts or unit load devices for delivery to the apron and loading onto 
+aircraft. The number of make-up positions allocated per flight will depend on the expected volume of baggage, 
+the flight-build time and the number of segregations into which bags must be sorted. This can vary from one 
+or two positions for small aircraft to ten or more for larger aircraft with complex terminating and transfer 
+products. 
+The baggage make-up room requires parking positions for empty and filled containers, dollies and/or carts 
+with sufficient height for easy maneuvering of vehicles. Properly sized multiple lanes are required to enable 
+easy traffic movement and maintain a safe and efficient operation, including easy access to and from the 
+apron. 
+The overall efficiency of the baggage make-up area will be affected by how the facility is operated and 
+utilized. Common use facilities that are shared by multiple airlines and ground handlers and used by flight are 
+much more efficiently utilized than make-up areas that are dedicated to specific users. 
+Baggage system interfaces with staff in the baggage hall should be ergonomically designed. Baggage off-load 
+levels within the baggage halls should be designed to be ergonomically suited to the local workforce and 
+should adopt best international working practices, such that the risk of off-loading injuries should be 
+minimized. 
+720 EDITION 12 - MAY 2022 

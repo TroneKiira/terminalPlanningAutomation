@@ -444,8 +444,10 @@ namespace AirportPlanning.Core.Area
 
             result.Warnings.Add(string.Format(
                 CultureInfo.InvariantCulture,
-                "No queue metric for channel '{0}'; the facility peak ({1}) was used for its waiting area.",
+                "No queue metric for pool '{0}' or channel '{1}'; the facility peak ({2}) was used for its waiting area. " +
+                "Wire the solver's Queue Results so the Facility Sizer can read the pool's own peak.",
                 row.Name,
+                row.Channel ?? row.Name,
                 input.GlobalPeakQueue));
 
             return Math.Max(0, input.GlobalPeakQueue);

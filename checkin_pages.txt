@@ -1,0 +1,199 @@
+=====PDF_PAGE 642=====
+& 
+Se 
+IATA 4 Passenger Terminal 
+(d 
+(e 
+(f) 
+@ 
+(h) 
+location for ticket sales and service counters is parallel to the front fagade of the terminal between the 
+entrance doorways, and on the same level within the terminal as the main departures hall. Unlike 
+common processing counters, airlines usually require their own dedicated ticket sales and service 
+counters. These counters provide each airline with a sales presence in the terminal. 
+Airline Offices 
+Airline passenger processing support offices are required in close proximity to that airline's preferred use 
+area. The amount of space required by each airline and/or handling agency will vary depending on such 
+factors as the volume of traffic or the type of handling service performed. Airlines will also require 
+additional administrative offices, which may be located in other areas of the terminal but with convenient 
+access to the passenger processing areas. Airline support offices are also required in the airside 
+concourse close to the aircraft operation areas, usually at the apron level (ramp or apron 
+accommodation). 
+Baggage trolleys 
+Baggage trolley and ample related storage areas need to be provided in and around the processing 
+areas. 
+Commercial areas 
+Concessions can be incorporated into the landside departures hall as well as the airside departure lounge 
+(see 3.3.10 Concessions and Retail for more information). 
+Departure Flight Information Displays (FIDs): 
+Such must be available within the departures hall. The FID monitors should show which airlines are 
+operating from which processing areas (see 3.3.12 Wayfinding and Signage for more information). 
+Ancillary Functions 
+The departures hall can also accommodate additional functions, or might safeguard space for additional 
+future functions. Such requirements should be determined with the relevant stakeholders. Local security 
+protocols can change. Flexibility is important for potential implementation of additional passenger and 
+baggage entrance security checks. 
+3.3.5.3 Check-In 
+Vision 
+Check-in Processes should be quick and easy, making best use of automation and latest technologies 
+tailored to passengers’ needs. Removing processing from the terminal building helps to smooth the flow of 
+passengers and improves the passenger experience as a whole. 
+Policy 
+It is recommended that departure processes at terminals be provided in consolidated departures halls, ideally 
+one single hall only, and that the spaces be: 
+Flexible to adapt to future needs and safeguard for expansion or other changes 
+EDITION 12 - MAY 2022 623 
+=====PDF_PAGE 653=====
+w IATA Wi Airport Development Reference Manual 
+3.3.5.3.10 Transfers or Airside Processing 
+Transfer baggage processing facilities are typically located airside. The primary objective is to enable 
+passengers who are in transit in the airport complex to be processed for connecting flights without having to 
+go landside and be reprocessed through the departures sequence. 
+Transfer processing in airside departures areas usually provides: 
+e Ticketing services 
+e New boarding passes 
+e Flight changes 
+* Bag drop opportunities, usually for hand luggage. This is a service that transferring passengers 
+sometimes find useful, or in cases where hand luggage restrictions apply 
+* Troubleshooting functions, be it for delayed or cancelled flights, rebooking or other forms of 
+troubleshooting. Kiosk rebooking options may also be incorporated 
+In the context of the baggage system, the objective of the airside processing facility is to confirm the 
++ connecting flight destination and tell the Departure Control System (DCS) how to process the transfer 
+baggage. 
+Exhibit 3.3.5.3.10: Airside Transfer Processing Facility 
+Source: Adam Fraise/Shutterstock 
+For transferring passengers who are not yet security-controlled, similar facilities can be provided in dedicated 
+transfer locations. 
+634 EDITION 12 - MAY 2022 
+=====PDF_PAGE 656=====
+— 
+we I IATA pull Passenger Terminal 
+Sizing of the passenger processing hall depends on the number of passengers using the facility during the 
+peak period, the proportion of premium passengers, the processing rate, the space provision per person as 
+well as the maximum queuing time. 
+3.3.5.3.15 Self-Service Check-in Facility Sizing 
+Variables influencing the sizing of self-service facilities are similar to those utilized for traditional check-in 
+desks (see 3.3.5.3.17 Traditional Check-In Facility Sizing). The differences lie in the much lower footprint 
+occupied by the facility and the reduced maximum accepted queuing time. 
+Allowances to accommodate additional passenger circulation requirements are not included in this calculation 
+methodology. Detailed design requirements, including passenger circulation space, require simulation 
+modelling. 
+Important Note: See 3.3.4.9 Demand-Capacity Assessment for a detailed explanation of the methodology 
+used and the steps to be undertaken. 
+The following acronyms are used in the equations below: 
+Input PT = Process Time per Passenger at Self-Service Kiosk (in seconds) 
+Input At = Design Peak Period (in minutes) 
+Input MQT = Maximum Queuing Time (in minutes) 
+Input SP = Space per Person (in m?) 
+Output |SS = Total Number of Self-Service Kiosks 
+Output Quax = Maximum Number of Passengers Waiting in Queue 
+Output |A = Queuing Area for the Self-Service Kiosks (in m?) 
+Step 1: Obtain the demand specifically corresponding to the self-service kiosks (see 3.3.4.9 Demand￾Capacity Assessment for the detailed explanation) based on the design day schedules and show up profiles. 
+Relevant information required to complete the show up profiles may be obtained from bespoke passenger 
+surveys that clearly capture the passenger behaviors and the usage of the facility. This information can be 
+completed with the aid of the kiosks’ IT systems (ensuring a correct interpretation of the time stamps) and the 
+airlines’ cooperation. Recent and future trends should also be used to more accurately reflect future 
+passenger behavior in the facility. 
+At this point, different segmentation of the demand may be required. As an additive methodology, the process 
+can be repeated as many times as required, depending on airport configuration, number of terminals, use of 
+the different processing areas and specific utilization of the kiosks by airlines, alliances or other types of 
+partnerships. 
+EDITION 12 - MAY 2022 637 
+=====PDF_PAGE 657=====
+we &— ih | IATA al Airport Development Reference Manual 
+Step 2: Calculate the approximate number of self-service kiosks using the following equation for each pair of 
+values corresponding to the peak period At and demand. 
+Demand - PT/60 
+ss At+MQT 
+The At corresponds to the peak periods used to compute the demand. Since, for the computation of demand, 
+different time intervals have been considered, several computations for the total number of units need to be 
+made in order to choose the most restrictive one. In other words, for different At (continuous, 15min, 30min, 
+1h, 2h and 4h periods), different demand values will be obtained, which will result in different facility units 
+required. 
+For each of these pairs of values (At and demand), a calculation of the number of units needs to be made. 
+Once the results are obtained, the highest outcome, which corresponds to the most restrictive, is the one that 
+needs to be chosen and carried forward to the next steps. 
+Note: It may be required to add an additional buffer to account for variability in passenger arrival distribution, 
+availability, possibility of failure or maintenance of the facility. 
+Step 3: Calculate the maximum number of passengers in queue using the following equation: 
+SS - MQT 
+Qua PT/60 
+Step 4: Calculate the area required for queuing passengers using the following equation, considering the 
+Los: 
+A = — Quax: SP 
+The formula provided in Step 4 only provides the net area strictly needed for queueing. In order to calculate 
+the total area required for the facility, geometrical considerations and layout of the self-service kiosks, 
+circulation and courtesy spaces will need to be added. It might be also prudent to include some contingency 
+queue space for periods when the MQT is unavoidably breached. 
+3.3.5.3.16 Baggage Drop Facility Sizing 
+Allowances to accommodate additional passenger circulation requirements are not included in this calculation 
+methodology. Detailed design requirements, including passenger circulation space, require simulation 
+modelling. 
+638 EDITION 12 - MAY 2022 
+=====PDF_PAGE 658=====
+He IATA al Passenger Terminal 
+Important Note: See 3.3.4.9 Demand-Capacity Assessment for a detailed explanation of the methodology 
+used and the steps to be undertaken. 
+The following acronyms are used in the equations below: 
+Input PT = Process Time per Passenger at Bag Drop Positions (in seconds) 
+Input At = Design Peak Period (in minutes) 
+Input MQT = Maximum Queuing Time (in minutes) 
+Input SP = Space per Person (in m?) 
+Output |BD = Total Number of Baggage Drop Positions 
+Output =| Quax = Maximum Number of Passengers Waiting in Queue 
+Output |A = Queuing Area for the Baggage Drop Positions (in m?) 
+Step 1: Obtain the demand specifically corresponding to the bag drop facilities (see 3.3.4.9 Demand-Capacity 
+Assessment for the detailed explanation) based on the design day schedules and show up profiles. 
+Relevant information required to complete the show up profiles may be obtained from bespoke passenger 
+surveys that clearly capture the passenger behaviors and the usage of the facility. This information can be 
+completed with the aid of the bag drop IT systems (ensuring a correct interpretation of the time stamps) and 
+the airlines’ cooperation. Recent and future trends should also be used to more accurately reflect future 
+passenger behavior in the facility. 
+At this point, different segmentation of the demand may be required. As an additive methodology, the process 
+can be repeated as many times as required, depending on airport configuration, number of terminals, use of 
+the different processing areas and specific utilization of the bag drop facilities by airlines, alliances or other 
+types of partnerships. 
+Airlines may choose to differentiate their passengers by providing a better service to their premium travelers. 
+Noting that the LoS is a key parameter of the formulas and can be significantly different for economy, 
+business and first-class passengers; segmentation of the demand between these passenger types is 
+recommended to ensure an appropriate provision of facilities and queuing spaces. 
+Step 2: Calculate the approximate number of baggage drop positions using the following equation for each 
+pair of values corresponding to the peak period At and demand. 
+Demand - PT/60 
+BD = ‘At+MQT 
+The At corresponds to the peak period used to compute the demand, as explained in 3.4.6.1. Demand 
+Calculation. If for the computation of demand, different time intervals have been considered, several 
+computations for the total number of units need to be made in order to choose the most restrictive one. In 
+other words, for different At (15min, 30min, 1h, 2h and 4h), different demand values will be obtained, which 
+will result in different facility units required. 
+EDITION 12 - MAY 2022 639 
+=====PDF_PAGE 659=====
+A Airport Development Reference Manual 
+For each of these pairs of values (At and demand), more than one calculation of the number of units needs to 
+be made. Once the results are obtained, the highest outcome, which corresponds to the most restrictive, is 
+the one that needs to be chosen. 
+Note: It may be required to add an additional buffer to account for variability in passenger arrival distribution, 
+availability, possibility of failure, maintenance of the facility or inefficiencies of desk allocation. 
+Step 3: Calculate the maximum number of passengers in queue using the following equation: 
+BD - MQT 
+Quax = PT/60 
+Step 4: Calculate the area required for queuing people using the following equation, considering the LoS: 
+A = Qwx SP 
+In order to calculate the total area required for the facility, geometrical considerations and layout of the 
+baggage drop, circulation and courtesy spaces will need to be added. It might be also prudent to include 
+some contingency queue space for periods when the MQT is unavoidably breached. 
+3.3.5.3.17 Traditional Check-In Facility Sizing 
+Allowances to accommodate additional passenger circulation requirements are not included in this calculation 
+methodology. Detailed design requirements, including passenger circulation space, Tequire simulation 
+modelling. 
+Important Note: See 3.4.6.1 Design Criteria and 3.4.6.2 Capacity for a detailed explanation of the 
+methodology used and the steps to be undertaken. 
+The following acronyms are used in the equations below: 
+Input PT = Process Time per Traditional Check-In Desks (in seconds) 
+Input At = Design Peak Period (in minutes) 
+Input MQT = Maximum Queuing Time (in minutes) 
+Input SP = Space per Person (in m?) 
+Output cD = Total Number of Traditional Check-In Desks 
+Output | Quax = Maximum Number of Passengers Waiting in Queue 
+Output |A = Queuing Area for the Traditional Check-In Desks (in m?) 
+640 EDITION 12 - MAY 2022 

@@ -12,7 +12,8 @@ namespace AirportPlanning.Core.Generation
     {
         public static TransferDemandResult ApplyAggregate(
             IList<Passenger> passengers,
-            TransferDemandProfile profile)
+            TransferDemandProfile profile,
+            IChannelAssigner channelAssigner = null)
         {
             if (profile == null)
                 return null;
@@ -53,7 +54,8 @@ namespace AirportPlanning.Core.Generation
         public static TransferDemandResult ApplySchedule(
             IList<Passenger> passengers,
             FlightScheduleResult schedule,
-            TransferDemandProfile profile)
+            TransferDemandProfile profile,
+            IChannelAssigner channelAssigner = null)
         {
             if (profile == null)
                 return null;

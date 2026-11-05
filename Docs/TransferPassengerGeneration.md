@@ -99,8 +99,11 @@ the DigiYatra share denominator.
 Scenario rules are copied to tagged passengers. The current check-in and
 bag-drop requirements, security screening, and emigration processing honor
 configured transfer rules. Immigration is honoured by the `Immigration`
-simulation component; baggage recheck remains metadata until a recheck queue
-component is added.
+simulation component. Baggage recheck and the transfer desk are honoured by
+the `Baggage Recheck` and `Transfer Desk` components: the desk serves
+arrival-leg transfer flows whose rules require it, and the recheck counter is
+the desk facility for the International→Domestic flow — a flow whose rules set
+both flags is queued at recheck only, and the desk component warns about it.
 
 Every downstream solver applies the same service-use predicate that produces
 the reported usage figures: a rule-based bypass is removed from that facility's
@@ -161,8 +164,17 @@ originating population only.
 
 A **Transfer Desk** requirement flag is available per flow (input `TDSK` on
 Transfer Scenario Rules). It tags the cohort for a transfer-desk process and is
-reported by Passenger Details and Passenger Summary; no desk queue component
-exists yet, so a generic facility can be wired against the tag until one does.
+reported by Passenger Details and Passenger Summary. The `Transfer Desk`
+component (`T-DESK`) queues arrival-leg transfers whose rules require it; the
+`Baggage Recheck` component (`T-RECHK`) does the same for the recheck flag and
+is the TS-mapping desk facility for International→Domestic. Both take the full
+population, serve only rule-required transfer arrivals, and return the full
+population with served passengers advanced, so the PAX objects rejoin the
+integrated arrival flow (or their Separate-routed pools) unchanged. Pool
+identities are temporary: the components re-channel served passengers to
+per-flow pools named "Transfer Desk (flow)" or "Baggage Recheck (flow)", and
+restore the original channel before output. Key the Pool Plans by those names.
+Split Pools per Flow off runs one shared queue instead.
 
 `Passenger Details` and `Passenger Summary` expose the desk flag and each
 Separate-routing choice per passenger, so definitions can be filtered or
