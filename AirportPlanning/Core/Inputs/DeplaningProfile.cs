@@ -8,8 +8,9 @@ namespace AirportPlanning.Core.Inputs
     ///
     /// This is a different thing in kind from the show-up curve: nobody chooses
     /// when to deplane, so the curve is the deplaning rate convolved with the
-    /// walk. It is currently a DATA MODEL ONLY — reserved for arrival-side
-    /// facilities and not yet consumed by the simulation.
+    /// walk. It is the profile-based planning route: the component resolves the
+    /// shares and scales them by peak-hour passengers. Event-by-event simulation
+    /// still runs through the flight-linked DES.
     ///
     /// Presets are neutral (Profile 1/2/3); Profile 1 is the most concentrated,
     /// Profile 3 the flattest and sits on the 0.50 floor at 30 minutes.
@@ -19,6 +20,21 @@ namespace AirportPlanning.Core.Inputs
         Small,
         Medium,
         Large
+    }
+
+    /// <summary>
+    /// How the deplaning profile was chosen. <see cref="Auto"/> resolves the
+    /// airport size band from annual passenger volume; the three explicit band
+    /// modes override that choice; <see cref="Custom"/> uses the supplied
+    /// W15/W30 shares.
+    /// </summary>
+    public enum DeplaningProfileMode
+    {
+        Auto,
+        Small,
+        Medium,
+        Large,
+        Custom
     }
 
     public class DeplaningProfile : WindowShareProfile
@@ -75,7 +91,15 @@ namespace AirportPlanning.Core.Inputs
         /// </summary>
         public static DeplaningProfile FromAirportSize(double targetMppa)
         {
-            switch (BandForMppa(targetMppa))
+            return FromBand(BandForMppa(targetMppa));
+        }
+
+        /// <summary>
+        /// Authored deplaning sizing default for an explicit airport size band.
+        /// </summary>
+        public static DeplaningProfile FromBand(AirportSizeBand band)
+        {
+            switch (band)
             {
                 case AirportSizeBand.Small:
                     return new DeplaningProfile("Small (Profile 1)", 0.45, 0.70, 1.00);
@@ -84,6 +108,101 @@ namespace AirportPlanning.Core.Inputs
                 default:
                     return new DeplaningProfile("Medium (Profile 2)", 0.40, 0.60, 1.00);
             }
+        }
+
+        /// <summary>
+        /// Parses a user-facing mode label. Accepts the category names and the
+        /// legacy numeric presets (0 = Custom, 1 = Small, 2 = Medium, 3 = Large).
+        /// </summary>
+        public static bool TryParseMode(string value, out DeplaningProfileMode mode)
+        {
+            mode = DeplaningProfileMode.Auto;
+
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            switch (value.Trim().ToLowerInvariant())
+            {
+                case "auto":
+                    mode = DeplaningProfileMode.Auto;
+                    return true;
+                case "small":
+                case "1":
+                    mode = DeplaningProfileMode.Small;
+                    return true;
+                case "medium":
+                case "2":
+                    mode = DeplaningProfileMode.Medium;
+                    return true;
+                case "large":
+                case "3":
+                    mode = DeplaningProfileMode.Large;
+                    return true;
+                case "custom":
+                case "0":
+                    mode = DeplaningProfileMode.Custom;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Resolves the profile for a mode. Auto and the explicit bands use the
+        /// authored shares; Custom uses the supplied fractions with W60 fixed
+        /// at 100%.
+        /// </summary>
+        public static DeplaningProfile FromMode(
+            DeplaningProfileMode mode,
+            double targetMppa,
+            string name,
+            double w15,
+            double w30)
+        {
+            switch (mode)
+            {
+                case DeplaningProfileMode.Auto:
+                    return FromAirportSize(targetMppa);
+                case DeplaningProfileMode.Small:
+                    return FromBand(AirportSizeBand.Small);
+                case DeplaningProfileMode.Medium:
+                    return FromBand(AirportSizeBand.Medium);
+                case DeplaningProfileMode.Large:
+                    return FromBand(AirportSizeBand.Large);
+                default:
+                    string label = string.IsNullOrWhiteSpace(name) ? "Custom" : name.Trim();
+                    return new DeplaningProfile(label, w15, w30, 1.00);
+            }
+        }
+
+        /// <summary>
+        /// The category label shown to the planner. Auto resolves to the band
+        /// selected from annual volume.
+        /// </summary>
+        public static string CategoryForMode(DeplaningProfileMode mode, double targetMppa)
+        {
+            if (mode == DeplaningProfileMode.Auto)
+                return BandForMppa(targetMppa).ToString();
+
+            return mode.ToString();
+        }
+
+        /// <summary>Passengers in the busiest 15 minutes for a given PHP.</summary>
+        public double Peak15Passengers(double peakHourPassengers)
+        {
+            return peakHourPassengers * W15;
+        }
+
+        /// <summary>Passengers in the busiest 30 minutes for a given PHP.</summary>
+        public double Peak30Passengers(double peakHourPassengers)
+        {
+            return peakHourPassengers * W30;
+        }
+
+        /// <summary>Passengers in the peak hour for a given PHP.</summary>
+        public double Peak60Passengers(double peakHourPassengers)
+        {
+            return peakHourPassengers * W60;
         }
 
         /// <summary>Middle shipped curve (40 / 60 / 100).</summary>

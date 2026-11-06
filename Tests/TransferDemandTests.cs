@@ -169,9 +169,7 @@ namespace AirportPlanning.Tests
             List<PassengerGroup> scheduleGroups = new List<PassengerGroup>
             {
                 MakeTypedScheduleGroup(DHPType.DomesticDeparture, scheduleProfile),
-                MakeTypedScheduleGroup(DHPType.DomesticArrival, scheduleProfile),
-                MakeTypedScheduleGroup(DHPType.InternationalDeparture, scheduleProfile),
-                MakeTypedScheduleGroup(DHPType.InternationalArrival, scheduleProfile)
+                MakeTypedScheduleGroup(DHPType.InternationalDeparture, scheduleProfile)
             };
             SchedulePassengerGenerationResult generated = new SchedulePassengerGenerator().Generate(
                 schedule,
@@ -182,7 +180,6 @@ namespace AirportPlanning.Tests
                     StandardDeviation = 0.0
                 },
                 seed: 4,
-                arrivalDelay: new ArrivalProcessDelay(0.0, 0.0),
                 transferDemand: full);
 
             foreach (TransferScenario scenario in Enum.GetValues(typeof(TransferScenario)))
@@ -196,8 +193,10 @@ namespace AirportPlanning.Tests
                     $"Schedule generation tags {scenario.ToFlowLabel()} departure cohorts without reusing passenger slots ({departureSegments})");
             }
 
-            Check(generated.Passengers.Any(p => p.DHPType == DHPType.DomesticArrival && p.Journey == PassengerJourney.Transfer),
-                "Schedule generation also marks via-qualified inbound transfer cohorts");
+            Check(generated.Passengers.All(p =>
+                    p.DHPType == DHPType.DomesticDeparture ||
+                    p.DHPType == DHPType.InternationalDeparture),
+                "Schedule generation produces outbound passengers only");
 
             int ddDepartureTransfers = generated.Passengers.Count(p =>
                 p.DHPType == DHPType.DomesticDeparture &&
@@ -224,9 +223,10 @@ namespace AirportPlanning.Tests
                 "Transfers without explicit processing rules are reported as unspecified, not bypassed");
             Check(dailySecurity.Required == ddDepartureTransfers,
                 "A required security rule is counted separately from a bypass");
-            Check(dailyDesk.Bypassed == ddArrivalTransfers &&
-                  dailyRecheck.Required == ddArrivalTransfers,
-                "Arrival-side transfer desk and baggage recheck rules are counted on inbound records");
+            Check(ddArrivalTransfers == 0 &&
+                  dailyDesk.Bypassed == 0 &&
+                  dailyRecheck.Required == 0,
+                "Arrival-side transfer desk and baggage recheck records are no longer generated");
             Check(generated.TransferDemand.PeakServiceUsage[TransferService.CheckIn].Bypassed ==
                   ddDepartureTransfers &&
                   generated.TransferDemand.PeakServiceUsage[TransferService.TransferDesk].Bypassed ==
@@ -309,7 +309,6 @@ namespace AirportPlanning.Tests
                     StandardDeviation = 0.0
                 },
                 seed: 7,
-                arrivalDelay: new ArrivalProcessDelay(0.0, 0.0),
                 transferDemand: allLegs);
 
             int directDepartureTransfers = directGenerated.Passengers.Count(p =>
@@ -319,8 +318,8 @@ namespace AirportPlanning.Tests
                 $"All-legs tagging marks the D→D departure cohort on direct legs; I→D stays 0 without an international inbound leg ({directDepartureTransfers})");
             Check(directGenerated.Passengers.Count(p =>
                     p.Journey == PassengerJourney.Transfer) ==
-                directGenerated.TransferDemand.ByScenario.Values.Sum(v => v.EffectivePassengers) * 2,
-                "Arrival and departure cohorts are both tagged under all-legs eligibility");
+                directGenerated.TransferDemand.ByScenario.Values.Sum(v => v.EffectivePassengers),
+                "Only outbound departure cohorts are tagged under all-legs eligibility");
 
             /* Missing Passenger Groups must not be mistaken for scenario-rule
                bypasses. The schedule still allocates the transfer demand, but
@@ -349,7 +348,6 @@ namespace AirportPlanning.Tests
                     missingGroupSchedule,
                     new List<PassengerGroup>
                     {
-                        MakeTypedScheduleGroup(DHPType.DomesticArrival, scheduleProfile),
                         MakeTypedScheduleGroup(DHPType.DomesticDeparture, scheduleProfile)
                     },
                     new AirportPlanning.Core.Walking.WalkingProfile
@@ -358,7 +356,6 @@ namespace AirportPlanning.Tests
                         StandardDeviation = 0.0
                     },
                     seed: 8,
-                    arrivalDelay: new ArrivalProcessDelay(0.0, 0.0),
                     transferDemand: missingProfile);
 
             Check(missingGenerated.TransferDemand.EffectiveTransferPassengers == 200 &&

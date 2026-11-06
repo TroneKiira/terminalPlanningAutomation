@@ -8,6 +8,11 @@ using System.Linq;
 
 namespace AirportPlanning.Core.Generation
 {
+    /// <summary>
+    /// Generates departure passengers from one or more DHP-driven passenger
+    /// groups. Arrival passengers are not generated here: arrival demand is a
+    /// separate route driven by the Deplaning Profile / PHP inputs.
+    /// </summary>
     public class MultiIntervalPassengerGenerator
     {
         public PassengerGenerationResult Generate(
@@ -19,7 +24,6 @@ namespace AirportPlanning.Core.Generation
             IChannelAssigner channelAssigner = null,
             Action<string> warn = null,
             CheckInWindowRules checkInWindows = null,
-            ArrivalProcessDelay arrivalDelay = null,
             TransferDemandProfile transferDemand = null)
         {
             if (groups == null || groups.Count == 0)
@@ -28,8 +32,8 @@ namespace AirportPlanning.Core.Generation
             if (walkingProfile == null)
                 throw new ArgumentNullException(nameof(walkingProfile));
 
-            // DA / IA are optional upstream, so null slots never reach the
-            // generator core: drop them here and require at least one group.
+            // Null slots are tolerated so callers can leave optional group
+            // slots empty, but every supplied group must be a departure group.
             List<PassengerGroup> active = groups.Where(g => g != null).ToList();
 
             if (active.Count == 0)
@@ -43,6 +47,8 @@ namespace AirportPlanning.Core.Generation
                         "Every supplied passenger group needs a DHP.", nameof(groups));
             }
 
+            ValidateDepartureGroups(active);
+
             // All supplied DHPs share one analysis window: same basis, step
             // count, design-hour index and warm-up timing. Demand levels and
             // curves may differ per type.
@@ -51,18 +57,12 @@ namespace AirportPlanning.Core.Generation
             DemandTimeBasis demandBasis = active[0].DHP.DemandBasis;
 
             checkInWindows = checkInWindows ?? CheckInWindowRules.CreateDefault();
-            arrivalDelay = arrivalDelay ?? new ArrivalProcessDelay();
 
             List<string> checkInErrors = checkInWindows.GetValidationErrors();
-            List<string> delayErrors = arrivalDelay.GetValidationErrors();
 
             if (checkInErrors.Count > 0)
                 throw new ArgumentException(
                     string.Join(" ", checkInErrors), nameof(checkInWindows));
-
-            if (delayErrors.Count > 0)
-                throw new ArgumentException(
-                    string.Join(" ", delayErrors), nameof(arrivalDelay));
 
             waves = waves ?? new WaveSettings();
 
@@ -151,7 +151,7 @@ namespace AirportPlanning.Core.Generation
                             stepTotal, group, stepStartAbs, 60, step,
                             step == designHourIndex,
                             showUpProfile, walkingProfile,
-                            checkInWindows, arrivalDelay,
+                            checkInWindows,
                             rnd, channelAssigner, channelRnd,
                             passengers, result.ArrivalSimulations,
                             ref nextId);
@@ -185,6 +185,25 @@ namespace AirportPlanning.Core.Generation
                 passenger.QueueArrivalTime = passenger.ArrivalTime;
 
             return result;
+        }
+
+        /// <summary>
+        /// Passenger generators are departures-only. Arrival demand belongs to
+        /// the Deplaning Profile / PHP route, so an arrival group is rejected
+        /// instead of being silently mixed into the departure population.
+        /// </summary>
+        private static void ValidateDepartureGroups(List<PassengerGroup> active)
+        {
+            foreach (PassengerGroup group in active)
+            {
+                if (IsDepartureType(group.DHP.Type))
+                    continue;
+
+                throw new ArgumentException(
+                    $"Passenger group '{group.DHP.Type}' is an arrival group. " +
+                    "Passenger generators accept departure groups only; use the " +
+                    "Deplaning Profile for arrival demand.", nameof(active));
+            }
         }
 
         /// <summary>
@@ -305,8 +324,7 @@ namespace AirportPlanning.Core.Generation
                     passenger.WaveId = waveId;
                     passenger.ShowUpSignature = showUpSignature ?? "none";
                     passenger.PassengerType =
-                        (group.DHP.Type == DHPType.DomesticDeparture ||
-                         group.DHP.Type == DHPType.DomesticArrival)
+                        group.DHP.Type == DHPType.DomesticDeparture
                             ? PassengerType.Domestic
                             : PassengerType.International;
                     passenger.ScheduledDepartureTime =
@@ -320,15 +338,11 @@ namespace AirportPlanning.Core.Generation
         }
 
         /// <summary>
-        /// Flight-hour demand: the step count is passengers on flights whose
-        /// STD (departures) or STA (arrivals) falls inside this hour. Flight
-        /// identities are not synthesized, so each passenger samples a single
-        /// flight time inside the hour (Option A).
-        ///
-        /// Departures are placed backwards from the sampled STD exactly as the
-        /// schedule generator does: the profile's advance interval is stretched
-        /// through the show-up curve. Arrivals are placed forwards from the
-        /// sampled STA by the explicit arrival-process delay.
+        /// Flight-hour demand: the step count is passengers on departures whose
+        /// STD falls inside this hour. Flight identities are not synthesized,
+        /// so each passenger samples a single STD inside the hour (Option A)
+        /// and is placed backwards through the profile's advance interval and
+        /// show-up curve.
         /// </summary>
         private void GenerateFlightGroup(
             int count,
@@ -340,7 +354,6 @@ namespace AirportPlanning.Core.Generation
             ShowUpProfile fallbackShowUp,
             WalkingProfile walkingProfile,
             CheckInWindowRules checkInWindows,
-            ArrivalProcessDelay arrivalDelay,
             Random rnd,
             IChannelAssigner channelAssigner,
             Random channelRnd,
@@ -352,7 +365,6 @@ namespace AirportPlanning.Core.Generation
                 return;
 
             DHPType type = group.DHP.Type;
-            bool departure = IsDepartureType(type);
             bool domestic = IsDomesticType(type);
 
             List<PassengerAllocation> allocations =
@@ -368,53 +380,30 @@ namespace AirportPlanning.Core.Generation
                     continue;
 
                 PassengerProfile profile = allocation.Profile;
-                ShowUpProfile showUp = null;
-                string signature = "none";
 
-                double minAdvance = 0.0;
-                double maxAdvance = 0.0;
+                double minAdvance = profile.MinAdvanceMinutes;
+                double maxAdvance = profile.MaxAdvanceMinutes;
 
-                if (departure)
+                if (maxAdvance < minAdvance)
                 {
-                    minAdvance = profile.MinAdvanceMinutes;
-                    maxAdvance = profile.MaxAdvanceMinutes;
-
-                    if (maxAdvance < minAdvance)
-                    {
-                        double swap = minAdvance;
-                        minAdvance = maxAdvance;
-                        maxAdvance = swap;
-                    }
-
-                    showUp = profile.DepartureShowUp ??
-                             fallbackShowUp ??
-                             ShowUpProfile.Mix();
-
-                    signature = showUp.GetSignature();
+                    double swap = minAdvance;
+                    minAdvance = maxAdvance;
+                    maxAdvance = swap;
                 }
-                else
-                {
-                    signature =
-                        $"arrival-process|{arrivalDelay.MinimumMinutes:R}|" +
-                        $"{arrivalDelay.MaximumMinutes:R}";
-                }
+
+                ShowUpProfile showUp = profile.DepartureShowUp ??
+                                       fallbackShowUp ??
+                                       ShowUpProfile.Mix();
+
+                string signature = showUp.GetSignature();
 
                 for (int i = 0; i < allocation.PassengerCount; i++)
                 {
                     double flightTime =
                         stepStartAbs + rnd.NextDouble() * stepMinutes;
 
-                    double arrivalTime;
-
-                    if (departure)
-                    {
-                        arrivalTime = SampleDepartureArrival(
-                            flightTime, minAdvance, maxAdvance, showUp, rnd);
-                    }
-                    else
-                    {
-                        arrivalTime = flightTime + arrivalDelay.Sample(rnd);
-                    }
+                    double arrivalTime = SampleDepartureArrival(
+                        flightTime, minAdvance, maxAdvance, showUp, rnd);
 
                     Passenger passenger = PassengerFactory.Create(
                         nextId++,
@@ -437,24 +426,17 @@ namespace AirportPlanning.Core.Generation
                         : PassengerType.International;
                     passenger.QueueArrivalTime = arrivalTime;
 
-                    if (departure)
-                    {
-                        CheckInWindow window = checkInWindows.ResolveSector(
-                            type, flightTime);
+                    CheckInWindow window = checkInWindows.ResolveSector(
+                        type, flightTime);
 
-                        passenger.TerminalEntryArrivalTime = arrivalTime;
-                        passenger.ScheduledDepartureTime = flightTime;
-                        passenger.CheckInOpenTime = window.OpensAt;
-                        passenger.CheckInLastAdmissionTime = window.LastAdmissionAt;
-                        passenger.ArrivedBeforeCheckInOpen =
-                            arrivalTime < window.OpensAt;
-                        passenger.IsLateForCheckIn =
-                            arrivalTime > window.LastAdmissionAt;
-                    }
-                    else
-                    {
-                        passenger.ScheduledArrivalTime = flightTime;
-                    }
+                    passenger.TerminalEntryArrivalTime = arrivalTime;
+                    passenger.ScheduledDepartureTime = flightTime;
+                    passenger.CheckInOpenTime = window.OpensAt;
+                    passenger.CheckInLastAdmissionTime = window.LastAdmissionAt;
+                    passenger.ArrivedBeforeCheckInOpen =
+                        arrivalTime < window.OpensAt;
+                    passenger.IsLateForCheckIn =
+                        arrivalTime > window.LastAdmissionAt;
 
                     passengers.Add(passenger);
                     arrivalTimes.Add(arrivalTime);
@@ -498,8 +480,7 @@ namespace AirportPlanning.Core.Generation
 
         private static bool IsDomesticType(DHPType type)
         {
-            return type == DHPType.DomesticDeparture ||
-                   type == DHPType.DomesticArrival;
+            return type == DHPType.DomesticDeparture;
         }
 
         private ArrivalTimeSet GenerateStepTimes(

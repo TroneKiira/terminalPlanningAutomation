@@ -19,5 +19,6 @@ namespace AirportPlanning.Facilities
         public const string Immigration = "Immigration";
         public const string TransferDesk = "Transfer Desk";
         public const string BaggageRecheck = "Baggage Recheck";
+        public const string Customs = "Customs Hand Baggage";
     }
 }

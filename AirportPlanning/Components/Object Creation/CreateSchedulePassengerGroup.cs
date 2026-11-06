@@ -17,8 +17,8 @@ namespace AirportPlanning.Components.Object_Creation
     {
         public CreateSchedulePassengerGroup()
           : base("Create Schedule Passenger Group", "CSPG",
-            "Builds a Passenger Group for schedule-driven generation from behaviour profiles " +
-            "and an explicit demand type. No DHP is required.",
+            "Builds a departure Passenger Group for schedule-driven generation from " +
+            "behaviour profiles and an explicit demand type. No DHP is required.",
             "Airport Planning", "Object Creation")
         {
         }
@@ -32,8 +32,8 @@ namespace AirportPlanning.Components.Object_Creation
 
             pManager.AddIntegerParameter(
                 "Type", "T",
-                "0 = Domestic Departure, 1 = Domestic Arrival, " +
-                "2 = International Departure, 3 = International Arrival.",
+                "0 = Domestic Departure, 2 = International Departure. " +
+                "Arrival types (1, 3) are rejected: arrival demand uses the Deplaning Profile.",
                 GH_ParamAccess.item, 0);
         }
 
@@ -55,11 +55,23 @@ namespace AirportPlanning.Components.Object_Creation
 
             DA.GetData(1, ref type);
 
-            int clamped = Math.Max(0, Math.Min(3, type));
+            if (type == (int)DHPType.DomesticArrival ||
+                type == (int)DHPType.InternationalArrival)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Error,
+                    $"Type {type} is an arrival type. Schedule passenger generation is " +
+                    "departures-only; use the Deplaning Profile for arrival demand.");
+                return;
+            }
+
+            DHPType groupType = type == (int)DHPType.InternationalDeparture
+                ? DHPType.InternationalDeparture
+                : DHPType.DomesticDeparture;
 
             PassengerGroup group = new PassengerGroup
             {
-                Type = (DHPType)clamped,
+                Type = groupType,
                 Profiles = profiles ?? new List<PassengerProfile>()
             };
 

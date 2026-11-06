@@ -92,20 +92,25 @@ namespace AirportPlanning.Tests
                   overrideWarnings.Any(w => w.Contains("overrides are not applied")),
                 "Flight-hour demand warns and uses sector defaults instead of airline overrides");
 
-            PassengerGenerationResult arrivalResult = GenerateFlightBasis(
-                MakeFlightBasisGroup(
-                    DHPType.DomesticArrival,
-                    30,
-                    MakeProfile("Arrival", 100.0, 60.0, 150.0)),
-                seed: 99,
-                arrivalDelay: new ArrivalProcessDelay(15.0, 15.0));
+            bool arrivalGroupRejected = false;
 
-            Check(arrivalResult.Passengers.All(p =>
-                    p.ArrivalTime == p.ScheduledArrivalTime + 15.0),
-                "Arrival passengers reach the arrival process at STA plus delay");
-            Check(arrivalResult.Passengers.All(p =>
-                    p.ScheduledDepartureTime == 0.0 && !p.IsWarmUp),
-                "Arrival passengers have STA but no synthetic STD or warm-up tag");
+            try
+            {
+                GenerateFlightBasis(
+                    MakeFlightBasisGroup(
+                        DHPType.DomesticArrival,
+                        30,
+                        MakeProfile("Arrival", 100.0, 60.0, 150.0)),
+                    seed: 99);
+            }
+            catch (ArgumentException ex)
+            {
+                arrivalGroupRejected =
+                    ex.Message.IndexOf("arrival", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+
+            Check(arrivalGroupRejected,
+                "Flight-hour generation rejects arrival passenger groups");
 
             PassengerGenerationResult lateResult = GenerateFlightBasis(
                 MakeFlightBasisGroup(
@@ -182,7 +187,6 @@ namespace AirportPlanning.Tests
         private static PassengerGenerationResult GenerateFlightBasis(
             PassengerGroup group,
             int seed,
-            ArrivalProcessDelay arrivalDelay = null,
             CheckInWindowRules checkInWindows = null,
             Action<string> warn = null)
         {
@@ -197,8 +201,7 @@ namespace AirportPlanning.Tests
                 seed,
                 ShowUpProfile.Mix(),
                 warn: warn,
-                checkInWindows: checkInWindows ?? CheckInWindowRules.CreateDefault(),
-                arrivalDelay: arrivalDelay ?? new ArrivalProcessDelay(0.0, 0.0));
+                checkInWindows: checkInWindows ?? CheckInWindowRules.CreateDefault());
         }
 
         private static PassengerGroup MakeFlightBasisGroup(

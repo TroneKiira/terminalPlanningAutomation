@@ -1224,7 +1224,7 @@ namespace AirportPlanning.Core.Charts
 
         /// <summary>
         /// Rolling 60-minute schedule demand: domestic and international
-        /// departures/arrivals plus the combined curve. This is the Grasshopper
+        /// departures plus the combined curve. This is the Grasshopper
         /// counterpart of the TypeScript peak-profile chart.
         /// </summary>
         public static PlotModel CreateSchedulePeakProfileModel(
@@ -1260,14 +1260,8 @@ namespace AirportPlanning.Core.Charts
             AddRollingLine(model, points, "Domestic departures",
                 Palette[0], s => s.DomesticDeparture);
 
-            AddRollingLine(model, points, "Domestic arrivals",
-                Palette[1], s => s.DomesticArrival);
-
             AddRollingLine(model, points, "International departures",
                 Palette[2], s => s.InternationalDeparture);
-
-            AddRollingLine(model, points, "International arrivals",
-                Palette[3], s => s.InternationalArrival);
 
             AddRollingLine(model, points, "Combined",
                 Palette[6], s => s.Combined, 2.5);

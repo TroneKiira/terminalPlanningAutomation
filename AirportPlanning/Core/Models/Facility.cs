@@ -83,6 +83,7 @@ namespace AirportPlanning.Core.Models
         TerminalEntry,
         Immigration, // Arrivals passport control; also serves I→D transfer flows
         TransferDesk, // Arrival-side transfer desk; serves transfer flows whose scenario rules require it
-        BaggageRecheck // Arrival-side baggage recheck; serves transfer flows whose scenario rules require it
+        BaggageRecheck, // Arrival-side baggage recheck; serves transfer flows whose scenario rules require it
+        Customs // Arrival-side hand-baggage customs; international arrivals entering the country
     }
 }

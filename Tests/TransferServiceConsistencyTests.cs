@@ -1362,9 +1362,7 @@ namespace AirportPlanning.Tests
             List<PassengerGroup> groups = new List<PassengerGroup>
             {
                 MakeTypedScheduleGroup(DHPType.DomesticDeparture, scheduleProfile),
-                MakeTypedScheduleGroup(DHPType.DomesticArrival, scheduleProfile),
-                MakeTypedScheduleGroup(DHPType.InternationalDeparture, scheduleProfile),
-                MakeTypedScheduleGroup(DHPType.InternationalArrival, scheduleProfile)
+                MakeTypedScheduleGroup(DHPType.InternationalDeparture, scheduleProfile)
             };
 
             SchedulePassengerGenerationResult generated = new SchedulePassengerGenerator().Generate(
@@ -1372,7 +1370,6 @@ namespace AirportPlanning.Tests
                 groups,
                 new WalkingProfile { AverageSpeed = 1.35, StandardDeviation = 0.0 },
                 seed: 12,
-                arrivalDelay: new ArrivalProcessDelay(0.0, 0.0),
                 transferDemand: profile);
 
             int outgoingTransfers = generated.Passengers.Count(p =>
@@ -1397,8 +1394,8 @@ namespace AirportPlanning.Tests
             Check(generated.TransferDemand.EffectiveTransferPassengers == 40 &&
                   generated.TransferDemand.TaggedTransferPassengers == 40,
                 $"Design Day tags all 40 outbound transfers ({generated.TransferDemand.TaggedTransferPassengers})");
-            Check(outgoingTransfers == 40 && incomingTransfers == 40,
-                $"Both journey legs are tagged ({outgoingTransfers} outbound, {incomingTransfers} inbound)");
+            Check(outgoingTransfers == 40 && incomingTransfers == 0,
+                $"Only outbound journey legs are tagged ({outgoingTransfers} outbound, {incomingTransfers} inbound)");
             Check(generated.TransferDemand.ServiceUsage[TransferService.CheckIn].Bypassed == 40,
                 "Design Day Check-In usage counts every outbound transfer as a bypass");
             Check(generated.TransferDemand.ServiceUsage[TransferService.Security].Bypassed == 40,
@@ -1406,12 +1403,12 @@ namespace AirportPlanning.Tests
             Check(generated.TransferDemand.ServiceUsage[TransferService.Emigration].Bypassed ==
                   internationalOutgoingTransfers,
                 "Design Day Emigration usage only counts international outbound transfers");
-            Check(generated.TransferDemand.ServiceUsage[TransferService.Immigration].Bypassed ==
-                  internationalIncomingTransfers,
-                "Design Day Immigration usage only counts international inbound transfers");
-            Check(generated.TransferDemand.ServiceUsage[TransferService.TransferDesk].Bypassed == 40 &&
-                  generated.TransferDemand.ServiceUsage[TransferService.BaggageRecheck].Bypassed == 40,
-                "Design Day arrival services count every inbound transfer as a bypass");
+            Check(generated.TransferDemand.ServiceUsage[TransferService.Immigration].Bypassed == 0 &&
+                  internationalIncomingTransfers == 0,
+                "Design Day Immigration usage has no inbound transfer records");
+            Check(generated.TransferDemand.ServiceUsage[TransferService.TransferDesk].Bypassed == 0 &&
+                  generated.TransferDemand.ServiceUsage[TransferService.BaggageRecheck].Bypassed == 0,
+                "Design Day arrival services have no inbound transfer records");
 
             CheckInResults checkIn = new CheckInSolver().Solve(new CheckInInputs
             {
@@ -1565,9 +1562,9 @@ namespace AirportPlanning.Tests
                 immigration.QueueResults.Passengers,
                 expectedImmigration);
 
-            Check(immigration.QueueResults.ProcessedPassengers.Count ==
-                  originInternationalArrivals,
-                $"Design Day Immigration serves originating international arrivals only ({immigration.QueueResults.ProcessedPassengers.Count})");
+            Check(immigration.QueueResults.ProcessedPassengers.Count == 0 &&
+                  originInternationalArrivals == 0,
+                $"Design Day Immigration has no arrival passengers to serve ({immigration.QueueResults.ProcessedPassengers.Count})");
         }
 
         // -------------------------------------------------------------
@@ -1608,12 +1605,10 @@ namespace AirportPlanning.Tests
                 schedule,
                 new List<PassengerGroup>
                 {
-                    MakeTypedScheduleGroup(DHPType.DomesticDeparture, scheduleProfile),
-                    MakeTypedScheduleGroup(DHPType.DomesticArrival, scheduleProfile)
+                    MakeTypedScheduleGroup(DHPType.DomesticDeparture, scheduleProfile)
                 },
                 new WalkingProfile { AverageSpeed = 1.35, StandardDeviation = 0.0 },
                 seed: 14,
-                arrivalDelay: new ArrivalProcessDelay(0.0, 0.0),
                 transferDemand: profile);
 
             int taggedOutbound = generated.Passengers.Count(p =>
@@ -1819,12 +1814,10 @@ namespace AirportPlanning.Tests
                 new List<PassengerGroup>
                 {
                     MakeTypedScheduleGroup(DHPType.DomesticDeparture, scheduleProfile),
-                    MakeTypedScheduleGroup(DHPType.InternationalArrival, scheduleProfile),
                     MakeTypedScheduleGroup(DHPType.InternationalDeparture, scheduleProfile)
                 },
                 new WalkingProfile { AverageSpeed = 1.35, StandardDeviation = 0.0 },
                 seed: 17,
-                arrivalDelay: new ArrivalProcessDelay(0.0, 0.0),
                 channelAssigner: routing,
                 transferDemand: profile);
 

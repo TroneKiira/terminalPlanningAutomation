@@ -10,8 +10,8 @@ namespace AirportPlanning.Components.Object_Creation
     {
         public CreatePassengerGroup()
           : base("Create Passenger Group", "CPG",
-            "Builds a Passenger Group from behaviour profiles. A DHP is optional in schedule mode; " +
-            "set Type instead when the schedule supplies the demand.",
+            "Builds a departure Passenger Group from behaviour profiles. A DHP is optional " +
+            "in schedule mode; set Type instead when the schedule supplies the demand.",
             "Airport Planning", "Object Creation")
         {
         }
@@ -33,8 +33,8 @@ namespace AirportPlanning.Components.Object_Creation
             pManager.AddIntegerParameter(
                 "Type", "T",
                 "Optional explicit type for schedule mode: 0 = Domestic Departure, " +
-                "1 = Domestic Arrival, 2 = International Departure, 3 = International Arrival. " +
-                "-1 takes the type from the DHP.",
+                "2 = International Departure. -1 takes the type from the DHP. " +
+                "Arrival types are not accepted by any passenger generator.",
                 GH_ParamAccess.item, -1);
         }
 
@@ -60,7 +60,7 @@ namespace AirportPlanning.Components.Object_Creation
             {
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Error,
-                    "Connect either a DHP or set Type explicitly (0-3).");
+                    "Connect either a DHP or set Type explicitly (0 or 2).");
                 return;
             }
 
@@ -70,6 +70,18 @@ namespace AirportPlanning.Components.Object_Creation
                 Type = type >= 0 ? (DHPType)Math.Max(0, Math.Min(3, type)) : (DHPType?)null,
                 Profiles = profiles ?? new List<PassengerProfile>()
             };
+
+            DHPType resolved = group.ResolvedType;
+
+            if (resolved == DHPType.DomesticArrival ||
+                resolved == DHPType.InternationalArrival)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"Passenger group type {resolved} is an arrival type. Passenger " +
+                    "generators are departures-only; use the Deplaning Profile for " +
+                    "arrival demand.");
+            }
 
             List<string> errors = group.GetValidationErrors();
 

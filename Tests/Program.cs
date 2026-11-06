@@ -34,11 +34,13 @@ namespace AirportPlanning.Tests
             RunTransferRoutingTests();
             RunTransferFacilityTests();
             RunTransferServiceConsistencyTests();
+            RunCustomsTests();
             RunCountsAndWarmUp();
             RunWaveOffRespectsShowUp();
             RunDepartures();
             RunDesignMetricsAndOptimizer();
             RunProfileValidation();
+            RunDeplaningProfileCategories();
             RunShowUpIntegration();
             RunProfileIdentityAndChannels();
             RunServiceTimeMap();
@@ -76,6 +78,7 @@ namespace AirportPlanning.Tests
             RunScheduleGeneratorCheckInAndArrivals();
             RunScheduleCheckInLastAdmission();
             RunScheduleFallbacksAndRules();
+            RunScheduleArrivalPeak();
             RunFlightHourDemand();
             RunCheckInOpeningGate();
 
@@ -6176,15 +6179,15 @@ namespace AirportPlanning.Tests
 
             Check(everyTypeExact, "Every type generates exactly its own per-step demand");
             Check(result.Passengers.Count == expectedTotal,
-                $"Four groups total {result.Passengers.Count} == {expectedTotal}");
+                $"Two groups total {result.Passengers.Count} == {expectedTotal}");
         }
 
         // -------------------------------------------------------------
-        // 25. Four groups plus warm-up reconcile to the generated total
+        // 25. Two departure groups plus warm-up reconcile to the generated total
         // -------------------------------------------------------------
         private static void RunFourGroupTotal()
         {
-            Console.WriteLine("== Four-group total ==");
+            Console.WriteLine("== Two-group total ==");
 
             List<PassengerGroup> groups = BuildGroups(
                 3000, new[] { 40.0, 100.0, 70.0, 50.0, 30.0 }, 1, 90.0, 40.0,
@@ -6347,29 +6350,27 @@ namespace AirportPlanning.Tests
                 warmUp: false, warmMinutes: 0, warmFactor: 0.0);
 
             baseline[1].DHP.DesignHourDemand = 500;
-            baseline[3].DHP.DesignHourDemand = 500;
 
             PassengerGenerationResult baseResult = Generate(baseline, new WaveSettings(), 900);
 
             int baseDomDep = baseResult.Passengers.Count(p => p.DHPType == DHPType.DomesticDeparture);
-            int baseArr = baseResult.Passengers.Count(p => p.DHPType == DHPType.DomesticArrival);
+            int baseIntlDep = baseResult.Passengers.Count(p => p.DHPType == DHPType.InternationalDeparture);
 
             List<PassengerGroup> changed = BuildGroups(
                 2000, new[] { 100.0 }, 0, 100.0, 100.0,
                 warmUp: false, warmMinutes: 0, warmFactor: 0.0);
 
             changed[1].DHP.DesignHourDemand = 5000;
-            changed[3].DHP.DesignHourDemand = 500;
 
             PassengerGenerationResult changedResult = Generate(changed, new WaveSettings(), 900);
 
             int changedDomDep = changedResult.Passengers.Count(p => p.DHPType == DHPType.DomesticDeparture);
-            int changedArr = changedResult.Passengers.Count(p => p.DHPType == DHPType.DomesticArrival);
+            int changedIntlDep = changedResult.Passengers.Count(p => p.DHPType == DHPType.InternationalDeparture);
 
             Check(baseDomDep == changedDomDep,
-                $"Changing domestic arrival leaves domestic departure untouched ({baseDomDep} == {changedDomDep})");
-            Check(baseArr == 500, $"Baseline domestic arrival demand honoured ({baseArr} == 500)");
-            Check(changedArr == 5000, $"Changed domestic arrival demand honoured ({changedArr} == 5000)");
+                $"Changing international departure leaves domestic departure untouched ({baseDomDep} == {changedDomDep})");
+            Check(baseIntlDep == 500, $"Baseline international departure demand honoured ({baseIntlDep} == 500)");
+            Check(changedIntlDep == 5000, $"Changed international departure demand honoured ({changedIntlDep} == 5000)");
         }
 
         // -------------------------------------------------------------
@@ -6396,8 +6397,7 @@ namespace AirportPlanning.Tests
 
             DHPType[] types =
             {
-                DHPType.DomesticDeparture, DHPType.DomesticArrival,
-                DHPType.InternationalDeparture, DHPType.InternationalArrival
+                DHPType.DomesticDeparture, DHPType.InternationalDeparture
             };
 
             bool everyType = true;
@@ -6408,7 +6408,7 @@ namespace AirportPlanning.Tests
                     everyType = false;
             }
 
-            Check(everyType, "Every populated type has design-step passengers");
+            Check(everyType, "Every populated departure type has design-step passengers");
         }
 
         // -------------------------------------------------------------
@@ -6479,18 +6479,18 @@ namespace AirportPlanning.Tests
         }
 
         // -------------------------------------------------------------
-        // 32. DA / IA are optional: departures-only generation works
+        // 32. Generators are departures-only and reject arrival groups
         // -------------------------------------------------------------
         private static void RunOptionalArrivalGroups()
         {
-            Console.WriteLine("== Optional arrival groups ==");
+            Console.WriteLine("== Departures-only generation ==");
 
             List<PassengerGroup> full = BuildGroups(
                 2000, new[] { 100.0 }, 0, 80.0, 60.0,
                 warmUp: false, warmMinutes: 0, warmFactor: 0.0);
 
-            // Departures only: DD (index 0) and ID (index 2).
-            List<PassengerGroup> departuresOnly = new List<PassengerGroup> { full[0], full[2] };
+            // The helper now builds departure groups only: DD (0) and ID (1).
+            List<PassengerGroup> departuresOnly = new List<PassengerGroup> { full[0], full[1] };
 
             PassengerGenerationResult result = Generate(departuresOnly, new WaveSettings(), 42);
 
@@ -6523,22 +6523,46 @@ namespace AirportPlanning.Tests
 
             // Null slots are dropped, not fatal.
             List<PassengerGroup> withNulls = new List<PassengerGroup>
-                { full[0], null, full[2], null };
+                { full[0], null, full[1], null };
 
             PassengerGenerationResult nulled = Generate(withNulls, new WaveSettings(), 42);
 
             Check(nulled.Passengers.Count == expected,
-                $"Null arrival slots are skipped ({nulled.Passengers.Count} == {expected})");
+                $"Null group slots are skipped ({nulled.Passengers.Count} == {expected})");
+
+            // Arrival groups are rejected loudly.
+            List<PassengerGroup> arrivalGroups = new List<PassengerGroup>
+            {
+                MakeGroup(
+                    DHPType.DomesticArrival,
+                    2000, 1, new[] { 100.0 }, 0,
+                    false, 0, 0.0,
+                    new List<PassengerProfile>
+                    {
+                        MakeProfile("Domestic", 100.0, 60.0, 150.0)
+                    })
+            };
+
+            bool arrivalRejected = false;
+            try
+            {
+                Generate(arrivalGroups, new WaveSettings(), 42);
+            }
+            catch (ArgumentException ex)
+            {
+                arrivalRejected =
+                    ex.Message.IndexOf("arrival", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+
+            Check(arrivalRejected, "Arrival groups are rejected by the passenger generator");
 
             // Mismatched windows are rejected loudly.
             List<PassengerGroup> mismatched = BuildGroups(
                 2000, new[] { 100.0 }, 0, 80.0, 60.0,
                 warmUp: false, warmMinutes: 0, warmFactor: 0.0);
-            mismatched[2].DHP.DesignHourIndex = 0;
             mismatched[0].DHP.DesignHourIndex = 0;
             mismatched[1].DHP.DesignHourIndex = 0;
-            mismatched[3].DHP.DesignHourIndex = 0;
-            mismatched[2].DHP.AnalysisPeriodHours = 2;
+            mismatched[1].DHP.AnalysisPeriodHours = 2;
 
             bool threw = false;
             try
@@ -6619,9 +6643,9 @@ namespace AirportPlanning.Tests
             PassengerGenerationResult result = Generate(
                 groups, new WaveSettings(), 77, ShowUpProfile.Leisure());
 
-            Passenger source = result.Passengers.FirstOrDefault(p => p.DHPType == DHPType.DomesticArrival);
+            Passenger source = result.Passengers.FirstOrDefault(p => p.DHPType == DHPType.DomesticDeparture);
 
-            Check(source != null, "Windowed run contains a domestic arrival to clone");
+            Check(source != null, "Windowed run contains a domestic departure to clone");
 
             if (source != null)
             {
@@ -6667,8 +6691,8 @@ namespace AirportPlanning.Tests
             int departures = gen.Passengers.Count(FacilitySolverBase.IsDeparturePassenger);
             int arrivals = gen.Passengers.Count - departures;
 
-            Check(departures > 0 && arrivals > 0,
-                $"Mixed population has both departures and arrivals ({departures} dep / {arrivals} arr)");
+            Check(departures > 0 && arrivals == 0,
+                $"Generated population is departures-only ({departures} dep / {arrivals} arr)");
 
             CheckInResults checkIn = new CheckInSolver().Solve(new CheckInInputs
             {
@@ -6689,11 +6713,8 @@ namespace AirportPlanning.Tests
             Check(checkIn.QueueResults.ProcessedPassengers.All(FacilitySolverBase.IsDeparturePassenger),
                 "Every Check-In passenger is a departure");
 
-            bool arrivalsBypassCheckIn = checkIn.QueueResults.Passengers
-                .Where(p => !FacilitySolverBase.IsDeparturePassenger(p))
-                .All(p => !p.History.ContainsKey(FacilityType.CheckIn));
-
-            Check(arrivalsBypassCheckIn, "Arrivals pass through Check-In untouched");
+            Check(checkIn.QueueResults.Passengers.All(FacilitySolverBase.IsDeparturePassenger),
+                "Check-In sees departure passengers only");
 
             // Dedicated channel pools must not let arrivals through either.
             CheckInResults channelled = new CheckInSolver().Solve(new CheckInInputs
@@ -6983,23 +7004,18 @@ namespace AirportPlanning.Tests
             List<PassengerProfile> domestic, List<PassengerProfile> international,
             bool warmUp = false, int warmMinutes = 0, double warmFactor = 0.0)
         {
+            // Passenger generators are departures-only. The dep split still
+            // reduces the departure demand, but no arrival group is built.
             int departureTotal = (int)Math.Round(dhd * dep / 100.0);
-            int arrivalTotal = dhd - departureTotal;
 
             int domDep = (int)Math.Round(departureTotal * dom / 100.0);
             int intlDep = departureTotal - domDep;
-            int domArr = (int)Math.Round(arrivalTotal * dom / 100.0);
-            int intlArr = arrivalTotal - domArr;
 
             return new List<PassengerGroup>
             {
                 MakeGroup(DHPType.DomesticDeparture, domDep, hours, factors, designIndex,
                     warmUp, warmMinutes, warmFactor, domestic),
-                MakeGroup(DHPType.DomesticArrival, domArr, hours, factors, designIndex,
-                    warmUp, warmMinutes, warmFactor, domestic),
                 MakeGroup(DHPType.InternationalDeparture, intlDep, hours, factors, designIndex,
-                    warmUp, warmMinutes, warmFactor, international),
-                MakeGroup(DHPType.InternationalArrival, intlArr, hours, factors, designIndex,
                     warmUp, warmMinutes, warmFactor, international)
             };
         }

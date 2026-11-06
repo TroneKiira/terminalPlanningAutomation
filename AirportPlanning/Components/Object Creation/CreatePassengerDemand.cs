@@ -9,7 +9,9 @@ namespace AirportPlanning.Components.Object_Creation
     {
         public CreatePassengerDemand()
           : base("Create Passenger Demand", "CPD",
-            "Creates a Design Hour Profile (DHP) for a specific passenger type (Domestic Departure, Domestic Arrival, International Departure, International Arrival).",
+            "Creates a Design Hour Profile (DHP) for a departure passenger type " +
+            "(Domestic Departure or International Departure). Arrival demand is " +
+            "supplied by the Deplaning Profile route.",
             "Airport Planning", "Object Creation")
         {
         }
@@ -18,7 +20,8 @@ namespace AirportPlanning.Components.Object_Creation
         {
             pManager.AddIntegerParameter(
                 "DHP Type", "T",
-                "0 = Domestic Departure, 1 = Domestic Arrival, 2 = International Departure, 3 = International Arrival",
+                "0 = Domestic Departure, 2 = International Departure. " +
+                "Arrival types (1, 3) are rejected: arrival demand uses the Deplaning Profile.",
                 GH_ParamAccess.item, 0);
 
             pManager.AddIntegerParameter(
@@ -92,7 +95,19 @@ namespace AirportPlanning.Components.Object_Creation
             if (!DA.GetData(7, ref warmUpFactor)) return;
             if (!DA.GetData(8, ref demandBasis)) return;
 
-            DHPType dhpType = (DHPType)Math.Max(0, Math.Min(3, type));
+            if (type == (int)DHPType.DomesticArrival ||
+                type == (int)DHPType.InternationalArrival)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Error,
+                    $"DHP Type {type} is an arrival type. Passenger generators are " +
+                    "departures-only; use the Deplaning Profile for arrival demand.");
+                return;
+            }
+
+            DHPType dhpType = type == (int)DHPType.InternationalDeparture
+                ? DHPType.InternationalDeparture
+                : DHPType.DomesticDeparture;
 
             DHP dhp = new DHP
             {

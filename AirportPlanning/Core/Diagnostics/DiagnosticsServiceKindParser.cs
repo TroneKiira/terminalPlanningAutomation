@@ -52,6 +52,12 @@ namespace AirportPlanning.Core.Diagnostics
                 key == "imm")
                 return DiagnosticsServiceKind.Immigration;
 
+            if (key.StartsWith("customshand", StringComparison.Ordinal) ||
+                key == "customs" ||
+                key.StartsWith("handbaggage", StringComparison.Ordinal) ||
+                key == "chb")
+                return DiagnosticsServiceKind.Customs;
+
             if (key.StartsWith("verification", StringComparison.Ordinal) ||
                 key.StartsWith("passengerverification", StringComparison.Ordinal) ||
                 key == "verify" ||
@@ -140,6 +146,7 @@ namespace AirportPlanning.Core.Diagnostics
                     FacilityType.Security,
                     FacilityType.Emigration,
                     FacilityType.Immigration,
+                    FacilityType.Customs,
                     FacilityType.PassengerVerification,
                     FacilityType.DepartureLounge,
                     FacilityType.Boarding,
@@ -188,6 +195,8 @@ namespace AirportPlanning.Core.Diagnostics
                     return DiagnosticsServiceKind.Emigration;
                 case FacilityType.Immigration:
                     return DiagnosticsServiceKind.Immigration;
+                case FacilityType.Customs:
+                    return DiagnosticsServiceKind.Customs;
                 case FacilityType.PassengerVerification:
                     return DiagnosticsServiceKind.Verification;
                 case FacilityType.DepartureLounge:

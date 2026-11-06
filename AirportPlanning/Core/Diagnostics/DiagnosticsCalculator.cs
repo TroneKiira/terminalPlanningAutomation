@@ -440,8 +440,7 @@ namespace AirportPlanning.Core.Diagnostics
                         details: Cap(scheduleGeneration.GenerationWarnings));
                 }
 
-                int missingGroups = scheduleGeneration.ArrivalLegsWithoutGroup +
-                                    scheduleGeneration.DepartureLegsWithoutGroup;
+                int missingGroups = scheduleGeneration.DepartureLegsWithoutGroup;
 
                 if (missingGroups > 0)
                 {
@@ -450,16 +449,14 @@ namespace AirportPlanning.Core.Diagnostics
                         DiagnosticCategory.Generation,
                         DiagnosticSeverity.Warning,
                         "Legs skipped for a missing Passenger Group",
-                        "Some flight legs did not generate passengers because no Passenger Group " +
-                        "or profile was assigned.",
+                        "Some departure flight legs did not generate passengers because no " +
+                        "Passenger Group or profile was assigned.",
                         expected: 0,
                         actual: missingGroups,
                         details: new List<string>
                         {
                             "Departure legs without a group: " +
-                            scheduleGeneration.DepartureLegsWithoutGroup,
-                            "Arrival legs without a group: " +
-                            scheduleGeneration.ArrivalLegsWithoutGroup
+                            scheduleGeneration.DepartureLegsWithoutGroup
                         });
                 }
 

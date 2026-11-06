@@ -16,7 +16,8 @@ namespace AirportPlanning.Components.SimulationComponent
     {
         public FlightScheduleDeconstructComponent()
           : base("Flight Schedule Deconstruct", "FSD",
-            "Deconstructs a parsed flight schedule into primitive lists, one item per leg.",
+            "Deconstructs a parsed flight schedule into primitive lists, one item per leg, " +
+            "plus the schedule-derived arrival peak-hour passenger count (PHP) for the Deplaning Profile.",
             "Airport Planning", "Simulation")
         {
         }
@@ -170,6 +171,24 @@ namespace AirportPlanning.Components.SimulationComponent
                 "Leg Summary", "TXT",
                 "One readable line per leg, suitable for a Panel.",
                 GH_ParamAccess.list);
+
+            pManager.AddIntegerParameter(
+                "Arrival Peak Hour Pax", "PHP",
+                "Busiest rolling 60-minute arrival passenger count from the schedule " +
+                "(5-minute buckets, continuous clock). Wire into Deplaning Profile's PHP input. " +
+                "0 when no arrival leg carries passengers.",
+                GH_ParamAccess.item);
+
+            pManager.AddIntegerParameter(
+                "Peak Window Start", "PWS",
+                "Minute of the day where the busiest arrival window starts. -1 when no arrival leg carries passengers.",
+                GH_ParamAccess.item);
+
+            pManager.AddIntegerParameter(
+                "Arrival Legs Excluded", "APX",
+                "Passenger arrival legs that could not contribute: no usable time, " +
+                "or no passenger count and no seats to fall back on.",
+                GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -212,6 +231,13 @@ namespace AirportPlanning.Components.SimulationComponent
             DA.SetDataList(25, legs.Select(l => l.Remarks ?? string.Empty));
             DA.SetDataList(26, legs.Select(l => l.LinkId ?? string.Empty));
             DA.SetDataList(27, legs.Select(FormatSummary));
+
+            ScheduleArrivalPeakResult arrivalPeak =
+                ScheduleArrivalPeakCalculator.Calculate(schedule);
+
+            DA.SetData(28, arrivalPeak.PeakPassengers);
+            DA.SetData(29, arrivalPeak.PeakWindowStartMinute);
+            DA.SetData(30, arrivalPeak.ArrivalLegsExcluded);
         }
 
         private static string FormatTime(FlightLeg leg)

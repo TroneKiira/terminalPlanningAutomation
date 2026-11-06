@@ -60,7 +60,8 @@ namespace AirportPlanning.Core.Diagnostics
         Dwell = 8,
         Boarding = 9,
         TransferDesk = 10,
-        BaggageRecheck = 11
+        BaggageRecheck = 11,
+        Customs = 12
     }
 
     /// <summary>
@@ -853,6 +854,8 @@ namespace AirportPlanning.Core.Diagnostics
                     return "Transfer Desk";
                 case DiagnosticsServiceKind.BaggageRecheck:
                     return "Baggage Recheck";
+                case DiagnosticsServiceKind.Customs:
+                    return "Customs Hand Baggage";
                 default:
                     return "Unknown";
             }
@@ -884,6 +887,8 @@ namespace AirportPlanning.Core.Diagnostics
                     return FacilityType.TransferDesk;
                 case DiagnosticsServiceKind.BaggageRecheck:
                     return FacilityType.BaggageRecheck;
+                case DiagnosticsServiceKind.Customs:
+                    return FacilityType.Customs;
                 default:
                     return null;
             }

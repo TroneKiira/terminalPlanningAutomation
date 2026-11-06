@@ -90,6 +90,7 @@ namespace AirportPlanning.Core.Analysis
                 { FacilityType.Emigration, "Emigration" },
                 { FacilityType.Security, "Security" },
                 { FacilityType.Immigration, "Immigration" },
+                { FacilityType.Customs, "Customs Hand Baggage" },
                 { FacilityType.TransferDesk, "Transfer Desk" },
                 { FacilityType.BaggageRecheck, "Baggage Recheck" },
                 { FacilityType.DepartureLounge, "Departure Lounge" },
@@ -183,6 +184,7 @@ namespace AirportPlanning.Core.Analysis
                 foreach (FacilityType facility in new[]
                 {
                     FacilityType.Immigration,
+                    FacilityType.Customs,
                     FacilityType.TransferDesk,
                     FacilityType.BaggageRecheck
                 })
@@ -530,6 +532,29 @@ namespace AirportPlanning.Core.Analysis
 
                     note = "the scenario rule marks immigration as not required";
                     return false;
+
+                case FacilityType.Customs:
+                    if (!IsArrivalLeg(passenger))
+                    {
+                        note = "departing passengers do not use arrival customs";
+                        return false;
+                    }
+
+                    if (!IsInternational(passenger))
+                    {
+                        note = "domestic arrivals bypass customs";
+                        return false;
+                    }
+
+                    if (passenger.Journey == PassengerJourney.Transfer &&
+                        passenger.TransferScenario == TransferScenario.InternationalToInternational)
+                    {
+                        note = "international-to-international transfers stay airside and bypass customs";
+                        return false;
+                    }
+
+                    note = "international arrivals entering the country clear hand-baggage customs (expected)";
+                    return true;
 
                 case FacilityType.TransferDesk:
                     if (!IsArrivalLeg(passenger) || passenger.Journey != PassengerJourney.Transfer)

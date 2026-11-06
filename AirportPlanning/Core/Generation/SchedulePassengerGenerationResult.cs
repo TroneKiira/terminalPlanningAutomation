@@ -48,18 +48,11 @@ namespace AirportPlanning.Core.Generation
 
         public int DomesticDeparture { get; set; }
 
-        public int DomesticArrival { get; set; }
-
         public int InternationalDeparture { get; set; }
 
-        public int InternationalArrival { get; set; }
+        public int Combined => DomesticDeparture + InternationalDeparture;
 
-        public int Combined => DomesticDeparture + DomesticArrival +
-            InternationalDeparture + InternationalArrival;
-
-        public int TotalDepartures => DomesticDeparture + InternationalDeparture;
-
-        public int TotalArrivals => DomesticArrival + InternationalArrival;
+        public int TotalDepartures => Combined;
     }
 
     /// <summary>
@@ -82,31 +75,23 @@ namespace AirportPlanning.Core.Generation
         public int PeakHourDemand { get; set; }
 
         /// <summary>
-        /// Four-group peak demands, computed from the schedule itself using
-        /// rolling 60-minute windows stepped every 5 minutes. These are the
-        /// default design-hour values; the planner may override them.
+        /// Departure peaks, computed from the schedule itself using rolling
+        /// 60-minute windows stepped every 5 minutes. These are the default
+        /// design-hour values; the planner may override them.
         /// </summary>
         public int DomesticDeparturePeak { get; set; }
 
-        public int DomesticArrivalPeak { get; set; }
-
         public int InternationalDeparturePeak { get; set; }
-
-        public int InternationalArrivalPeak { get; set; }
 
         public int CombinedPeak { get; set; }
 
         /// <summary>
-        /// Minute of the day each four-group peak falls at. Used to label the
-        /// design window and to compare peaks across groups.
+        /// Minute of the day each departure peak falls at. Used to label the
+        /// design window and to compare peaks across markets.
         /// </summary>
         public int DomesticDeparturePeakAt { get; set; }
 
-        public int DomesticArrivalPeakAt { get; set; }
-
         public int InternationalDeparturePeakAt { get; set; }
-
-        public int InternationalArrivalPeakAt { get; set; }
 
         public int CombinedPeakAt { get; set; }
 
@@ -114,7 +99,9 @@ namespace AirportPlanning.Core.Generation
 
         public int BeforeCheckInOpenCount { get; set; }
 
-        public int ArrivalLegsWithoutGroup { get; set; }
+        /// <summary>Arrival legs present in the schedule but ignored by the
+        /// departures-only generator.</summary>
+        public int ArrivalLegsIgnored { get; set; }
 
         public int DepartureLegsWithoutGroup { get; set; }
 
@@ -153,13 +140,12 @@ namespace AirportPlanning.Core.Generation
                 $"Flights with generated passengers: {FlightsWithPassengers}",
                 $"Passengers generated: {GeneratedPassengerCount}",
                 $"DD peak: {DomesticDeparturePeak} at {FormatMinute(DomesticDeparturePeakAt)}",
-                $"DA peak: {DomesticArrivalPeak} at {FormatMinute(DomesticArrivalPeakAt)}",
                 $"ID peak: {InternationalDeparturePeak} at {FormatMinute(InternationalDeparturePeakAt)}",
-                $"IA peak: {InternationalArrivalPeak} at {FormatMinute(InternationalArrivalPeakAt)}",
                 $"Combined peak: {CombinedPeak} at {FormatMinute(CombinedPeakAt)}",
                 $"Design hour: {(DesignStepIndex >= 0 ? FormatHour(DesignStepIndex) : "n/a")}",
                 $"Late after check-in close: {LateCheckInCount}",
-                $"Arrived before check-in opened: {BeforeCheckInOpenCount}"
+                $"Arrived before check-in opened: {BeforeCheckInOpenCount}",
+                $"Arrival legs ignored (departures only): {ArrivalLegsIgnored}"
             };
 
             foreach (DHPType type in Enum.GetValues(typeof(DHPType)))
@@ -168,11 +154,11 @@ namespace AirportPlanning.Core.Generation
                 lines.Add($"{type}: {count}");
             }
 
-            if (DepartureLegsWithoutGroup > 0 || ArrivalLegsWithoutGroup > 0)
+            if (DepartureLegsWithoutGroup > 0)
             {
-                lines.Add($"Legs skipped for a missing group: " +
-                          $"{DepartureLegsWithoutGroup} departure, " +
-                          $"{ArrivalLegsWithoutGroup} arrival");
+                lines.Add(
+                    $"Departure legs skipped for a missing group: " +
+                    $"{DepartureLegsWithoutGroup}");
             }
 
             return lines;

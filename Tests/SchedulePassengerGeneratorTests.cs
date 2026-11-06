@@ -35,8 +35,7 @@ namespace AirportPlanning.Tests
             };
 
             SchedulePassengerGenerationResult result = GenerateFromSchedule(
-                schedule, groups, seed: 12, applyWalk: false, walkMetres: 0.0,
-                arrivalDelay: new ArrivalProcessDelay(0.0, 30.0));
+                schedule, groups, seed: 12, applyWalk: false, walkMetres: 0.0);
 
             Check(result.Passengers.Count == 100,
                 $"Schedule PAX are generated exactly ({result.Passengers.Count} == 100)");
@@ -72,8 +71,7 @@ namespace AirportPlanning.Tests
                 "Schedule generation emits arrival simulations");
 
             SchedulePassengerGenerationResult repeat = GenerateFromSchedule(
-                schedule, groups, seed: 12, applyWalk: false, walkMetres: 0.0,
-                arrivalDelay: new ArrivalProcessDelay(0.0, 30.0));
+                schedule, groups, seed: 12, applyWalk: false, walkMetres: 0.0);
 
             bool identical = repeat.Passengers.Count == result.Passengers.Count;
 
@@ -110,36 +108,31 @@ namespace AirportPlanning.Tests
             List<PassengerGroup> groups = new List<PassengerGroup>
             {
                 MakeTypedScheduleGroup(DHPType.DomesticDeparture, profile),
-                MakeTypedScheduleGroup(DHPType.DomesticArrival, profile),
-                MakeTypedScheduleGroup(DHPType.InternationalDeparture, profile),
-                MakeTypedScheduleGroup(DHPType.InternationalArrival, profile)
+                MakeTypedScheduleGroup(DHPType.InternationalDeparture, profile)
             };
 
             SchedulePassengerGenerationResult result = GenerateFromSchedule(
-                schedule, groups, seed: 15, applyWalk: false, walkMetres: 0.0,
-                arrivalDelay: new ArrivalProcessDelay(0.0, 0.0));
+                schedule, groups, seed: 15, applyWalk: false, walkMetres: 0.0);
 
-            Check(result.Passengers.Count == 210,
-                $"Groups without a DHP still generate every PAX ({result.Passengers.Count} == 210)");
+            Check(result.Passengers.Count == 140,
+                $"Groups without a DHP still generate departure PAX ({result.Passengers.Count} == 140)");
+            Check(result.Passengers.All(p =>
+                    p.DHPType == DHPType.DomesticDeparture ||
+                    p.DHPType == DHPType.InternationalDeparture),
+                "Schedule generation produces departure passengers only");
+            Check(result.ArrivalLegsIgnored == 2,
+                $"Arrival legs are counted and ignored ({result.ArrivalLegsIgnored} == 2)");
 
             Check(result.DomesticDeparturePeak == 100,
                 $"DD peak is schedule PAX ({result.DomesticDeparturePeak} == 100)");
             Check(result.DomesticDeparturePeakAt == 665,
                 $"DD peak window starts 11:05 for a 12:00 flight ({result.DomesticDeparturePeakAt})");
-            Check(result.DomesticArrivalPeak == 50,
-                $"DA peak is schedule PAX ({result.DomesticArrivalPeak} == 50)");
-            Check(result.DomesticArrivalPeakAt == 1025,
-                $"DA peak window starts 17:05 for an 18:00 flight ({result.DomesticArrivalPeakAt})");
             Check(result.InternationalDeparturePeak == 40,
                 $"ID peak is schedule PAX ({result.InternationalDeparturePeak} == 40)");
             Check(result.InternationalDeparturePeakAt == 665,
                 $"ID peak window starts 11:05 for a 12:00 flight ({result.InternationalDeparturePeakAt})");
-            Check(result.InternationalArrivalPeak == 20,
-                $"IA peak is schedule PAX ({result.InternationalArrivalPeak} == 20)");
-            Check(result.InternationalArrivalPeakAt == 1025,
-                $"IA peak window starts 17:05 for an 18:00 flight ({result.InternationalArrivalPeakAt})");
             Check(result.CombinedPeak == 140,
-                $"Combined peak counts both directions in one window ({result.CombinedPeak} == 140)");
+                $"Combined peak counts both departure markets in one window ({result.CombinedPeak} == 140)");
             Check(result.CombinedPeakAt == 665,
                 $"Combined peak window starts 11:05 for the 12:00 bank ({result.CombinedPeakAt})");
 
@@ -152,11 +145,32 @@ namespace AirportPlanning.Tests
                 "Raw schedule series carries the flight at its STD");
             Check(result.DesignStepIndex == 11,
                 $"Default design hour follows the schedule peak window ({result.DesignStepIndex} == 11)");
+
+            bool arrivalGroupRejected = false;
+
+            try
+            {
+                GenerateFromSchedule(
+                    schedule,
+                    new List<PassengerGroup>
+                    {
+                        MakeTypedScheduleGroup(DHPType.DomesticArrival, profile)
+                    },
+                    seed: 15, applyWalk: false, walkMetres: 0.0);
+            }
+            catch (ArgumentException ex)
+            {
+                arrivalGroupRejected =
+                    ex.Message.IndexOf("arrival", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+
+            Check(arrivalGroupRejected,
+                "Schedule generation rejects arrival passenger groups");
         }
 
         private static void RunScheduleGeneratorCheckInAndArrivals()
         {
-            Console.WriteLine("== Schedule generator check-in windows / arrivals ==");
+            Console.WriteLine("== Schedule generator check-in windows / arrival legs ignored ==");
 
             FlightScheduleResult schedule = new FlightScheduleResult
             {
@@ -173,24 +187,22 @@ namespace AirportPlanning.Tests
 
             List<PassengerGroup> groups = new List<PassengerGroup>
             {
-                MakeScheduleGroup(DHPType.DomesticDeparture, econ),
-                MakeScheduleGroup(DHPType.InternationalArrival, econ)
+                MakeScheduleGroup(DHPType.DomesticDeparture, econ)
             };
 
             SchedulePassengerGenerationResult result = GenerateFromSchedule(
-                schedule, groups, seed: 3, applyWalk: true, walkMetres: 1000.0,
-                arrivalDelay: new ArrivalProcessDelay(5.0, 25.0));
+                schedule, groups, seed: 3, applyWalk: true, walkMetres: 1000.0);
 
             List<Passenger> departures = result.Passengers
                 .Where(p => p.DHPType == DHPType.DomesticDeparture)
                 .ToList();
 
-            List<Passenger> arrivals = result.Passengers
-                .Where(p => p.DHPType == DHPType.InternationalArrival)
-                .ToList();
-
             Check(departures.Count == 70, $"Departure count follows schedule PAX ({departures.Count})");
-            Check(arrivals.Count == 20, $"Arrival count follows schedule PAX ({arrivals.Count})");
+            Check(result.Passengers.All(p =>
+                    p.DHPType == DHPType.DomesticDeparture),
+                "The international arrival leg generates no passengers");
+            Check(result.ArrivalLegsIgnored == 1,
+                $"The arrival leg is counted as ignored ({result.ArrivalLegsIgnored} == 1)");
 
             Check(departures.All(p => Math.Abs(p.CheckInOpenTime - 600.0) < 1e-9),
                 "Domestic check-in opens at STD-120");
@@ -204,14 +216,6 @@ namespace AirportPlanning.Tests
                 "Late count matches the passenger flags");
             Check(result.BeforeCheckInOpenCount == departures.Count(p => p.ArrivedBeforeCheckInOpen),
                 "Before-open count matches the passenger flags");
-
-            Check(arrivals.All(p => Math.Abs(p.ScheduledArrivalTime - 600.0) < 1e-9),
-                "Arrival passengers carry STA");
-            Check(arrivals.All(p => p.ArrivalTime >= 605.0 - 1e-9 &&
-                                    p.ArrivalTime <= 625.0 + 1e-9),
-                "Arrival passengers are placed by the explicit STA delay assumption");
-            Check(arrivals.All(p => p.ScheduledDepartureTime == 0.0),
-                "Arrival passengers do not receive a synthetic departure time");
         }
 
         private static void RunScheduleCheckInLastAdmission()
@@ -236,8 +240,7 @@ namespace AirportPlanning.Tests
                 {
                     MakeScheduleGroup(DHPType.DomesticDeparture, profile)
                 },
-                seed: 4, applyWalk: true, walkMetres: 10000.0,
-                arrivalDelay: new ArrivalProcessDelay());
+                seed: 4, applyWalk: true, walkMetres: 10000.0);
 
             Check(generated.Passengers.All(p => p.IsLateForCheckIn),
                 "A walk beyond last admission flags every passenger late");
@@ -311,8 +314,7 @@ namespace AirportPlanning.Tests
                 {
                     MakeScheduleGroup(DHPType.DomesticDeparture, profile)
                 },
-                seed: 9, applyWalk: false, walkMetres: 0.0,
-                arrivalDelay: new ArrivalProcessDelay());
+                seed: 9, applyWalk: false, walkMetres: 0.0);
 
             Check(fallback.Passengers.Count == 90,
                 $"Missing PAX falls back to seats x load factor ({fallback.Passengers.Count} == 90)");
@@ -352,8 +354,7 @@ namespace AirportPlanning.Tests
             List<PassengerGroup> groups,
             int seed,
             bool applyWalk,
-            double walkMetres,
-            ArrivalProcessDelay arrivalDelay)
+            double walkMetres)
         {
             return new SchedulePassengerGenerator().Generate(
                 schedule,
@@ -364,7 +365,6 @@ namespace AirportPlanning.Tests
                 applyWalk,
                 walkMetres,
                 new CheckInWindowRules(),
-                arrivalDelay,
                 ShowUpProfile.Mix());
         }
 

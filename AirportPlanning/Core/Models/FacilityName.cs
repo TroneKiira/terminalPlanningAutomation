@@ -40,11 +40,14 @@ namespace AirportPlanning.Core.Models
         /// <summary>Canonical name for baggage recheck.</summary>
         public const string BaggageRecheck = "Baggage Recheck";
 
+        /// <summary>Canonical name for arrival-side hand-baggage customs.</summary>
+        public const string Customs = "Customs Hand Baggage";
+
         /// <summary>Every canonical name, for warning text.</summary>
         public static readonly string[] All =
         {
             TerminalEntry, CheckIn, BagDrop, Security, Emigration,
-            Immigration, TransferDesk, BaggageRecheck
+            Immigration, TransferDesk, BaggageRecheck, Customs
         };
 
         /// <summary>Normalized alias -> canonical name.</summary>
@@ -82,6 +85,9 @@ namespace AirportPlanning.Core.Models
                 "Transfer Counter");
             Add(BaggageRecheck, "Baggage Recheck", "Bag Recheck", "BaggageRecheck",
                 "Transfer Baggage Recheck", "Baggage Re-Check");
+            Add(Customs, "Customs Hand Baggage", "Customs", "Arrival Customs",
+                "Customs Hand", "Hand Baggage Customs", "Hand Baggage Screening",
+                "Customs Hand Baggage Screening");
 
             return aliases;
         }

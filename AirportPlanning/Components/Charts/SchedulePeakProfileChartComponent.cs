@@ -20,8 +20,8 @@ namespace AirportPlanning.Components.Charts
     {
         public SchedulePeakProfileChartComponent()
           : base("Schedule Peak Profile", "SPP",
-            "Plots rolling 60-minute demand from a schedule: domestic/international " +
-            "departures and arrivals plus the combined curve, at 5-minute steps.",
+            "Plots rolling 60-minute departure demand from a schedule: domestic and " +
+            "international departures plus the combined curve, at 5-minute steps.",
             "Airport Planning", "Charts")
         {
         }
@@ -35,7 +35,7 @@ namespace AirportPlanning.Components.Charts
 
             pManager.AddIntegerParameter(
                 "View", "V",
-                "0 = demand at scheduled flight times (STD/STA); " +
+                "0 = demand at scheduled departure times (STD); " +
                 "1 = generated passenger arrivals after show-up and walking.",
                 GH_ParamAccess.item, 0);
 
@@ -109,7 +109,7 @@ namespace AirportPlanning.Components.Charts
 
             string defaultTitle = view == 1
                 ? "Passenger Arrivals: Rolling 60-min Demand"
-                : "Schedule Demand: Rolling 60-min at STD/STA";
+                : "Schedule Demand: Rolling 60-min at STD";
 
             PlotModel model = ChartRenderer.CreateSchedulePeakProfileModel(
                 series,
@@ -132,9 +132,7 @@ namespace AirportPlanning.Components.Charts
             var summary = new List<string>
             {
                 $"DD peak {Peak(series, s => s.DomesticDeparture)} at {PeakTime(series, s => s.DomesticDeparture)}",
-                $"DA peak {Peak(series, s => s.DomesticArrival)} at {PeakTime(series, s => s.DomesticArrival)}",
                 $"ID peak {Peak(series, s => s.InternationalDeparture)} at {PeakTime(series, s => s.InternationalDeparture)}",
-                $"IA peak {Peak(series, s => s.InternationalArrival)} at {PeakTime(series, s => s.InternationalArrival)}",
                 $"Combined peak {Peak(series, s => s.Combined)} at {PeakTime(series, s => s.Combined)}"
             };
 
@@ -158,7 +156,7 @@ namespace AirportPlanning.Components.Charts
             {
                 view == 1
                     ? "View: generated passenger arrivals (rolling 60 min)"
-                    : "View: scheduled demand at STD/STA (rolling 60 min)",
+                    : "View: scheduled departure demand at STD (rolling 60 min)",
                 $"Samples: {points.Count}; step {Step(points)} min"
             };
 
@@ -203,19 +201,9 @@ namespace AirportPlanning.Components.Charts
                     point.DomesticDeparture.ToString()));
 
                 rows.Add(ChartText.Row(
-                    "Domestic arrivals",
-                    point.Minute.ToString(),
-                    point.DomesticArrival.ToString()));
-
-                rows.Add(ChartText.Row(
                     "International departures",
                     point.Minute.ToString(),
                     point.InternationalDeparture.ToString()));
-
-                rows.Add(ChartText.Row(
-                    "International arrivals",
-                    point.Minute.ToString(),
-                    point.InternationalArrival.ToString()));
 
                 rows.Add(ChartText.Row(
                     "Combined",

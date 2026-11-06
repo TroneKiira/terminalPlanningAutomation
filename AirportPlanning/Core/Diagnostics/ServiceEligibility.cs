@@ -182,6 +182,15 @@ namespace AirportPlanning.Core.Diagnostics
                     return ServiceExpectation.NotApplicable(
                         "Passenger does not require immigration (domestic arrival or rule-free flow).");
 
+                case DiagnosticsServiceKind.Customs:
+                    if (!arrival)
+                        return ServiceExpectation.NotApplicable("Customs applies only to arriving passengers.");
+                    if (CustomsEligibility.RequiresHandBaggageCustoms(passenger))
+                        return ServiceExpectation.Eligible();
+                    return ServiceExpectation.NotApplicable(
+                        "Passenger does not clear hand-baggage customs (domestic arrival or " +
+                        "International→International transfer).");
+
                 case DiagnosticsServiceKind.Verification:
                     return ServiceExpectation.Eligible();
 

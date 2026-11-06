@@ -19,8 +19,9 @@ namespace AirportPlanning.Components.SimulationComponent
     {
         public SchedulePassengerGeneratorComponent()
           : base("Schedule Passenger Generator", "SPG",
-            "Generates passengers from a flight schedule, using each flight's STD/STA, " +
-            "profile-specific show-up windows, check-in rules and optional entry walking.",
+            "Generates departure passengers from a flight schedule, using each flight's STD, " +
+            "profile-specific show-up windows, check-in rules and optional entry walking. " +
+            "Arrival legs are ignored; arrival demand belongs to the Deplaning Profile route.",
             "Airport Planning", "Simulation")
         {
         }
@@ -39,27 +40,15 @@ namespace AirportPlanning.Components.SimulationComponent
                 GH_ParamAccess.item);
 
             pManager.AddGenericParameter(
-                "Domestic Arrival", "DA",
-                "Optional Passenger Group for domestic arrival passengers.",
-                GH_ParamAccess.item);
-            pManager[2].Optional = true;
-
-            pManager.AddGenericParameter(
                 "International Departure", "ID",
                 "Passenger Group for international departure passengers. A DHP is optional.",
                 GH_ParamAccess.item);
 
             pManager.AddGenericParameter(
-                "International Arrival", "IA",
-                "Optional Passenger Group for international arrival passengers.",
-                GH_ParamAccess.item);
-            pManager[4].Optional = true;
-
-            pManager.AddGenericParameter(
                 "Walking Profile", "WP",
                 "Optional walking speed profile. Leave unwired for 1.35 m/s with no dispersion.",
                 GH_ParamAccess.item);
-            pManager[5].Optional = true;
+            pManager[3].Optional = true;
 
             pManager.AddIntegerParameter(
                 "Random Seed", "S",
@@ -87,29 +76,19 @@ namespace AirportPlanning.Components.SimulationComponent
                 "Check-In Windows", "CIW",
                 "Optional Check-In Window Rules. Leave unwired for 120/60 domestic and 180/60 international defaults.",
                 GH_ParamAccess.item);
-            pManager[10].Optional = true;
-
-            pManager.AddNumberParameter(
-                "Arrival Delay Min", "ADM",
-                "Inbound assumption: minimum minutes from STA to the first arrival process. Default 0.",
-                GH_ParamAccess.item, 0.0);
-
-            pManager.AddNumberParameter(
-                "Arrival Delay Max", "ADX",
-                "Inbound assumption: maximum minutes from STA to the first arrival process. Default 30.",
-                GH_ParamAccess.item, 30.0);
+            pManager[8].Optional = true;
 
             pManager.AddGenericParameter(
                 "Fallback Show-Up Profile", "FSUP",
                 "Used when a Passenger Profile has no Show-Up Profile. Leave unwired for Mix.",
                 GH_ParamAccess.item);
-            pManager[13].Optional = true;
+            pManager[9].Optional = true;
 
             pManager.AddGenericParameter(
                 "Channel Routing", "CHR",
                 "Optional per-profile channel routing map.",
                 GH_ParamAccess.item);
-            pManager[14].Optional = true;
+            pManager[10].Optional = true;
 
             pManager.AddIntegerParameter(
                 "Design Hour", "DH",
@@ -120,7 +99,7 @@ namespace AirportPlanning.Components.SimulationComponent
                 "Transfer Demand Profile", "TDP",
                 "Optional transfer assumptions. Design Day applies via-route eligibility, connection-time rules and schedule caps.",
                 GH_ParamAccess.item);
-            pManager[16].Optional = true;
+            pManager[12].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -146,24 +125,14 @@ namespace AirportPlanning.Components.SimulationComponent
                 GH_ParamAccess.item);
 
             pManager.AddNumberParameter(
-                "DA Demand", "DAD",
-                "Domestic Arrival peak-hour demand from the schedule.",
-                GH_ParamAccess.item);
-
-            pManager.AddNumberParameter(
                 "ID Demand", "IDD",
                 "International Departure peak-hour demand from the schedule.",
                 GH_ParamAccess.item);
 
             pManager.AddNumberParameter(
-                "IA Demand", "IAD",
-                "International Arrival peak-hour demand from the schedule.",
-                GH_ParamAccess.item);
-
-            pManager.AddNumberParameter(
                 "DHD (Combined)", "DHD",
-                "Design-hour demand: combined peak-hour demand (arrivals and departures " +
-                "in the same rolling window).",
+                "Design-hour demand: combined departure peak-hour demand " +
+                "in the same rolling window.",
                 GH_ParamAccess.item);
 
             pManager.AddNumberParameter(
@@ -172,18 +141,8 @@ namespace AirportPlanning.Components.SimulationComponent
                 GH_ParamAccess.item);
 
             pManager.AddNumberParameter(
-                "DA Peak Time", "DAT",
-                "Minute of day for the Domestic Arrival peak.",
-                GH_ParamAccess.item);
-
-            pManager.AddNumberParameter(
                 "ID Peak Time", "IDT",
                 "Minute of day for the International Departure peak.",
-                GH_ParamAccess.item);
-
-            pManager.AddNumberParameter(
-                "IA Peak Time", "IAT",
-                "Minute of day for the International Arrival peak.",
                 GH_ParamAccess.item);
 
             pManager.AddNumberParameter(
@@ -211,17 +170,13 @@ namespace AirportPlanning.Components.SimulationComponent
         {
             FlightScheduleResult schedule = null;
             PassengerGroup domesticDeparture = null;
-            PassengerGroup domesticArrival = null;
             PassengerGroup internationalDeparture = null;
-            PassengerGroup internationalArrival = null;
             WalkingProfile walkingProfile = null;
             int seed = 1;
             int arrivalBasisValue = 0;
             bool applyEntryWalk = false;
             double entryWalkDistance = 0.0;
             CheckInWindowRules checkInWindows = null;
-            double arrivalDelayMin = 0.0;
-            double arrivalDelayMax = 30.0;
             ShowUpProfile fallbackShowUp = null;
             IChannelAssigner channelAssigner = null;
             int designHour = -1;
@@ -236,11 +191,9 @@ namespace AirportPlanning.Components.SimulationComponent
             }
 
             DA.GetData(1, ref domesticDeparture);
-            DA.GetData(2, ref domesticArrival);
-            DA.GetData(3, ref internationalDeparture);
-            DA.GetData(4, ref internationalArrival);
+            DA.GetData(2, ref internationalDeparture);
 
-            DA.GetData(5, ref walkingProfile);
+            DA.GetData(3, ref walkingProfile);
 
             if (walkingProfile == null)
             {
@@ -251,29 +204,23 @@ namespace AirportPlanning.Components.SimulationComponent
                 };
             }
 
-            DA.GetData(6, ref seed);
-            DA.GetData(7, ref arrivalBasisValue);
-            DA.GetData(8, ref applyEntryWalk);
-            DA.GetData(9, ref entryWalkDistance);
-            DA.GetData(10, ref checkInWindows);
-            DA.GetData(11, ref arrivalDelayMin);
-            DA.GetData(12, ref arrivalDelayMax);
-            DA.GetData(13, ref fallbackShowUp);
-            DA.GetData(14, ref channelAssigner);
-            DA.GetData(15, ref designHour);
-            DA.GetData(16, ref transferDemand);
+            DA.GetData(4, ref seed);
+            DA.GetData(5, ref arrivalBasisValue);
+            DA.GetData(6, ref applyEntryWalk);
+            DA.GetData(7, ref entryWalkDistance);
+            DA.GetData(8, ref checkInWindows);
+            DA.GetData(9, ref fallbackShowUp);
+            DA.GetData(10, ref channelAssigner);
+            DA.GetData(11, ref designHour);
+            DA.GetData(12, ref transferDemand);
 
             CheckGroupPort(domesticDeparture, DHPType.DomesticDeparture, "Domestic Departure");
-            CheckGroupPort(domesticArrival, DHPType.DomesticArrival, "Domestic Arrival");
             CheckGroupPort(internationalDeparture, DHPType.InternationalDeparture, "International Departure");
-            CheckGroupPort(internationalArrival, DHPType.InternationalArrival, "International Arrival");
 
             List<PassengerGroup> groups = new List<PassengerGroup>
             {
                 domesticDeparture,
-                domesticArrival,
-                internationalDeparture,
-                internationalArrival
+                internationalDeparture
             }
             .Where(g => g != null)
             .ToList();
@@ -282,7 +229,8 @@ namespace AirportPlanning.Components.SimulationComponent
             {
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Error,
-                    "At least one Passenger Group is required.");
+                    "At least one departure Passenger Group is required. " +
+                    "This generator does not accept arrival groups.");
                 return;
             }
 
@@ -293,7 +241,7 @@ namespace AirportPlanning.Components.SimulationComponent
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Error,
                         "Every Passenger Group needs either a DHP or an explicit Type so " +
-                        "its domestic/international and arrival/departure type is known.");
+                        "its domestic/international departure type is known.");
                     return;
                 }
 
@@ -309,10 +257,6 @@ namespace AirportPlanning.Components.SimulationComponent
                 ? PassengerArrivalBasis.CheckInQueue
                 : PassengerArrivalBasis.TerminalEntry;
 
-            ArrivalProcessDelay arrivalDelay = new ArrivalProcessDelay(
-                arrivalDelayMin,
-                arrivalDelayMax);
-
             SchedulePassengerGenerationResult result;
 
             try
@@ -326,7 +270,6 @@ namespace AirportPlanning.Components.SimulationComponent
                     applyEntryWalk,
                     entryWalkDistance,
                     checkInWindows,
-                    arrivalDelay,
                     fallbackShowUp,
                     channelAssigner,
                     designHour,
@@ -352,7 +295,6 @@ namespace AirportPlanning.Components.SimulationComponent
                 applyEntryWalk && arrivalBasis == PassengerArrivalBasis.TerminalEntry
                     ? $"Entry walk applied: {entryWalkDistance:0.##} m"
                     : "Entry walk: not applied");
-            summary.Add($"Inbound delay assumption: STA + {arrivalDelay.MinimumMinutes:0.#}-{arrivalDelay.MaximumMinutes:0.#} min");
             if (result.TransferDemand != null)
             {
                 summary.Add(
@@ -398,18 +340,14 @@ namespace AirportPlanning.Components.SimulationComponent
             DA.SetData(1, result);
             DA.SetDataList(2, result.ArrivalSimulations);
             DA.SetData(3, (double)result.DomesticDeparturePeak);
-            DA.SetData(4, (double)result.DomesticArrivalPeak);
-            DA.SetData(5, (double)result.InternationalDeparturePeak);
-            DA.SetData(6, (double)result.InternationalArrivalPeak);
-            DA.SetData(7, (double)result.CombinedPeak);
-            DA.SetData(8, (double)result.DomesticDeparturePeakAt);
-            DA.SetData(9, (double)result.DomesticArrivalPeakAt);
-            DA.SetData(10, (double)result.InternationalDeparturePeakAt);
-            DA.SetData(11, (double)result.InternationalArrivalPeakAt);
-            DA.SetData(12, (double)result.CombinedPeakAt);
-            DA.SetDataList(13, summary);
-            DA.SetDataList(14, result.GenerationWarnings);
-            DA.SetData(15, result.TransferDemand);
+            DA.SetData(4, (double)result.InternationalDeparturePeak);
+            DA.SetData(5, (double)result.CombinedPeak);
+            DA.SetData(6, (double)result.DomesticDeparturePeakAt);
+            DA.SetData(7, (double)result.InternationalDeparturePeakAt);
+            DA.SetData(8, (double)result.CombinedPeakAt);
+            DA.SetDataList(9, summary);
+            DA.SetDataList(10, result.GenerationWarnings);
+            DA.SetData(11, result.TransferDemand);
         }
 
         private void CheckGroupPort(

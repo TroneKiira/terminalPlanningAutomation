@@ -10,13 +10,14 @@ using AirportPlanning.Core.Walking;
 namespace AirportPlanning.Core.Generation
 {
     /// <summary>
-    /// Generates passengers from a normalized design-day flight schedule.
+    /// Generates departure passengers from a normalized design-day flight
+    /// schedule.
     ///
     /// Departure passengers are placed backwards from each leg's actual STD.
     /// Each Passenger Profile supplies its own Min/Max advance interval and,
     /// optionally, its own ShowUpProfile; the selection is drawn through that
-    /// curve and stretched over the interval. Arrival passengers are placed
-    /// forwards from STA using a separate, explicit arrival-process delay.
+    /// curve and stretched over the interval. Arrival legs are ignored: arrival
+    /// demand belongs to the Deplaning Profile / PHP route.
     ///
     /// The queue simulator is untouched: the output is the existing Passenger
     /// population with additional flight and check-in diagnostics.
@@ -32,7 +33,6 @@ namespace AirportPlanning.Core.Generation
             bool applyEntryWalk = false,
             double entryWalkDistanceMeters = 0.0,
             CheckInWindowRules checkInWindows = null,
-            ArrivalProcessDelay arrivalDelay = null,
             ShowUpProfile fallbackShowUp = null,
             IChannelAssigner channelAssigner = null,
             int designHourIndex = -1,
@@ -55,20 +55,16 @@ namespace AirportPlanning.Core.Generation
             }
 
             checkInWindows = checkInWindows ?? CheckInWindowRules.CreateDefault();
-            arrivalDelay = arrivalDelay ?? new ArrivalProcessDelay();
 
             List<string> checkInErrors = checkInWindows.GetValidationErrors();
 
             if (checkInErrors.Count > 0)
                 throw new ArgumentException(string.Join(" ", checkInErrors), nameof(checkInWindows));
 
-            List<string> delayErrors = arrivalDelay.GetValidationErrors();
-
-            if (delayErrors.Count > 0)
-                throw new ArgumentException(string.Join(" ", delayErrors), nameof(arrivalDelay));
-
             Dictionary<DHPType, PassengerGroup> groupsByType =
                 BuildGroupMap(groups);
+
+            ValidateDepartureGroups(groupsByType);
 
             SchedulePassengerGenerationResult result =
                 new SchedulePassengerGenerationResult();
@@ -93,6 +89,14 @@ namespace AirportPlanning.Core.Generation
 
                     result.PassengerLegCount++;
 
+                    // Passenger generators are departures-only. Arrival legs
+                    // remain in the schedule but are not turned into people.
+                    if (leg.Direction == LegDirection.Arrival)
+                    {
+                        result.ArrivalLegsIgnored++;
+                        continue;
+                    }
+
                     if (!leg.HasTime)
                     {
                         AddWarning(result, warned, warn,
@@ -100,7 +104,7 @@ namespace AirportPlanning.Core.Generation
                         continue;
                     }
 
-                    if (!TryGetDHPType(leg, out DHPType type))
+                    if (!TryGetDepartureType(leg, out DHPType type))
                     {
                         AddWarning(result, warned, warn,
                             $"Row {leg.SourceRow} ({leg.Direction}): sector is unknown; leg skipped.");
@@ -135,11 +139,7 @@ namespace AirportPlanning.Core.Generation
                         group.Profiles.Count == 0)
                     {
                         flightDemand.Issue = "No Passenger Group/profile supplied for this type.";
-
-                        if (leg.Direction == LegDirection.Departure)
-                            result.DepartureLegsWithoutGroup++;
-                        else
-                            result.ArrivalLegsWithoutGroup++;
+                        result.DepartureLegsWithoutGroup++;
 
                         AddWarning(result, warned, warn,
                             $"{type}: no Passenger Group or profiles supplied; " +
@@ -160,21 +160,11 @@ namespace AirportPlanning.Core.Generation
 
                     int before = result.Passengers.Count;
 
-                    if (leg.Direction == LegDirection.Departure)
-                    {
-                        GenerateDepartureLeg(
-                            leg, type, allocations, arrivalBasis, applyEntryWalk,
-                            entryWalkDistanceMeters, checkInWindows, fallbackShowUp,
-                            walkingProfile, channelAssigner, channelRandom, random,
-                            result, ref nextId);
-                    }
-                    else
-                    {
-                        GenerateArrivalLeg(
-                            leg, type, allocations, arrivalDelay,
-                            walkingProfile, channelAssigner, channelRandom, random,
-                            result, ref nextId);
-                    }
+                    GenerateDepartureLeg(
+                        leg, type, allocations, arrivalBasis, applyEntryWalk,
+                        entryWalkDistanceMeters, checkInWindows, fallbackShowUp,
+                        walkingProfile, channelAssigner, channelRandom, random,
+                        result, ref nextId);
 
                     flightDemand.GeneratedCount = result.Passengers.Count - before;
 
@@ -318,61 +308,6 @@ namespace AirportPlanning.Core.Generation
             }
         }
 
-        private void GenerateArrivalLeg(
-            FlightLeg leg,
-            DHPType type,
-            List<ProfileAllocation> allocations,
-            ArrivalProcessDelay arrivalDelay,
-            WalkingProfile walkingProfile,
-            IChannelAssigner channelAssigner,
-            Random channelRandom,
-            Random random,
-            SchedulePassengerGenerationResult result,
-            ref int nextId)
-        {
-            double sta = leg.TotalMinutesFromMidnight;
-
-            foreach (ProfileAllocation allocation in allocations)
-            {
-                if (allocation.Count <= 0)
-                    continue;
-
-                PassengerProfile profile = allocation.Profile;
-
-                for (int i = 0; i < allocation.Count; i++)
-                {
-                    double processTime = sta + arrivalDelay.Sample(random);
-
-                    Passenger passenger = PassengerFactory.Create(
-                        nextId++,
-                        profile,
-                        walkingProfile,
-                        processTime,
-                        random,
-                        channelAssigner,
-                        channelRandom,
-                        type);
-
-                    passenger.QueueArrivalTime = processTime;
-                    passenger.PassengerType = IsDomestic(type)
-                        ? PassengerType.Domestic
-                        : PassengerType.International;
-                    passenger.DHPType = type;
-                    passenger.ScheduledArrivalTime = sta;
-                    passenger.FlightLegId = leg.Id ?? string.Empty;
-                    passenger.FlightLinkId = leg.LinkId ?? string.Empty;
-                    passenger.Airline = leg.Airline ?? string.Empty;
-                    passenger.FlightNumber = leg.FlightNumber ?? string.Empty;
-                    passenger.ShowUpSignature =
-                        $"arrival-process|{arrivalDelay.MinimumMinutes:R}|{arrivalDelay.MaximumMinutes:R}";
-                    passenger.IsWarmUp = false;
-                    passenger.WaveId = -1;
-
-                    result.Passengers.Add(passenger);
-                }
-            }
-        }
-
         private static Dictionary<DHPType, PassengerGroup> BuildGroupMap(
             IList<PassengerGroup> groups)
         {
@@ -391,6 +326,27 @@ namespace AirportPlanning.Core.Generation
             }
 
             return map;
+        }
+
+        /// <summary>
+        /// Passenger generators are departures-only. Arrival demand belongs to
+        /// the Deplaning Profile / PHP route, so an arrival group is rejected
+        /// instead of being silently ignored.
+        /// </summary>
+        private static void ValidateDepartureGroups(
+            Dictionary<DHPType, PassengerGroup> groupsByType)
+        {
+            foreach (DHPType type in groupsByType.Keys)
+            {
+                if (type == DHPType.DomesticDeparture ||
+                    type == DHPType.InternationalDeparture)
+                    continue;
+
+                throw new ArgumentException(
+                    $"Passenger group '{type}' is an arrival group. The Schedule " +
+                    "Passenger Generator accepts departure groups only; use the " +
+                    "Deplaning Profile for arrival demand.", nameof(groupsByType));
+            }
         }
 
         private static List<string> ValidateProfiles(List<PassengerProfile> profiles)
@@ -473,28 +429,25 @@ namespace AirportPlanning.Core.Generation
             return 0;
         }
 
-        private static bool TryGetDHPType(FlightLeg leg, out DHPType type)
+        private static bool TryGetDepartureType(FlightLeg leg, out DHPType type)
         {
-            if (leg.SectorRaw == LegSector.Unknown)
+            if (leg.SectorRaw == LegSector.Unknown ||
+                leg.Direction != LegDirection.Departure)
             {
                 type = default(DHPType);
                 return false;
             }
 
-            bool domestic = leg.SectorRaw == LegSector.Domestic;
-
-            if (leg.Direction == LegDirection.Departure)
-                type = domestic ? DHPType.DomesticDeparture : DHPType.InternationalDeparture;
-            else
-                type = domestic ? DHPType.DomesticArrival : DHPType.InternationalArrival;
+            type = leg.SectorRaw == LegSector.Domestic
+                ? DHPType.DomesticDeparture
+                : DHPType.InternationalDeparture;
 
             return true;
         }
 
         private static bool IsDomestic(DHPType type)
         {
-            return type == DHPType.DomesticDeparture ||
-                   type == DHPType.DomesticArrival;
+            return type == DHPType.DomesticDeparture;
         }
 
         private static void FinishResult(
@@ -628,9 +581,7 @@ namespace AirportPlanning.Core.Generation
                 {
                     Minute = i * bucketMinutes,
                     DomesticDeparture = SumWindow(buckets[DHPType.DomesticDeparture], i, width),
-                    DomesticArrival = SumWindow(buckets[DHPType.DomesticArrival], i, width),
-                    InternationalDeparture = SumWindow(buckets[DHPType.InternationalDeparture], i, width),
-                    InternationalArrival = SumWindow(buckets[DHPType.InternationalArrival], i, width)
+                    InternationalDeparture = SumWindow(buckets[DHPType.InternationalDeparture], i, width)
                 });
             }
 
@@ -664,19 +615,9 @@ namespace AirportPlanning.Core.Generation
                 .OrderByDescending(s => s.DomesticDeparture)
                 .First().Minute;
 
-            result.DomesticArrivalPeak = series.Max(s => s.DomesticArrival);
-            result.DomesticArrivalPeakAt = series
-                .OrderByDescending(s => s.DomesticArrival)
-                .First().Minute;
-
             result.InternationalDeparturePeak = series.Max(s => s.InternationalDeparture);
             result.InternationalDeparturePeakAt = series
                 .OrderByDescending(s => s.InternationalDeparture)
-                .First().Minute;
-
-            result.InternationalArrivalPeak = series.Max(s => s.InternationalArrival);
-            result.InternationalArrivalPeakAt = series
-                .OrderByDescending(s => s.InternationalArrival)
                 .First().Minute;
 
             result.CombinedPeak = series.Max(s => s.Combined);
@@ -700,7 +641,7 @@ namespace AirportPlanning.Core.Generation
                     if (!leg.HasTime)
                         continue;
 
-                    if (!TryGetDHPType(leg, out DHPType type))
+                    if (!TryGetDepartureType(leg, out DHPType type))
                         continue;
 
                     int pax = ResolvePassengerCount(leg);
